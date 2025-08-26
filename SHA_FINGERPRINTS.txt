@@ -1,0 +1,12 @@
+Android app signing certificates for Firebase
+
+Date: 2025-08-22
+Project: nirmadapp
+
+Variant: debug (using Android debug keystore)
+- SHA-1   : 58:4F:EB:02:F5:3A:72:C9:DB:4C:0C:4B:7A:12:49:25:F7:C6:05:C7
+- SHA-256 : 00:30:00:4C:B4:40:07:C2:64:E9:3E:78:67:E6:C1:7A:6E:D2:F9:B4:19:A5:D9:4C:62:1F:CC:59:95:FD:23:7E
+
+Note:
+- Your release variant isn’t using a dedicated release keystore yet; it currently points to the debug keystore, so the fingerprints are the same.
+- For production (Play Store), generate a release keystore and add its SHA-1 and SHA-256 to Firebase as well.

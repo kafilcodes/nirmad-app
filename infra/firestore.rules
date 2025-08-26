@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function hasRole(role) { return isSignedIn() && role in request.auth.token.roles; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function userBlocks() { return isSignedIn() ? (request.auth.token.blocks != null ? request.auth.token.blocks : []) : []; }
+
+    match /users/{userId} {
+      allow read: if hasRole('super_nodal') || hasRole('sub_nodal') || isOwner(userId);
+      allow write: if hasRole('super_nodal') || hasRole('dev_admin');
+    }
+
+    match /projects/{projectId} {
+      allow read: if hasRole('super_nodal') || hasRole('dev_admin') || (hasRole('sub_nodal') && (resource.data.blockId in userBlocks())) || (hasRole('project_owner') && resource.data.ownerId == request.auth.uid);
+      allow create: if hasRole('super_nodal') || hasRole('sub_nodal') || hasRole('project_owner');
+      allow update: if (
+        // super/dev admin can always update
+        hasRole('super_nodal') || hasRole('dev_admin') ||
+        // sub_nodal limited to their blocks
+        (hasRole('sub_nodal') && (resource.data.blockId in userBlocks())) ||
+        // owner can update only own project
+        (hasRole('project_owner') && resource.data.ownerId == request.auth.uid)
+      ) && (resource.data.status != 'completed'); // no updates after completion
+      allow delete: if hasRole('super_nodal') || hasRole('dev_admin');
+
+      match /updates/{updateId} {
+        allow read: if hasRole('super_nodal') || hasRole('dev_admin') || (hasRole('sub_nodal') && (get(/databases/$(database)/documents/projects/$(projectId)).data.blockId in userBlocks())) || (hasRole('project_owner') && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid);
+        allow write: if (
+          hasRole('super_nodal') || hasRole('dev_admin') ||
+          (hasRole('sub_nodal') && (get(/databases/$(database)/documents/projects/$(projectId)).data.blockId in userBlocks())) ||
+          (hasRole('project_owner') && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid)
+        ) && (get(/databases/$(database)/documents/projects/$(projectId)).data.status != 'completed');
+      }
+
+      match /logs/{logId} {
+        allow read: if hasRole('super_nodal') || hasRole('sub_nodal');
+        allow write: if false; // immutable from client
+      }
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if hasRole('super_nodal') || hasRole('sub_nodal');
+      allow write: if false; // write via CF only
+    }
+
+    match /blocks/{blockId} { allow read: if true; allow write: if hasRole('dev_admin'); }
+    match /villages/{villageId} { allow read: if true; allow write: if hasRole('dev_admin'); }
+  }
+}

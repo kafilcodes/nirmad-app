@@ -1,0 +1,20 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() { return request.auth != null; }
+    function userBlocks() { return isSignedIn() ? (request.auth.token.blocks != null ? request.auth.token.blocks : []) : []; }
+    function hasRole(role) { return isSignedIn() && role in request.auth.token.roles; }
+
+    match /projects/{projectId}/{folder}/{fileName} {
+      allow read: if hasRole('super_nodal') || hasRole('dev_admin') ||
+                   (hasRole('sub_nodal') && (get(/databases/(default)/documents/projects/$(projectId)).data.blockId in userBlocks())) ||
+                   (hasRole('project_owner') && get(/databases/(default)/documents/projects/$(projectId)).data.ownerId == request.auth.uid);
+
+      allow write: if (
+        hasRole('super_nodal') || hasRole('dev_admin') ||
+        (hasRole('sub_nodal') && (get(/databases/(default)/documents/projects/$(projectId)).data.blockId in userBlocks())) ||
+        (hasRole('project_owner') && get(/databases/(default)/documents/projects/$(projectId)).data.ownerId == request.auth.uid)
+      ) && (get(/databases/(default)/documents/projects/$(projectId)).data.status != 'completed');
+    }
+  }
+}
