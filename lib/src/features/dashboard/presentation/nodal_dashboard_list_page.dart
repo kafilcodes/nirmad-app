@@ -1,11 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../projects/domain/project.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../services/functions_service.dart';
 import '../../../shared/ui/toast.dart';
+import '../../../shared/widgets/no_data.dart';
 
 final _statusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
 final _lastDocProvider = StateProvider<DocumentSnapshot<Map<String, dynamic>>?>((_) => null);
@@ -26,7 +28,7 @@ class NodalDashboardListPage extends ConsumerWidget {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final snap = snapshot.data as QuerySnapshot<Map<String, dynamic>>;
           final docs = snap.docs;
-          if (docs.isEmpty) return const Center(child: Text('No projects found'));
+          if (docs.isEmpty) return const NoData(message: 'No projects');
           final items = docs.map(Project.fromDoc).toList();
           // Keep track of last doc
           if (docs.isNotEmpty) {
@@ -48,16 +50,20 @@ class NodalDashboardListPage extends ConsumerWidget {
                   onSelected: (value) async {
                     if (value == 'export') {
                       try {
-                        showToast(context, 'Preparing export…', icon: Icons.download_outlined);
+                        if (!context.mounted) return;
+                        showToast(context, 'Preparing export…', icon: CupertinoIcons.arrow_down_doc);
                         final url = await ref.read(functionsServiceProvider).exportProjectZip(p.id);
                         final uri = Uri.parse(url);
+                        if (!context.mounted) return;
                         if (await canLaunchUrl(uri)) {
                           await launchUrl(uri, mode: LaunchMode.externalApplication);
                         } else {
-                          showToast(context, 'Download link: $url', icon: Icons.link);
+                          if (!context.mounted) return;
+                          showToast(context, 'Download link: $url', icon: CupertinoIcons.link);
                         }
                       } catch (e) {
-                        showToast(context, 'Export failed: $e', icon: Icons.error_outline, error: true);
+                        if (!context.mounted) return;
+                        showToast(context, 'Export failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
                       }
                     }
                   },
@@ -76,16 +82,19 @@ class NodalDashboardListPage extends ConsumerWidget {
           children: [
             const Text('Status:'),
             const SizedBox(width: 8),
-            DropdownButton<ProjectStatus?>(
-              value: status,
-              items: [
-                const DropdownMenuItem(value: null, child: Text('All')),
-                ...ProjectStatus.values.map((s) => DropdownMenuItem(value: s, child: Text(s.name))),
-              ],
-              onChanged: (v) {
-                ref.read(_statusFilterProvider.notifier).state = v;
-                ref.read(_lastDocProvider.notifier).state = null; // reset pagination
-              },
+            Flexible(
+              child: DropdownButton<ProjectStatus?>(
+                isExpanded: true,
+                value: status,
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('All')),
+                  ...ProjectStatus.values.map((s) => DropdownMenuItem(value: s, child: Text(s.name, overflow: TextOverflow.ellipsis))),
+                ],
+                onChanged: (v) {
+                  ref.read(_statusFilterProvider.notifier).state = v;
+                  ref.read(_lastDocProvider.notifier).state = null; // reset pagination
+                },
+              ),
             ),
             const Spacer(),
             FilledButton(

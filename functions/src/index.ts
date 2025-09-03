@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue, QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
 import * as functions from 'firebase-functions';
 import archiver from 'archiver';
@@ -10,6 +11,7 @@ initializeApp();
 const auth = getAuth();
 const db = getFirestore();
 const storage = getStorage();
+const fcm = getMessaging();
 
 const WHITELISTED_UIDS = new Set<string>([
   'IckVUW6Mg4Ue1XNcVWsxTidSiBY2',
@@ -339,3 +341,106 @@ export const ensureDevAdminForWhitelisted = functions.https.onCall(async (
   await db.collection('users').doc(me.uid).set({ email: me.email, role: 'dev_admin', blocks: [] }, { merge: true });
   return { ok: true };
 });
+
+// --- Notifications helpers ---
+type AppUser = { email?: string; role?: string; blocks?: string[] };
+
+async function getUsersByRole(role: string, blocks?: string[]): Promise<Array<{ id: string; data: AppUser }>> {
+  let q = db.collection('users').where('role', '==', role) as FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
+  if (blocks && blocks.length > 0 && role === 'sub_nodal') {
+    // sub_nodal must include at least one of the blocks
+    q = q.where('blocks', 'array-contains-any', blocks.slice(0, 10));
+  }
+  const snap = await q.get();
+  return snap.docs.map(d => ({ id: d.id, data: d.data() as AppUser }));
+}
+
+async function createNotificationDoc(toUserId: string, payload: { title: string; body: string; data?: Record<string, string> }) {
+  await db.collection('notifications').add({
+    userId: toUserId,
+    title: payload.title,
+    body: payload.body,
+    data: payload.data || {},
+    createdAt: FieldValue.serverTimestamp(),
+    readAt: null,
+  });
+}
+
+async function sendToUserTokens(userId: string, payload: { title: string; body: string; data?: Record<string, string> }) {
+  const tokensSnap = await db.collection('users').doc(userId).collection('fcmTokens').get();
+  if (tokensSnap.empty) return;
+  const tokens = tokensSnap.docs.map(d => d.id);
+  const message = {
+    notification: { title: payload.title, body: payload.body },
+    webpush: { headers: { Urgency: 'normal' } },
+    data: payload.data || {},
+    tokens,
+  } as any;
+  const resp = await fcm.sendEachForMulticast(message);
+  // Clean up invalid tokens
+  const invalidIdx = resp.responses.map((r, i) => (!r.success ? i : -1)).filter(i => i >= 0);
+  const toDelete = invalidIdx.map(i => tokens[i]);
+  if (toDelete.length > 0) {
+    const batch = db.batch();
+    toDelete.forEach(t => batch.delete(db.collection('users').doc(userId).collection('fcmTokens').doc(t)));
+    await batch.commit();
+  }
+}
+
+async function notifyUsers(userIds: string[], payload: { title: string; body: string; data?: Record<string, string> }) {
+  await Promise.all(userIds.map(async (uid) => {
+    await createNotificationDoc(uid, payload);
+    await sendToUserTokens(uid, payload).catch((e) => functions.logger.warn('FCM send error', uid, e));
+  }));
+}
+
+// Trigger notifications on project create/update
+export const onProjectWrite = functions.region('us-central1').firestore
+  .document('projects/{projectId}')
+  .onWrite(async (change, context) => {
+    const projectId = context.params.projectId as string;
+    const after = change.after.exists ? change.after.data() as any : null;
+    const before = change.before.exists ? change.before.data() as any : null;
+
+    if (!after && before) {
+      // Deleted: notify super_nodal
+      const supers = await getUsersByRole('super_nodal');
+      const msg = { title: 'Project deleted', body: `Project ${projectId} was deleted`, data: { projectId } };
+      await notifyUsers(supers.map(u => u.id), msg);
+      return;
+    }
+    if (!after) return;
+
+    const name = after.name || projectId;
+    const blockId = after.blockId as string | undefined;
+    const ownerId = after.ownerId as string | undefined;
+    const status = after.status as string | undefined;
+
+    // Determine action
+    const created = !before;
+    const statusChanged = before && after && before.status !== after.status;
+
+    const targets: Set<string> = new Set();
+    // Super nodals always get notified
+    const supers = await getUsersByRole('super_nodal');
+    supers.forEach(u => targets.add(u.id));
+    // Sub nodals in same block get notified
+    if (blockId) {
+      const subs = await getUsersByRole('sub_nodal', [blockId]);
+      subs.forEach(u => targets.add(u.id));
+    }
+    // Owner gets notified too
+    if (ownerId) targets.add(ownerId);
+
+    let title = 'Project updated';
+    let body = `${name} updated`;
+    if (created) {
+      title = 'New project created';
+      body = `${name} created`;
+    } else if (statusChanged) {
+      title = 'Project status changed';
+      body = `${name} is now ${status}`;
+    }
+    const data: Record<string, string> = { projectId, ...(status ? { status: String(status) } : {}) };
+    await notifyUsers(Array.from(targets), { title, body, data });
+  });

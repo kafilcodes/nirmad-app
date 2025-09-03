@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/i18n/locale_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/widgets/branding_footer.dart';
+import '../../auth/data/auth_repository.dart';
 
 class LandingPage extends ConsumerWidget {
   const LandingPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authStateProvider);
+    if (auth.isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Nirmad'),
@@ -18,7 +26,7 @@ class LandingPage extends ConsumerWidget {
               final current = ref.watch(localeProvider) ?? const Locale('en');
               final isEn = current.languageCode == 'en';
               final label = isEn ? 'EN' : 'HI';
-              final icon = isEn ? Icons.language : Icons.translate;
+              final icon = isEn ? CupertinoIcons.globe : CupertinoIcons.textformat_alt;
               return TextButton.icon(
                 onPressed: () => ref.read(localeProvider.notifier).state = isEn ? const Locale('hi') : const Locale('en'),
                 icon: Icon(icon),
@@ -37,19 +45,19 @@ class LandingPage extends ConsumerWidget {
             const SizedBox(height: 16),
             _Tile(
               label: 'Nodal Officer',
-              icon: Icons.admin_panel_settings,
+              icon: CupertinoIcons.person_badge_plus,
               onTap: () => context.go('/login'),
             ),
             const SizedBox(height: 16),
             _Tile(
               label: 'Project Owner',
-              icon: Icons.account_circle,
+              icon: CupertinoIcons.person_crop_circle,
               onTap: () => context.go('/login'),
             ),
             const SizedBox(height: 16),
             _Tile(
               label: 'Project Entry',
-              icon: Icons.edit_note,
+              icon: CupertinoIcons.pencil_circle,
               onTap: () => context.go('/login'),
             ),
             const SizedBox(height: 16),

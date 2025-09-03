@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../services/functions_service.dart';
 import '../../../shared/ui/toast.dart';
@@ -47,15 +48,18 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
               children: [
                 const Text('Role:'),
                 const SizedBox(width: 12),
-                DropdownButton<String>(
-                  value: _role,
-                  items: const [
-                    DropdownMenuItem(value: 'super_nodal', child: Text('Super Nodal')),
-                    DropdownMenuItem(value: 'sub_nodal', child: Text('Sub Nodal')),
-                    DropdownMenuItem(value: 'project_owner', child: Text('Project Owner')),
-                    DropdownMenuItem(value: 'dev_admin', child: Text('Dev Admin')),
-                  ],
-                  onChanged: (v) => setState(() => _role = v ?? _role),
+                Flexible(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: _role,
+                    items: const [
+                      DropdownMenuItem(value: 'super_nodal', child: Text('Super Nodal')),
+                      DropdownMenuItem(value: 'sub_nodal', child: Text('Sub Nodal')),
+                      DropdownMenuItem(value: 'project_owner', child: Text('Project Owner')),
+                      DropdownMenuItem(value: 'dev_admin', child: Text('Dev Admin')),
+                    ],
+                    onChanged: (v) => setState(() => _role = v ?? _role),
+                  ),
                 ),
               ],
             ),
@@ -70,7 +74,7 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: _busy ? null : _assign,
-              icon: _busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save),
+              icon: _busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.check_mark),
               label: const Text('Set Claims'),
             ),
             const Divider(height: 32),
@@ -86,7 +90,7 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _busy ? null : _seed,
-              icon: _busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.person_add),
+              icon: _busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.person_crop_circle_badge_plus),
               label: const Text('Create Test Users'),
             ),
           ],
@@ -98,7 +102,7 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
   Future<void> _assign() async {
     final email = _emailCtrl.text.trim();
     if (email.isEmpty) {
-      showToast(context, 'Email is required', icon: Icons.error_outline, error: true);
+  showToast(context, 'Email is required', icon: CupertinoIcons.exclamationmark_triangle, error: true);
       return;
     }
     final blocks = _blocksCtrl.text
@@ -109,9 +113,9 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
     setState(() => _busy = true);
     try {
       await ref.read(functionsServiceProvider).setUserClaims(email: email, role: _role, blocks: blocks.isEmpty ? null : blocks);
-      showToast(context, 'Claims updated', icon: Icons.verified_outlined);
+  if (!mounted) return; showToast(context, 'Claims updated', icon: CupertinoIcons.checkmark_seal);
     } catch (e) {
-      showToast(context, 'Failed: $e', icon: Icons.error_outline, error: true);
+  if (!mounted) return; showToast(context, 'Failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -130,9 +134,9 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
           .toList();
   final svc = ref.read(functionsServiceProvider);
   await svc.seedTestUsers(owners: owners, nodals: nodals, domain: domain, blockIds: blocks.isEmpty ? null : blocks);
-  showToast(context, 'Seeding requested. Check Firebase Auth for new users.', icon: Icons.person_add_alt);
+  if (!mounted) return; showToast(context, 'Seeding requested. Check Firebase Auth for new users.', icon: CupertinoIcons.person_2);
     } catch (e) {
-  showToast(context, 'Seeding failed: $e', icon: Icons.error_outline, error: true);
+  if (!mounted) return; showToast(context, 'Seeding failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

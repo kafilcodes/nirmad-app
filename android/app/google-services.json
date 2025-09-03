@@ -2,7 +2,7 @@
   "project_info": {
     "project_number": "492535577760",
     "project_id": "nirmad-app",
-    "storage_bucket": "nirmad-app.firebasestorage.app"
+  "storage_bucket": "nirmad-app.appspot.com"
   },
   "client": [
     {

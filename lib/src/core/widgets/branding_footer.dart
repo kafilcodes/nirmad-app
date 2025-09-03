@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 
 class BrandingFooter extends StatelessWidget {
   final EdgeInsets padding;
@@ -11,7 +12,7 @@ class BrandingFooter extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: const [
-          Icon(Icons.approval, size: 16),
+          Icon(CupertinoIcons.checkmark_seal, size: 16),
           SizedBox(width: 6),
           Text('Dhamtari District Administration ®', style: TextStyle(fontSize: 12)),
         ],

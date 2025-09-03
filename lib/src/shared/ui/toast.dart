@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:toastification/toastification.dart';
 
-/// Compact, floating toast/snackbar used across the app.
-void showToast(BuildContext context, String message, {IconData icon = Icons.info_outline, bool error = false, double width = 380}) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Row(children:[Icon(icon, size: 18), const SizedBox(width: 8), Expanded(child: Text(message))]),
-      behavior: SnackBarBehavior.floating,
-      width: width,
-      backgroundColor: error ? Colors.red.withOpacity(0.9) : null,
-    ),
+/// Compact, floating toast used across the app (wraps toastification).
+void showToast(
+  BuildContext context,
+  String message, {
+  IconData icon = CupertinoIcons.info,
+  bool error = false,
+  double width = 380, // kept for backward compat; not used by toastification
+}) {
+  toastification.show(
+    context: context,
+    title: Text(message),
+    type: error ? ToastificationType.error : ToastificationType.info,
+    style: ToastificationStyle.fillColored,
+    autoCloseDuration: const Duration(seconds: 3),
+    showProgressBar: false,
+    icon: Icon(icon),
   );
 }

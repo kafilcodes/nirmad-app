@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../auth/data/auth_repository.dart';
@@ -33,7 +34,11 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
   }
 
   Future<void> _addDoc() async {
-    final res = await FilePicker.platform.pickFiles(withData: false);
+    final res = await FilePicker.platform.pickFiles(
+      withData: false,
+      type: FileType.custom,
+      allowedExtensions: const ['pdf', 'jpg', 'jpeg'],
+    );
     final filePath = res?.files.single.path;
     if (filePath == null) return;
   final path = await ref.read(storageServiceProvider).uploadProjectDoc(projectId: widget.project.id, file: File(filePath));
@@ -100,8 +105,8 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
           ),
           const SizedBox(height: 12),
           Wrap(spacing: 8, children: [
-            ElevatedButton.icon(onPressed: _addPhoto, icon: const Icon(Icons.camera_alt), label: const Text('Add Photo')),
-            ElevatedButton.icon(onPressed: _addDoc, icon: const Icon(Icons.attach_file), label: const Text('Add Document')),
+            ElevatedButton.icon(onPressed: _addPhoto, icon: const Icon(CupertinoIcons.camera), label: const Text('Add Photo')),
+            ElevatedButton.icon(onPressed: _addDoc, icon: const Icon(CupertinoIcons.paperclip), label: const Text('Add Document')),
           ]),
           const SizedBox(height: 8),
           if ((_photos[index] ?? const []).isNotEmpty) ...[

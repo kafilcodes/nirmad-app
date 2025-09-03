@@ -1,20 +1,75 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    function isSignedIn() { return request.auth != null; }
-    function userBlocks() { return isSignedIn() ? (request.auth.token.blocks != null ? request.auth.token.blocks : []) : []; }
-    function hasRole(role) { return isSignedIn() && role in request.auth.token.roles; }
+    // Auth and role helpers
+    function authed() { return request.auth != null; }
+    function role() { return request.auth.token.role != null ? request.auth.token.role : ''; }
+    function isDevAdmin() { return role() == 'dev_admin'; }
+    function isUploader() { return request.resource.metadata.uploaderId == request.auth.uid; }
 
-    match /projects/{projectId}/{folder}/{fileName} {
-      allow read: if hasRole('super_nodal') || hasRole('dev_admin') ||
-                   (hasRole('sub_nodal') && (get(/databases/(default)/documents/projects/$(projectId)).data.blockId in userBlocks())) ||
-                   (hasRole('project_owner') && get(/databases/(default)/documents/projects/$(projectId)).data.ownerId == request.auth.uid);
+    // Size/type guards
+    function isAllowedImage() {
+      return (request.resource.contentType in ['image/jpeg','image/png','image/heic','image/heif']) &&
+             request.resource.size <= 5 * 1024 * 1024; // 5MB per photo
+    }
+    function isVideoMp4() {
+      return request.resource.contentType == 'video/mp4' &&
+             request.resource.size <= 20 * 1024 * 1024; // 20MB per video
+    }
+    function isDocAcceptable() {
+      // Support PDF, Excel, and Office docs; CSV; and allow JPEG for some scanned docs, up to 20MB
+      return (request.resource.contentType in [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'text/csv',
+                'image/jpeg'
+              ]) && request.resource.size <= 20 * 1024 * 1024;
+    }
 
-      allow write: if (
-        hasRole('super_nodal') || hasRole('dev_admin') ||
-        (hasRole('sub_nodal') && (get(/databases/(default)/documents/projects/$(projectId)).data.blockId in userBlocks())) ||
-        (hasRole('project_owner') && get(/databases/(default)/documents/projects/$(projectId)).data.ownerId == request.auth.uid)
-      ) && (get(/databases/(default)/documents/projects/$(projectId)).data.status != 'completed');
+    // Project media buckets
+    match /projects/{projectId}/photos/{fileId} {
+      allow read: if authed();
+      // Enforce allowed images and tag uploader; dev admin may bypass uploader check
+      allow write: if authed() && isAllowedImage() && (isUploader() || isDevAdmin());
+    }
+
+    match /projects/{projectId}/videos/{fileId} {
+      allow read: if authed();
+      allow write: if authed() && isVideoMp4() && (isUploader() || isDevAdmin());
+    }
+
+  match /projects/{projectId}/docs/{fileId} {
+      allow read: if authed();
+      allow write: if authed() && isDocAcceptable() && (isUploader() || isDevAdmin());
+    }
+
+    // Sanction subfolders
+    match /projects/{projectId}/sanction/technical_approval_docs/{fileId} {
+      allow read: if authed();
+      allow write: if authed() && request.resource.contentType == 'application/pdf' && request.resource.size <= 20 * 1024 * 1024 && (isUploader() || isDevAdmin());
+    }
+    match /projects/{projectId}/sanction/technical_approval_photos/{fileId} {
+      allow read: if authed();
+      allow write: if authed() && isAllowedImage() && (isUploader() || isDevAdmin());
+    }
+    match /projects/{projectId}/sanction/admin_approval_docs/{fileId} {
+      allow read: if authed();
+      allow write: if authed() && request.resource.contentType == 'application/pdf' && request.resource.size <= 20 * 1024 * 1024 && (isUploader() || isDevAdmin());
+    }
+
+    // Work categorized docs
+    match /projects/{projectId}/work/{category}/{fileId} {
+      allow read: if authed();
+      allow write: if authed() && isDocAcceptable() && (isUploader() || isDevAdmin());
+    }
+
+  // Default: deny other writes; allow reads only to authed users (optional tighten later)
+    match /{allPaths=**} {
+      allow read: if authed();
+      allow write: if false;
     }
   }
 }

@@ -49,7 +49,7 @@ class MetricsTiles extends StatelessWidget {
 
   Widget _tile(String label, int value, Color color) {
     return Card(
-      color: color.withValues(alpha: 0.1),
+  color: color.withValues(alpha: 0.1),
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(

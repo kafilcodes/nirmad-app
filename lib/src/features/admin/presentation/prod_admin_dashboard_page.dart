@@ -10,13 +10,18 @@ import 'package:csv/csv.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:animations/animations.dart';
+import '../../dashboard/presentation/projects_charts.dart';
+import '../../../shared/widgets/app_sidebar.dart';
 import '../../../shared/ui/toast.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart' as xls;
 import '../../auth/data/auth_repository.dart';
 import '../../../services/functions_service.dart';
 import 'admin_theme.dart';
+import '../../profile/presentation/profile_page.dart';
+import '../../../shared/widgets/no_data.dart';
 
 class ProdAdminDashboardPage extends ConsumerStatefulWidget {
   const ProdAdminDashboardPage({super.key});
@@ -27,11 +32,18 @@ class ProdAdminDashboardPage extends ConsumerStatefulWidget {
 
 class _ProdAdminDashboardPageState extends ConsumerState<ProdAdminDashboardPage> with SingleTickerProviderStateMixin {
   late final TabController _tab;
+  int _sideIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 3, vsync: this);
+    _tab = TabController(length: 4, vsync: this);
+    _sideIndex = _tab.index;
+    _tab.addListener(() {
+      if (_sideIndex != _tab.index) {
+        setState(() => _sideIndex = _tab.index);
+      }
+    });
     // Ensure dev_admin claims for whitelisted admin and refresh token (fixes Firestore rule 400s on web)
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
@@ -39,7 +51,7 @@ class _ProdAdminDashboardPageState extends ConsumerState<ProdAdminDashboardPage>
         if (appUser != null && appUser.role.key == 'dev_admin') {
           await ref.read(functionsServiceProvider).ensureDevAdminForWhitelisted();
           await fb.FirebaseAuth.instance.currentUser?.getIdToken(true);
-          setState(() {});
+          if (mounted) setState(() {});
         }
       } catch (_) {
         // ignore if not whitelisted or already has claims
@@ -55,28 +67,41 @@ class _ProdAdminDashboardPageState extends ConsumerState<ProdAdminDashboardPage>
 
   @override
   Widget build(BuildContext context) {
-    final auth = ref.read(authRepositoryProvider);
     final user = ref.watch(authStateProvider).value;
+    final isCompact = MediaQuery.of(context).size.width < 720;
     return Theme(
       data: AdminTheme.amoledDark,
       child: Scaffold(
-    body: Row(
+        body: Row(
           children: [
-      _AdminSidebar(controller: _tab, onLogout: auth.signOut, email: user?.email ?? '', avatarUrl: null),
-      VerticalDivider(width: 1, color: Colors.white.withOpacity(0.06)),
+            if (!isCompact) ...[
+              SizedBox(
+                width: 256,
+                child: AppSidebar(
+                  selectedIndex: _sideIndex,
+                  onSelect: (i) => setState(() { _sideIndex = i; _tab.index = i; }),
+                ),
+              ),
+              VerticalDivider(width: 1, color: Colors.white.withValues(alpha: 0.06)),
+            ],
             Expanded(
               child: Column(
                 children: [
                   _AdminTopBar(email: user?.email ?? ''),
-          Divider(height: 1, color: Colors.white.withOpacity(0.06)),
+                  Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
                   Expanded(
-                    child: TabBarView(
+                    child: PageTransitionSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      transitionBuilder: (child, a, sa) => FadeThroughTransition(animation: a, secondaryAnimation: sa, child: child),
+                      child: TabBarView(
                       controller: _tab,
                       children: const [
                         _AdminStatsTab(),
                         _ManageUsersTab(),
                         _ManageProjectsTab(),
+                        ProfilePage(),
                       ],
+                      ),
                     ),
                   ),
                 ],
@@ -84,144 +109,27 @@ class _ProdAdminDashboardPageState extends ConsumerState<ProdAdminDashboardPage>
             ),
           ],
         ),
+        bottomNavigationBar: isCompact
+            ? CupertinoTabBar(
+                currentIndex: _sideIndex,
+                onTap: (i) => setState(() { _sideIndex = i; _tab.index = i; }),
+                items: const [
+                  BottomNavigationBarItem(icon: Icon(CupertinoIcons.square_grid_2x2), label: 'Stats'),
+                  BottomNavigationBarItem(icon: Icon(CupertinoIcons.group), label: 'Users'),
+                  BottomNavigationBarItem(icon: Icon(CupertinoIcons.folder), label: 'Projects'),
+                  BottomNavigationBarItem(icon: Icon(CupertinoIcons.person), label: 'Profile'),
+                ],
+              )
+            : null,
       ),
     );
   }
 }
 
-void _showSnack(BuildContext context, String message, {IconData icon = Icons.info_outline, bool error = false}) =>
+void _showSnack(BuildContext context, String message, {IconData icon = CupertinoIcons.info, bool error = false}) =>
   showToast(context, message, icon: icon, error: error);
 
-class _AdminSidebar extends StatefulWidget {
-  final TabController controller;
-  final VoidCallback onLogout;
-  final String email;
-  final String? avatarUrl;
-  const _AdminSidebar({required this.controller, required this.onLogout, required this.email, this.avatarUrl});
-
-  @override
-  State<_AdminSidebar> createState() => _AdminSidebarState();
-}
-
-class _AdminSidebarState extends State<_AdminSidebar> {
-  bool collapsed = false;
-  @override
-  void initState() {
-    super.initState();
-    widget.controller.addListener(_onTabChanged);
-  }
-
-  @override
-  void dispose() {
-    widget.controller.removeListener(_onTabChanged);
-    super.dispose();
-  }
-
-  void _onTabChanged() {
-    if (mounted) setState(() {});
-  }
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      width: collapsed ? 72 : 256,
-      color: const Color(0xFF0B0B0B),
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: collapsed ? 6 : 12, vertical: 10),
-            child: collapsed
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.shield_moon),
-                      const SizedBox(height: 6),
-                      InkWell(
-                        onTap: () => setState(() => collapsed = !collapsed),
-                        borderRadius: BorderRadius.circular(6),
-                        child: const Padding(
-                          padding: EdgeInsets.all(6.0),
-                          child: Icon(Icons.chevron_right, size: 18),
-                        ),
-                      ),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      const Icon(Icons.shield_moon),
-                      const SizedBox(width: 8),
-                      const Expanded(child: Text('Admin', overflow: TextOverflow.ellipsis)),
-                      InkWell(
-                        onTap: () => setState(() => collapsed = !collapsed),
-                        borderRadius: BorderRadius.circular(6),
-                        child: const Padding(
-                          padding: EdgeInsets.all(6.0),
-                          child: Icon(Icons.chevron_left, size: 18),
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-          const SizedBox(height: 4),
-          _SideItem(icon: Icons.dashboard_outlined, label: 'Dashboard', index: 0, controller: widget.controller, collapsed: collapsed),
-          _SideItem(icon: Icons.group_outlined, label: 'Users', index: 1, controller: widget.controller, collapsed: collapsed),
-          _SideItem(icon: Icons.folder_outlined, label: 'Projects', index: 2, controller: widget.controller, collapsed: collapsed),
-          const Spacer(),
-          Divider(height: 1, color: Colors.white.withOpacity(0.06)),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: collapsed ? 6 : 12, vertical: 10),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 12,
-                  backgroundImage: (widget.avatarUrl != null && widget.avatarUrl!.isNotEmpty) ? NetworkImage(widget.avatarUrl!) : null,
-                  child: (widget.avatarUrl == null || widget.avatarUrl!.isEmpty)
-                      ? const Icon(Icons.person, size: 14)
-                      : null,
-                ),
-                if (!collapsed) ...[
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(widget.email, style: const TextStyle(fontSize: 11, color: Color(0xFF9A9A9A)), overflow: TextOverflow.ellipsis)),
-                  const SizedBox(width: 8),
-                  Tooltip(
-                    message: 'Logout',
-                    child: IconButton(
-                      onPressed: widget.onLogout,
-                      icon: const Icon(Icons.logout),
-                      iconSize: 18,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                    ),
-                  ),
-                ] else ...[
-                  IconButton(onPressed: widget.onLogout, icon: const Icon(Icons.logout), iconSize: 18, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 32, minHeight: 32)),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SideItem extends StatelessWidget {
-  final IconData icon; final String label; final int index; final TabController controller; final bool collapsed;
-  const _SideItem({required this.icon, required this.label, required this.index, required this.controller, required this.collapsed});
-  @override
-  Widget build(BuildContext context) {
-    final selected = controller.index == index;
-    return ListTile(
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      minLeadingWidth: 0,
-  leading: Icon(icon, color: selected ? Theme.of(context).colorScheme.primary : null),
-  title: collapsed ? null : Text(label, style: TextStyle(color: selected ? Theme.of(context).colorScheme.primary : null, fontWeight: selected ? FontWeight.w600 : null)),
-      selected: selected,
-  onTap: () => controller.index = index,
-    );
-  }
-}
+// Replaced custom _AdminSidebar with SidebarX
 
 class _AdminTopBar extends StatelessWidget {
   final String email;
@@ -233,7 +141,7 @@ class _AdminTopBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(children: [
         const Spacer(),
-        IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_outlined)),
+  IconButton(onPressed: () {}, icon: const Icon(CupertinoIcons.bell)),
         const SizedBox(width: 4),
         CircleAvatar(radius: 14, child: Text(email.isNotEmpty ? email[0].toUpperCase() : '?')),
       ]),
@@ -247,8 +155,7 @@ class _AdminStatsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final db = FirebaseFirestore.instance;
-    // Build dashboard with graceful fallbacks: always show cards even if collections are empty
-    return StreamBuilder(
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: db.collection('projects').snapshots(),
       builder: (context, snap) {
         final docs = (snap.hasData) ? (snap.data as QuerySnapshot<Map<String, dynamic>>).docs : const <QueryDocumentSnapshot<Map<String, dynamic>>>[];
@@ -274,10 +181,10 @@ class _AdminStatsTab extends StatelessWidget {
                         final cols = w > 1280 ? 4 : w > 960 ? 3 : w > 640 ? 2 : 1;
                         final tileW = (w - (gap * (cols - 1))) / cols;
                         return [
-                          _metric('Total Projects', total, Colors.blue, Icons.dashboard_outlined, tileW),
-                          _metric('In Progress', inProgress, Colors.orange, Icons.autorenew, tileW),
-                          _metric('Completed', completed, Colors.green, Icons.check_circle_outline, tileW),
-                          _metric('Cancelled', cancelled, Colors.redAccent, Icons.cancel_outlined, tileW),
+                          _metric('Total Projects', total, Colors.blue, CupertinoIcons.folder, tileW),
+                          _metric('In Progress', inProgress, Colors.orange, CupertinoIcons.arrow_2_circlepath, tileW),
+                          _metric('Completed', completed, Colors.green, CupertinoIcons.check_mark_circled, tileW),
+                          _metric('Cancelled', cancelled, Colors.redAccent, CupertinoIcons.xmark_octagon, tileW),
                         ];
                       }(),
                     ],
@@ -304,10 +211,10 @@ class _AdminStatsTab extends StatelessWidget {
                           final cols = w > 1280 ? 4 : w > 960 ? 3 : w > 640 ? 2 : 1;
                           final tileW = (w - (gap * (cols - 1))) / cols;
                           return [
-            _metric('Total Users', nonAdmins.length, Colors.cyan, Icons.group_outlined, tileW),
-            _metric('Owners', owners, Colors.teal, Icons.badge_outlined, tileW),
-            _metric('Nodals', nodals, Colors.indigo, Icons.account_tree_outlined, tileW),
-            _metric('Super Nodals', supers, Colors.purple, Icons.verified_outlined, tileW),
+            _metric('Total Users', nonAdmins.length, Colors.cyan, CupertinoIcons.group, tileW),
+            _metric('Owners', owners, Colors.teal, CupertinoIcons.person_crop_rectangle, tileW),
+            _metric('Nodals', nodals, Colors.indigo, CupertinoIcons.tree, tileW),
+            _metric('Super Nodals', supers, Colors.purple, CupertinoIcons.check_mark_circled, tileW),
                           ];
                         }(),
                       );
@@ -329,7 +236,7 @@ class _AdminStatsTab extends StatelessWidget {
         elevation: 0,
         child: Container(
           decoration: BoxDecoration(
-            gradient: LinearGradient(colors: [color.withOpacity(0.14), color.withOpacity(0.04)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            gradient: LinearGradient(colors: [color.withValues(alpha: 0.14), color.withValues(alpha: 0.04)], begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Padding(
@@ -361,8 +268,8 @@ class _ManageUsersTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final db = FirebaseFirestore.instance;
-    final fns = ref.read(functionsServiceProvider);
-    return _UsersTabContent(db: db, fns: fns);
+  final fns = ref.read(functionsServiceProvider);
+  return _UsersTabContent(db: db, fns: fns);
   }
 }
 
@@ -395,9 +302,12 @@ class _UsersTabContentState extends State<_UsersTabContent> {
   @override
   Widget build(BuildContext context) {
     final q = widget.db.collection('users').orderBy('createdAt', descending: true);
-  return Column(
+    return Column(
       children: [
-        _UsersToolbar(
+        PageTransitionSwitcher(
+          duration: const Duration(milliseconds: 150),
+          transitionBuilder: (child, a, sa) => FadeThroughTransition(animation: a, secondaryAnimation: sa, child: child),
+          child: _UsersToolbar(
           grid: grid,
           selectedCount: selected.length,
           onToggleView: () => setState(() => grid = !grid),
@@ -417,11 +327,12 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                 content: const Text('This will remove users from Firebase Auth and Firestore.'),
                 actions: [
                   TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                  FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.delete_forever), label: const Text('Delete')),
+                  FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.delete), label: const Text('Delete')),
                 ],
               ),
             );
             if (confirm != true) return;
+            if (!context.mounted) return;
             try {
               showDialog(
                 context: context,
@@ -437,22 +348,29 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                   ),
                 ),
               );
+              final nav = Navigator.of(context, rootNavigator: true);
               final results = await widget.fns.adminBulkDeleteUsers(ids);
-              if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+              if (!context.mounted) return;
+              nav.pop();
               final ok = results.where((r) => r['ok'] == true).length;
               final fail = results.length - ok;
-              if (context.mounted) _showSnack(context, 'Deleted: $ok ok, $fail failed', icon: Icons.delete_outline, error: fail > 0);
+              if (!context.mounted) return;
+              _showSnack(context, 'Deleted: $ok ok, $fail failed', icon: CupertinoIcons.delete, error: fail > 0);
             } catch (e) {
-              if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-              if (context.mounted) _showSnack(context, 'Bulk delete failed: $e', icon: Icons.error_outline, error: true);
+              if (!context.mounted) return;
+              // Pop progress dialog if visible
+              Navigator.of(context, rootNavigator: true).maybePop();
+              if (!context.mounted) return;
+              _showSnack(context, 'Bulk delete failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
             } finally {
               if (mounted) setState(() => selected.clear());
             }
           },
           onCreateSingle: () => _createSingleUser(context),
           onCreateBulk: () => _showBulkInfo(context),
+          ),
         ),
-  Divider(height: 1, color: Colors.white.withOpacity(0.06)),
+  Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
         Expanded(
           child: StreamBuilder(
             stream: q.snapshots(),
@@ -460,7 +378,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
-              if (!snap.hasData) return const _EmptyState(message: 'No data');
+              if (!snap.hasData) return const NoData(message: 'No data');
               var docs = (snap.data as QuerySnapshot<Map<String, dynamic>>).docs;
               if (search.isNotEmpty) {
                 docs = docs.where((d) {
@@ -470,7 +388,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                 }).toList();
               }
               if (docs.isEmpty) return const _EmptyState(message: 'No users');
-              return grid
+              final listWidget = grid
                   ? GridView.builder(
                       padding: const EdgeInsets.all(12),
                       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 420, childAspectRatio: 3.2, crossAxisSpacing: 8, mainAxisSpacing: 8),
@@ -503,8 +421,13 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                           }
                         }),
                       ),
-                      separatorBuilder: (_, __) => Divider(height: 1, color: Colors.white.withOpacity(0.06)),
+                      separatorBuilder: (_, __) => Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
                     );
+              return PageTransitionSwitcher(
+                duration: const Duration(milliseconds: 200),
+                transitionBuilder: (child, a, sa) => FadeThroughTransition(animation: a, secondaryAnimation: sa, child: child),
+                child: KeyedSubtree(key: ValueKey('users_${grid ? 'grid' : 'list'}_${docs.length}_$search'), child: listWidget),
+              );
             },
           ),
         ),
@@ -545,11 +468,12 @@ class _UsersTabContentState extends State<_UsersTabContent> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.file_upload_outlined), label: const Text('Pick file')),
+          FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.square_stack_3d_up), label: const Text('Pick file')),
         ],
       ),
     );
     if (proceed == true) {
+      if (!context.mounted) return;
       await _createBulkUsers(context);
     }
   }
@@ -593,8 +517,9 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                 Align(alignment: Alignment.centerLeft, child: Text('Role', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
                 const SizedBox(height: 6),
                 DropdownButtonFormField<String>(
-                  value: roleCategory,
+                  initialValue: roleCategory,
                   decoration: const InputDecoration(labelText: 'User type'),
+                  isExpanded: true,
                   items: const [
                     DropdownMenuItem(value: 'project_owner', child: Text('Project Owner')),
                     DropdownMenuItem(value: 'nodal_officer', child: Text('Nodal Officer')),
@@ -606,8 +531,9 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                   Align(alignment: Alignment.centerLeft, child: Text('Nodal type', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
-                    value: nodalType,
+                    initialValue: nodalType,
                     decoration: const InputDecoration(labelText: 'Nodal type'),
+                    isExpanded: true,
                     items: const [
                       DropdownMenuItem(value: 'super_nodal', child: Text('Super Nodal')),
                       DropdownMenuItem(value: 'sub_nodal', child: Text('Sub Nodal')),
@@ -620,8 +546,9 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                   Align(alignment: Alignment.centerLeft, child: Text('Block', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
-                    value: selectedBlock,
+                    initialValue: selectedBlock,
                     decoration: const InputDecoration(labelText: 'Block'),
+                    isExpanded: true,
                     items: [
                       ...blockOptions.map((b) => DropdownMenuItem(value: b, child: Text(b[0].toUpperCase() + b.substring(1))))
                     ],
@@ -640,7 +567,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                   const SizedBox(height: 16),
                   Card(
                     elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.white.withOpacity(0.06))),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
                     child: Padding(
                       padding: const EdgeInsets.all(12.0),
                       child: Column(
@@ -648,13 +575,13 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                         children: [
                           const Text('Credentials', style: TextStyle(fontWeight: FontWeight.w700)),
                           const SizedBox(height: 8),
-                          Row(children:[const Icon(Icons.email_outlined, size: 16), const SizedBox(width: 6), Expanded(child: Text(emailCtrl.text.trim(), overflow: TextOverflow.ellipsis))]),
+                          Row(children:[const Icon(CupertinoIcons.envelope, size: 16), const SizedBox(width: 6), Expanded(child: Text(emailCtrl.text.trim(), overflow: TextOverflow.ellipsis))]),
                           const SizedBox(height: 6),
-                          Row(children:[const Icon(Icons.lock_outline, size: 16), const SizedBox(width: 6), Expanded(child: SelectableText(genPass!))]),
+                          Row(children:[const Icon(CupertinoIcons.lock, size: 16), const SizedBox(width: 6), Expanded(child: SelectableText(genPass!))]),
                           const SizedBox(height: 8),
                           Wrap(spacing: 8, runSpacing: 8, children: [
-                            Chip(label: Text('Role: ' + (roleCategory == 'nodal_officer' ? nodalType : 'project_owner'))),
-                            if (selectedBlock != null) Chip(label: Text('Block: ' + (selectedBlock![0].toUpperCase() + selectedBlock!.substring(1)))),
+                            Chip(label: Text('Role: ${roleCategory == 'nodal_officer' ? nodalType : 'project_owner'}')),
+                            if (selectedBlock != null) Chip(label: Text('Block: ${selectedBlock![0].toUpperCase()}${selectedBlock!.substring(1)}')),
                           ]),
                         ],
                       ),
@@ -676,7 +603,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                 final roleToUse = roleCategory == 'nodal_officer' ? nodalType : 'project_owner';
                 final needsBlock = roleToUse == 'project_owner' || roleToUse == 'sub_nodal';
                 if (needsBlock && (selectedBlock == null || selectedBlock!.isEmpty)) {
-                  if (context.mounted) _showSnack(context, 'Please select a block', icon: Icons.error_outline, error: true);
+                  if (context.mounted) _showSnack(context, 'Please select a block', icon: CupertinoIcons.exclamationmark_triangle, error: true);
                   return;
                 }
                 genPass = _genPassword();
@@ -709,7 +636,8 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                 onPressed: () async {
                   final email = emailCtrl.text.trim();
                   await Clipboard.setData(ClipboardData(text: 'Email: $email\nPassword: $genPass'));
-                  if (!mounted) return; _showSnack(context, 'Copied', icon: Icons.copy_all_outlined);
+                  if (!ctx.mounted) return;
+                  _showSnack(ctx, 'Copied', icon: Icons.copy_all_outlined);
                 },
                 child: const Text('Copy'),
               ),
@@ -815,6 +743,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
         // Call bulk create Auth users
         try {
           // Show progress dialog
+          if (!context.mounted) return;
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -829,8 +758,10 @@ class _UsersTabContentState extends State<_UsersTabContent> {
               ),
             ),
           );
+          final nav = Navigator.of(context, rootNavigator: true);
           final results = await widget.fns.bulkCreateAuthUsers(payload);
-          if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+          if (!context.mounted) return;
+          nav.pop();
           final ok = results.where((r) => r['ok'] == true).length;
           final fail = results.length - ok;
           // annotate rows with results
@@ -841,10 +772,14 @@ class _UsersTabContentState extends State<_UsersTabContent> {
             row[row.length - 2] = (r['ok'] == true) ? 'ok' : 'error';
             row[row.length - 1] = r['error']?.toString() ?? '';
           }
-          if (context.mounted) { _showSnack(context, 'Bulk: $ok ok, $fail failed', icon: Icons.file_upload_outlined); }
+          if (!context.mounted) return;
+          _showSnack(context, 'Bulk: $ok ok, $fail failed', icon: Icons.file_upload_outlined);
         } catch (e) {
-          if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-          if (context.mounted) { _showSnack(context, 'Bulk failed: $e', icon: Icons.error_outline, error: true); }
+          if (!context.mounted) return;
+          // progress dialog may still be open
+          Navigator.of(context, rootNavigator: true).maybePop();
+          if (!context.mounted) return;
+          _showSnack(context, 'Bulk failed: $e', icon: Icons.error_outline, error: true);
         }
         final csvOut = const ListToCsvConverter().convert(out);
         final bytes = utf8.encode(csvOut);
@@ -902,7 +837,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
           final needsBlock = role == 'project_owner' || role == 'sub_nodal';
           if (needsBlock && block.isEmpty) {
             sheet.cell(xls.CellIndex.indexByColumnRow(columnIndex: statusIdx, rowIndex: i)).value = xls.TextCellValue('skipped');
-            sheet.cell(xls.CellIndex.indexByColumnRow(columnIndex: messageIdx, rowIndex: i)).value = xls.TextCellValue('block required for ' + role);
+            sheet.cell(xls.CellIndex.indexByColumnRow(columnIndex: messageIdx, rowIndex: i)).value = xls.TextCellValue('block required for $role');
             continue;
           }
           payload.add({'email': email, 'password': pass, 'role': role});
@@ -910,6 +845,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
         }
         // Bulk create via function
         try {
+          if (!context.mounted) return;
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -924,8 +860,10 @@ class _UsersTabContentState extends State<_UsersTabContent> {
               ),
             ),
           );
+          final nav = Navigator.of(context, rootNavigator: true);
           final results = await widget.fns.bulkCreateAuthUsers(payload);
-          if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+          if (!context.mounted) return;
+          nav.pop();
           final ok = results.where((r) => r['ok'] == true).length;
           final fail = results.length - ok;
           for (var j = 0; j < results.length && j < payloadRowIndices.length; j++) {
@@ -934,10 +872,13 @@ class _UsersTabContentState extends State<_UsersTabContent> {
             sheet.cell(xls.CellIndex.indexByColumnRow(columnIndex: statusIdx, rowIndex: rowIdx)).value = xls.TextCellValue((r['ok'] == true) ? 'ok' : 'error');
             sheet.cell(xls.CellIndex.indexByColumnRow(columnIndex: messageIdx, rowIndex: rowIdx)).value = xls.TextCellValue(r['error']?.toString() ?? '');
           }
-          if (context.mounted) { _showSnack(context, 'Bulk: $ok ok, $fail failed', icon: Icons.file_upload_outlined); }
+          if (!context.mounted) return;
+          _showSnack(context, 'Bulk: $ok ok, $fail failed', icon: Icons.file_upload_outlined);
         } catch (e) {
-          if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-          if (context.mounted) { _showSnack(context, 'Bulk failed: $e', icon: Icons.error_outline, error: true); }
+          if (!context.mounted) return;
+          Navigator.of(context, rootNavigator: true).maybePop();
+          if (!context.mounted) return;
+          _showSnack(context, 'Bulk failed: $e', icon: Icons.error_outline, error: true);
         }
         final outBytes = book.encode();
         if (outBytes != null) {
@@ -989,23 +930,23 @@ class _UsersToolbar extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minWidth: 0),
           child: Row(children: [
-            Tooltip(message: grid ? 'List view' : 'Grid view', child: IconButton(onPressed: onToggleView, icon: Icon(grid ? Icons.view_list : Icons.grid_view))),
+            Tooltip(message: grid ? 'List view' : 'Grid view', child: IconButton(onPressed: onToggleView, icon: Icon(grid ? CupertinoIcons.list_bullet : CupertinoIcons.square_grid_2x2))),
             const SizedBox(width: 8),
             SizedBox(
               width: 360,
               child: TextField(
                 onChanged: onSearch,
-                decoration: const InputDecoration(hintText: 'Search users', prefixIcon: Icon(Icons.search)),
+                decoration: const InputDecoration(hintText: 'Search users', prefixIcon: Icon(CupertinoIcons.search)),
               ),
             ),
             const SizedBox(width: 8),
             if (selectedCount > 0) Text('$selectedCount selected'),
             const SizedBox(width: 8),
-            Tooltip(message: 'Delete selected', child: IconButton(onPressed: onBulkDelete, icon: const Icon(Icons.delete_forever)) ),
+            Tooltip(message: 'Delete selected', child: IconButton(onPressed: onBulkDelete, icon: const Icon(CupertinoIcons.delete)) ),
             const SizedBox(width: 8),
-            FilledButton.icon(onPressed: onCreateSingle, icon: const Icon(Icons.person_add_alt_1), label: const Text('Create User')),
+            FilledButton.icon(onPressed: onCreateSingle, icon: const Icon(CupertinoIcons.person_crop_circle_badge_plus), label: const Text('Create User')),
             const SizedBox(width: 8),
-            OutlinedButton.icon(onPressed: onCreateBulk, icon: const Icon(Icons.file_upload_outlined), label: const Text('Bulk Create')),
+            OutlinedButton.icon(onPressed: onCreateBulk, icon: const Icon(CupertinoIcons.square_stack_3d_up), label: const Text('Bulk Create')),
             const SizedBox(width: 8),
             OutlinedButton.icon(
               onPressed: () async {
@@ -1018,9 +959,10 @@ class _UsersToolbar extends StatelessWidget {
                 final csvOut = const ListToCsvConverter().convert(rows);
                 final bytes = utf8.encode(csvOut);
                 await FileSaver.instance.saveFile(name: 'sample_users', bytes: bytes, ext: 'csv', mimeType: MimeType.csv);
-                _showSnack(context, 'Sample CSV saved', icon: Icons.download_done_outlined);
+                if (!context.mounted) return;
+                _showSnack(context, 'Sample CSV saved', icon: CupertinoIcons.square_arrow_down_on_square);
               },
-              icon: const Icon(Icons.download_outlined),
+              icon: const Icon(CupertinoIcons.square_arrow_down),
               label: const Text('Sample CSV'),
             ),
           ]),
@@ -1050,22 +992,22 @@ class _UserRow extends StatelessWidget {
       leading: Row(mainAxisSize: MainAxisSize.min, children:[
         Checkbox(value: selected, onChanged: (_) => onSelectToggle()),
         const SizedBox(width: 6),
-        CircleAvatar(radius: 16, backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null, child: photoUrl.isEmpty ? const Icon(Icons.person, size: 18) : null),
+  CircleAvatar(radius: 16, backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null, child: photoUrl.isEmpty ? const Icon(CupertinoIcons.person, size: 18) : null),
       ]),
       title: Row(children:[
-        const Icon(Icons.person_outline, size: 16), const SizedBox(width: 6),
+  const Icon(CupertinoIcons.person, size: 16), const SizedBox(width: 6),
         Expanded(child: Text(display, overflow: TextOverflow.ellipsis)),
       ]),
       subtitle: Wrap(
         crossAxisAlignment: WrapCrossAlignment.center,
         spacing: 12,
         children: [
-          Row(mainAxisSize: MainAxisSize.min, children:[const Icon(Icons.email_outlined, size: 14), const SizedBox(width: 4), Text(email)]),
+          Row(mainAxisSize: MainAxisSize.min, children:[const Icon(CupertinoIcons.envelope, size: 14), const SizedBox(width: 4), Text(email)]),
           Row(mainAxisSize: MainAxisSize.min, children:[Icon(_roleIcon(role), size: 14, color: _roleColor(role)), const SizedBox(width: 4), Text(role)]),
-          if (blocks.isNotEmpty) Row(mainAxisSize: MainAxisSize.min, children:[const Icon(Icons.grid_view_outlined, size: 14), const SizedBox(width: 4), Text(blocks.join(', '), overflow: TextOverflow.ellipsis)]),
+          if (blocks.isNotEmpty) Row(mainAxisSize: MainAxisSize.min, children:[const Icon(CupertinoIcons.square_grid_2x2, size: 14), const SizedBox(width: 4), Text(blocks.join(', '), overflow: TextOverflow.ellipsis)]),
         ],
       ),
-      trailing: const Icon(Icons.chevron_right),
+  trailing: const Icon(CupertinoIcons.chevron_right),
     );
   }
 }
@@ -1087,7 +1029,7 @@ class _UserTile extends StatelessWidget {
       onTap: onTap,
       child: Card(
         elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.white.withOpacity(0.06))),
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
         child: Padding(
           padding: const EdgeInsets.all(14.0),
           child: Column(
@@ -1097,12 +1039,12 @@ class _UserTile extends StatelessWidget {
                 children: [
                   Checkbox(value: selected, onChanged: (_) => onSelectToggle()),
                   const SizedBox(width: 8),
-                  CircleAvatar(radius: 20, backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null, child: photoUrl.isEmpty ? const Icon(Icons.person) : null),
+                  CircleAvatar(radius: 20, backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null, child: photoUrl.isEmpty ? const Icon(CupertinoIcons.person) : null),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children:[
-                        const Icon(Icons.person_outline, size: 16), const SizedBox(width: 6),
+                        const Icon(CupertinoIcons.person, size: 16), const SizedBox(width: 6),
                         Expanded(child: Text((data['displayName'] ?? email) as String, style: const TextStyle(fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis)),
                       ]),
                       const SizedBox(height: 6),
@@ -1111,14 +1053,14 @@ class _UserTile extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: _roleColor(role).withOpacity(0.12),
+                            color: _roleColor(role).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(24),
-                            border: Border.all(color: _roleColor(role).withOpacity(0.24)),
+                            border: Border.all(color: _roleColor(role).withValues(alpha: 0.24)),
                           ),
                           child: Text(role, style: TextStyle(color: _roleColor(role), fontSize: 12, fontWeight: FontWeight.w600)),
                         ),
                         const Spacer(),
-                        Row(children:[const Icon(Icons.email_outlined, size: 14), const SizedBox(width: 4), Text(email, style: const TextStyle(fontSize: 12))]),
+                        Row(children:[const Icon(CupertinoIcons.envelope, size: 14), const SizedBox(width: 4), Text(email, style: const TextStyle(fontSize: 12))]),
                       ]),
                     ]),
                   ),
@@ -1127,9 +1069,9 @@ class _UserTile extends StatelessWidget {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Icon(Icons.info_outline, size: 14), const SizedBox(width: 6),
+                  const Icon(CupertinoIcons.info, size: 14), const SizedBox(width: 6),
                   Expanded(child: Text('Tap to view and edit details', style: const TextStyle(fontSize: 12, color: Color(0xFF9A9A9A)), overflow: TextOverflow.ellipsis)),
-                  const Icon(Icons.chevron_right, size: 18),
+                  const Icon(CupertinoIcons.chevron_right, size: 18),
                 ],
               ),
             ],
@@ -1195,9 +1137,9 @@ class _UserDialogState extends State<_UserDialog> {
         ),
       ),
       actions: [
-  Tooltip(message: 'Close', child: IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close))),
-  Tooltip(message: 'Delete user & projects', child: IconButton(onPressed: _confirmDelete, icon: const Icon(Icons.delete_forever, color: Colors.redAccent))),
-  FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save_outlined), label: const Text('Save')),
+  Tooltip(message: 'Close', child: IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(CupertinoIcons.xmark))),
+  Tooltip(message: 'Delete user & projects', child: IconButton(onPressed: _confirmDelete, icon: const Icon(CupertinoIcons.delete, color: Colors.redAccent))),
+  FilledButton.icon(onPressed: _save, icon: const Icon(CupertinoIcons.floppy_disk), label: const Text('Save')),
       ],
     );
   }
@@ -1206,9 +1148,11 @@ class _UserDialogState extends State<_UserDialog> {
     try {
       final blocks = blocksCtrl.text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
   await widget.doc.reference.set({'displayName': nameCtrl.text.trim(), 'role': roleCtrl.text.trim(), if (blocks.isNotEmpty) 'blocks': blocks, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
-  if (!mounted) return; _showSnack(context, 'Saved', icon: Icons.save_outlined);
+  if (!mounted) return;
+  _showSnack(context, 'Saved', icon: CupertinoIcons.floppy_disk);
     } catch (e) {
-  if (!mounted) return; _showSnack(context, 'Failed: $e', icon: Icons.error_outline, error: true);
+  if (!mounted) return;
+  _showSnack(context, 'Failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
     }
   }
 
@@ -1234,11 +1178,11 @@ class _UserDialogState extends State<_UserDialog> {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
       Navigator.pop(context);
-      _showSnack(context, 'User deleted from Auth and Firestore', icon: Icons.delete_forever);
+      _showSnack(context, 'User deleted from Auth and Firestore', icon: CupertinoIcons.delete);
     } catch (e) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
-      _showSnack(context, 'Delete failed: $e', icon: Icons.error_outline, error: true);
+      _showSnack(context, 'Delete failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
     }
   }
 
@@ -1250,7 +1194,7 @@ class _UserDialogState extends State<_UserDialog> {
   content: const Text('This will remove the user from Firebase Auth and Firestore (and related data). This cannot be undone.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.delete_forever), label: const Text('Delete')),
+          FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.delete), label: const Text('Delete')),
         ],
       ),
     );
@@ -1299,11 +1243,11 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
             width: 360,
             child: TextField(
               onChanged: (v) => setState(() => search = v.trim().toLowerCase()),
-              decoration: const InputDecoration(hintText: 'Search projects', prefixIcon: Icon(Icons.search)),
+              decoration: const InputDecoration(hintText: 'Search projects', prefixIcon: Icon(CupertinoIcons.search)),
             ),
           ),
         ),
-        Divider(height: 1, color: Colors.white.withOpacity(0.06)),
+  Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
         Expanded(
           child: StreamBuilder(
             stream: q.snapshots(),
@@ -1311,7 +1255,7 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
-              if (!snap.hasData) return const _EmptyState(message: 'No data');
+              if (!snap.hasData) return const NoData(message: 'No data');
               var docs = (snap.data as QuerySnapshot<Map<String, dynamic>>).docs;
               // Local sort by updatedAt desc
               docs.sort((a,b){
@@ -1327,8 +1271,8 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
                   return n.contains(search) || id.contains(search);
                 }).toList();
               }
-              if (docs.isEmpty) return const _EmptyState(message: 'No projects');
-              return ListView.separated(
+              if (docs.isEmpty) return const NoData(message: 'No projects');
+              final list = ListView.separated(
                 padding: const EdgeInsets.all(8),
                 itemCount: docs.length,
                 itemBuilder: (context, i) {
@@ -1345,7 +1289,8 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
                           if (v.startsWith('status:')) {
                             final newStatus = v.split(':')[1];
                             await d.reference.update({'status': newStatus, 'updatedAt': FieldValue.serverTimestamp()});
-                            if (!context.mounted) return; _showSnack(context, 'Status updated', icon: Icons.edit);
+                            if (!context.mounted) return;
+                            _showSnack(context, 'Status updated', icon: Icons.edit);
                           }
                         },
                         itemBuilder: (context) => const [
@@ -1354,12 +1299,12 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
                           PopupMenuItem(value: 'status:completed', child: Text('Mark Completed')),
                           PopupMenuItem(value: 'status:cancelled', child: Text('Mark Cancelled')),
                         ],
-                        child: const Icon(Icons.edit, size: 20),
+                        child: const Icon(CupertinoIcons.pencil, size: 20),
                       ),
                       const SizedBox(width: 4),
                       IconButton(
                         tooltip: 'Delete project',
-                        icon: const Icon(Icons.delete_outline),
+                        icon: const Icon(CupertinoIcons.delete),
                         onPressed: () async {
                           final ok = await showDialog<bool>(
                             context: context,
@@ -1368,20 +1313,26 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
                               content: const Text('This cannot be undone.'),
                               actions: [
                                 TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                                FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.delete_forever), label: const Text('Delete')),
+                                FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.delete), label: const Text('Delete')),
                               ],
                             ),
                           );
                           if (ok == true) {
                             await d.reference.delete();
-                            if (!context.mounted) return; _showSnack(context, 'Project deleted', icon: Icons.delete_forever);
+                            if (!context.mounted) return;
+                            _showSnack(context, 'Project deleted', icon: CupertinoIcons.delete);
                           }
                         },
                       ),
                     ]),
                   );
                 },
-                separatorBuilder: (_, __) => Divider(height: 1, color: Colors.white.withOpacity(0.06)),
+                separatorBuilder: (_, __) => Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
+              );
+              return PageTransitionSwitcher(
+                duration: const Duration(milliseconds: 200),
+                transitionBuilder: (child, a, sa) => FadeThroughTransition(animation: a, secondaryAnimation: sa, child: child),
+                child: KeyedSubtree(key: ValueKey('projects_${docs.length}_$search'), child: list),
               );
             },
           ),
@@ -1395,14 +1346,14 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
 IconData _roleIcon(String role) {
   switch (role) {
     case 'dev_admin':
-      return Icons.security_outlined;
+  return CupertinoIcons.lock_shield;
     case 'super_nodal':
-      return Icons.verified_outlined;
+  return CupertinoIcons.check_mark_circled;
     case 'sub_nodal':
-      return Icons.account_tree_outlined;
+  return CupertinoIcons.tree;
     case 'project_owner':
     default:
-      return Icons.badge_outlined;
+  return CupertinoIcons.person_crop_rectangle;
   }
 }
 
@@ -1431,59 +1382,11 @@ class _ChartsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final total = (completed + inProgress + cancelled).clamp(1, 1 << 30);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          height: isWide ? 260 : 200,
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: BarChart(
-                BarChartData(
-                  alignment: BarChartAlignment.spaceAround,
-                  titlesData: FlTitlesData(
-                    leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, getTitlesWidget: (v, _) {
-                      final idx = v.toInt();
-                      const labels = ['Completed', 'In prog', 'Cancelled'];
-                      final safeIdx = idx < 0 ? 0 : (idx > 2 ? 2 : idx);
-                      return Padding(padding: const EdgeInsets.only(top: 6), child: Text(labels[safeIdx], style: const TextStyle(fontSize: 10)));
-                    })),
-                  ),
-                  barGroups: [
-                    BarChartGroupData(x: 0, barRods: [BarChartRodData(toY: completed.toDouble(), color: Colors.green, width: 18, borderRadius: BorderRadius.circular(6))]),
-                    BarChartGroupData(x: 1, barRods: [BarChartRodData(toY: inProgress.toDouble(), color: Colors.orange, width: 18, borderRadius: BorderRadius.circular(6))]),
-                    BarChartGroupData(x: 2, barRods: [BarChartRodData(toY: cancelled.toDouble(), color: Colors.redAccent, width: 18, borderRadius: BorderRadius.circular(6))]),
-                  ],
-                  gridData: const FlGridData(show: false),
-                  borderData: FlBorderData(show: false),
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        SizedBox(
-          height: isWide ? 240 : 200,
-          child: Card(
-            child: PieChart(
-              PieChartData(
-                sectionsSpace: 2,
-                centerSpaceRadius: 40,
-                sections: [
-                  PieChartSectionData(value: completed.toDouble(), color: Colors.green, title: '${((completed/total)*100).toStringAsFixed(0)}%'),
-                  PieChartSectionData(value: inProgress.toDouble(), color: Colors.orange, title: '${((inProgress/total)*100).toStringAsFixed(0)}%'),
-                  PieChartSectionData(value: cancelled.toDouble(), color: Colors.redAccent, title: '${((cancelled/total)*100).toStringAsFixed(0)}%'),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
+    return ProjectsCharts(
+      completed: completed,
+      inProgress: inProgress,
+      cancelled: cancelled,
+      isWide: isWide,
     );
   }
 }
@@ -1497,7 +1400,7 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.inbox, size: 48, color: Color(0xFF6B6B6B)),
+          const Icon(CupertinoIcons.cube_box, size: 48, color: Color(0xFF6B6B6B)),
           const SizedBox(height: 8),
           Text(message, style: const TextStyle(color: Color(0xFFBFBFBF))),
         ],
@@ -1518,7 +1421,7 @@ class _Bullet extends StatelessWidget {
         children: [
           const Padding(
             padding: EdgeInsets.only(top: 6.0, right: 8.0),
-            child: Icon(Icons.circle, size: 6, color: Color(0xFF9A9A9A)),
+            child: Icon(CupertinoIcons.circle_fill, size: 6, color: Color(0xFF9A9A9A)),
           ),
           Expanded(child: Text(text)),
         ],

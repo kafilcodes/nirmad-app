@@ -1,50 +1,83 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() { return request.auth != null; }
-    function hasRole(role) { return isSignedIn() && role in request.auth.token.roles; }
-    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
-    function userBlocks() { return isSignedIn() ? (request.auth.token.blocks != null ? request.auth.token.blocks : []) : []; }
+    function authed() { return request.auth != null; }
+    function role() { return (request.auth.token.role != null) ? request.auth.token.role : '';
+    }
+    function isDevAdmin() { return role() == 'dev_admin'; }
+    function isProjectOwner() { return role() == 'project_owner'; }
+    function isSubNodal() { return role() == 'sub_nodal'; }
+    function isSuperNodal() { return role() == 'super_nodal'; }
+    function myUid() { return request.auth.uid; }
+    function hasBlock(blockId) {
+      return (request.auth.token.blocks != null) &&
+             (blockId in request.auth.token.blocks);
+    }
 
+    // Users: user can read/write own profile; dev admin can read/write all
     match /users/{userId} {
-      allow read: if hasRole('super_nodal') || hasRole('sub_nodal') || isOwner(userId);
-      allow write: if hasRole('super_nodal') || hasRole('dev_admin');
+      allow read: if authed() && (userId == myUid() || isDevAdmin());
+      allow write: if authed() && (userId == myUid() || isDevAdmin());
+      // fcmTokens subcollection: user can manage their tokens
+      match /fcmTokens/{token} {
+        allow read, write: if authed() && (userId == myUid() || isDevAdmin());
+      }
     }
 
+    // Projects collection
     match /projects/{projectId} {
-      allow read: if hasRole('super_nodal') || hasRole('dev_admin') || (hasRole('sub_nodal') && (resource.data.blockId in userBlocks())) || (hasRole('project_owner') && resource.data.ownerId == request.auth.uid);
-      allow create: if hasRole('super_nodal') || hasRole('sub_nodal') || hasRole('project_owner');
-      allow update: if (
-        // super/dev admin can always update
-        hasRole('super_nodal') || hasRole('dev_admin') ||
-        // sub_nodal limited to their blocks
-        (hasRole('sub_nodal') && (resource.data.blockId in userBlocks())) ||
-        // owner can update only own project
-        (hasRole('project_owner') && resource.data.ownerId == request.auth.uid)
-      ) && (resource.data.status != 'completed'); // no updates after completion
-      allow delete: if hasRole('super_nodal') || hasRole('dev_admin');
+      allow read: if authed() && (
+          isDevAdmin() || isSuperNodal() ||
+          (isProjectOwner() && resource.data.ownerId == myUid()) ||
+          (isSubNodal() && hasBlock(resource.data.blockId))
+        );
+      allow create: if authed() && (
+          isDevAdmin() || (isProjectOwner() && request.resource.data.ownerId == myUid())
+        );
+      allow update, delete: if authed() && (
+          isDevAdmin() || (isProjectOwner() && resource.data.ownerId == myUid())
+        );
 
+      // updates subcollection: align with project doc permissions
       match /updates/{updateId} {
-        allow read: if hasRole('super_nodal') || hasRole('dev_admin') || (hasRole('sub_nodal') && (get(/databases/$(database)/documents/projects/$(projectId)).data.blockId in userBlocks())) || (hasRole('project_owner') && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid);
-        allow write: if (
-          hasRole('super_nodal') || hasRole('dev_admin') ||
-          (hasRole('sub_nodal') && (get(/databases/$(database)/documents/projects/$(projectId)).data.blockId in userBlocks())) ||
-          (hasRole('project_owner') && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == request.auth.uid)
-        ) && (get(/databases/$(database)/documents/projects/$(projectId)).data.status != 'completed');
-      }
-
-      match /logs/{logId} {
-        allow read: if hasRole('super_nodal') || hasRole('sub_nodal');
-        allow write: if false; // immutable from client
+        allow read: if authed() && (
+          isDevAdmin() || isSuperNodal() ||
+          (isProjectOwner() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == myUid()) ||
+          (isSubNodal() && hasBlock(get(/databases/$(database)/documents/projects/$(projectId)).data.blockId))
+        );
+        allow create, update, delete: if authed() && (
+          isDevAdmin() || (isProjectOwner() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == myUid())
+        );
       }
     }
 
-    match /audit_logs/{logId} {
-      allow read: if hasRole('super_nodal') || hasRole('sub_nodal');
-      allow write: if false; // write via CF only
+    // Notifications: per-user documents
+    match /notifications/{notifId} {
+      allow read: if authed() && resource.data.userId == myUid();
+      // Only allow marking as read by recipient; block creation client-side (server writes via CF)
+      allow create: if false;
+      allow update: if authed() && resource.data.userId == myUid();
+      allow delete: if isDevAdmin();
     }
 
-    match /blocks/{blockId} { allow read: if true; allow write: if hasRole('dev_admin'); }
-    match /villages/{villageId} { allow read: if true; allow write: if hasRole('dev_admin'); }
+    // Counters: allow all authenticated users to write to the specific projects counter (used by client txn)
+    match /counters/projects {
+      allow read: if authed();
+      allow write: if authed();
+    }
+    // Other counters: dev admin only
+    match /counters/{doc} {
+      allow read: if authed() && (isDevAdmin() || isSuperNodal());
+      allow write: if isDevAdmin();
+    }
+    match /config/{doc} {
+      allow read: if authed() && (isDevAdmin() || isSuperNodal());
+      allow write: if isDevAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

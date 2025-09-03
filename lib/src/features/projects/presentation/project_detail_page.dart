@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/project_repository.dart';
 import '../domain/project.dart';
@@ -22,21 +23,25 @@ class ProjectDetailPage extends ConsumerWidget {
         actions: [
           IconButton(
             tooltip: 'Export ZIP',
-            icon: const Icon(Icons.download),
-            onPressed: () async {
-              try {
-                showToast(context, 'Preparing export…', icon: Icons.download_outlined);
-                final url = await ref.read(functionsServiceProvider).exportProjectZip(project.id);
-                final uri = Uri.parse(url);
-                if (await canLaunchUrl(uri)) {
-                  await launchUrl(uri, mode: LaunchMode.externalApplication);
-                } else {
-                  showToast(context, 'Download link: $url', icon: Icons.link);
+            icon: const Icon(CupertinoIcons.arrow_down_doc),
+              onPressed: () async {
+                try {
+                  if (!context.mounted) return;
+                  showToast(context, 'Preparing export…', icon: CupertinoIcons.arrow_down_doc);
+                  final url = await ref.read(functionsServiceProvider).exportProjectZip(project.id);
+                  final uri = Uri.parse(url);
+                  if (!context.mounted) return;
+                  if (await canLaunchUrl(uri)) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  } else {
+                    if (!context.mounted) return;
+                    showToast(context, 'Download link: $url', icon: CupertinoIcons.link);
+                  }
+                } catch (e) {
+                  if (!context.mounted) return;
+                  showToast(context, 'Export failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
                 }
-              } catch (e) {
-                showToast(context, 'Export failed: $e', icon: Icons.error_outline, error: true);
-              }
-            },
+              },
           ),
         ],
   ),
@@ -78,7 +83,7 @@ class ProjectDetailPage extends ConsumerWidget {
               onPressed: () async {
                 await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PhaseUpdateStepperPage(project: project)));
               },
-              child: const Icon(Icons.add),
+              child: const Icon(CupertinoIcons.add),
             ),
     );
   }

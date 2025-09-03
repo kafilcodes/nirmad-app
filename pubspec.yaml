@@ -43,11 +43,13 @@ dependencies:
   firebase_storage: ^13.0.0
   firebase_messaging: ^16.0.0
   cloud_functions: ^6.0.0
+  # File uploads (native Firebase Storage APIs with progress)
   # State management & DI
   flutter_riverpod: ^2.6.1
-  get_it: ^8.2.0
   # Routing
   go_router: ^16.2.0
+  animations: ^2.0.11
+  responsiveness: ^1.2.8
   # Models & serialization
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
@@ -63,7 +65,34 @@ dependencies:
   excel: ^4.0.3
   pdf: ^3.11.0
   printing: ^5.13.4
-  fl_chart: ^0.69.0
+  cross_file: ^0.3.4+2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  fl_chart: ^1.0.0
+  cupertino_sidebar: ^1.0.1
+  flutter_login: ^5.1.0
+  # UI/UX enhancements
+  flutter_form_builder: ^10.2.0
+  form_builder_validators: ^11.2.0
+  flutter_animate: ^4.5.0
+  # cached_network_image removed in favor of hash_cached_image
+  # Image optimization & avatar rendering
+  hash_cached_image: ^0.0.2
+  avatar_better_pro: ^0.0.4
+  image: ^4.3.0
+  shared_preferences: ^2.3.2
+  flutter_svg: ^2.2.0
+  font_awesome_flutter: ^10.7.0
+  # Maps & Location (free/open-source stack)
+  flutter_map: ^8.2.1
+  latlong2: ^0.9.1
+  geolocator: ^14.0.2
+  flutter_map_location_marker: ^10.1.0
+  # Toasts
+  toastification: ^3.0.3
+  logger: ^2.6.1
+  fire_storage_impl: ^0.1.0
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:
@@ -91,7 +120,9 @@ flutter:
   uses-material-design: true
   generate: true
   assets:
-    - .env
+  - assets/
+  - .env
+  - logo.svg
 
   # To add assets to your application, add an assets section, like this:
   # assets:
