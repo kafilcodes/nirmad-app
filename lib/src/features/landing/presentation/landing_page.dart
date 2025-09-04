@@ -5,6 +5,7 @@ import '../../../core/i18n/locale_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/widgets/branding_footer.dart';
 import '../../auth/data/auth_repository.dart';
+import 'package:gap/gap.dart';
 
 class LandingPage extends ConsumerWidget {
   const LandingPage({super.key});
@@ -34,7 +35,7 @@ class LandingPage extends ConsumerWidget {
               );
             },
           ),
-          const SizedBox(width: 4),
+          const Gap(4),
         ],
       ),
       body: Padding(
@@ -42,25 +43,25 @@ class LandingPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 16),
+            const Gap(16),
             _Tile(
               label: 'Nodal Officer',
               icon: CupertinoIcons.person_badge_plus,
               onTap: () => context.go('/login'),
             ),
-            const SizedBox(height: 16),
+            const Gap(16),
             _Tile(
               label: 'Project Owner',
               icon: CupertinoIcons.person_crop_circle,
               onTap: () => context.go('/login'),
             ),
-            const SizedBox(height: 16),
+            const Gap(16),
             _Tile(
               label: 'Project Entry',
               icon: CupertinoIcons.pencil_circle,
               onTap: () => context.go('/login'),
             ),
-            const SizedBox(height: 16),
+            const Gap(16),
             const Spacer(),
             const BrandingFooter(),
           ],

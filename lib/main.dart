@@ -41,11 +41,10 @@ Future<void> main() async {
         measurementId: dotenv.maybeGet('FIREBASE_MEASUREMENT_ID'),
       ),
     );
-    // Log resolved storage bucket for diagnostics
+    // Log configured storage bucket for diagnostics (no normalization)
     try {
       final bucket = Firebase.app().options.storageBucket;
-      final normalized = normalizeStorageBucket(bucket);
-      AppLogger.i.i('Firebase storageBucket: ${bucket ?? '(none)'} -> normalized: ${normalized.isEmpty ? '(none)' : normalized}');
+      AppLogger.i.i('Firebase storageBucket: ${bucket ?? '(none)'}');
     } catch (_) {}
   } else {
     // On mobile/desktop, this uses platform-specific configuration files if present.

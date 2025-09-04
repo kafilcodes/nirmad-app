@@ -291,11 +291,11 @@ class _ProfilePageState extends State<ProfilePage> {
                             ),
                           ),
                           if (_saving)
-                            ClipOval(
+              ClipOval(
                               child: Container(
                                 width: 128,
                                 height: 128,
-                                color: Colors.black.withOpacity(0.25),
+                color: Colors.black.withValues(alpha: 0.25),
                                 child: const Center(
                                   child: SizedBox(
                                     width: 28,

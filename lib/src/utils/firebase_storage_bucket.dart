@@ -1,23 +1,21 @@
 import 'package:firebase_core/firebase_core.dart' as fc;
 import 'package:firebase_storage/firebase_storage.dart' as fs;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-// Normalize bucket values: developers sometimes copy the download domain
-// like "<project>.firebasestorage.app", but Firebase SDKs expect the
-// bucket ID in the form "<project>.appspot.com".
-String normalizeStorageBucket(String? bucket) {
-  if (bucket == null || bucket.isEmpty) return '';
-  if (bucket.endsWith('.firebasestorage.app')) {
-    return bucket.replaceFirst('.firebasestorage.app', '.appspot.com');
-  }
-  return bucket;
-}
-
-// Get a FirebaseStorage instance tied to the current app with a normalized bucket.
+// Return a FirebaseStorage instance tied to the current app and its configured bucket as-is.
+// Some projects use buckets named like "<project>.firebasestorage.app"; do not coerce to appspot.com.
 fs.FirebaseStorage storageForCurrentApp() {
   final app = fc.Firebase.app();
-  final normalized = normalizeStorageBucket(app.options.storageBucket);
-  if (normalized.isNotEmpty) {
-    return fs.FirebaseStorage.instanceFor(bucket: normalized);
+  // Prefer explicit env override across all platforms
+  final envBucket = dotenv.maybeGet('FIREBASE_STORAGE_BUCKET');
+  if (envBucket != null && envBucket.isNotEmpty) {
+    return fs.FirebaseStorage.instanceFor(bucket: envBucket);
   }
+  // Fallback to the app's configured bucket
+  final bucket = app.options.storageBucket;
+  if (bucket != null && bucket.isNotEmpty) {
+    return fs.FirebaseStorage.instanceFor(bucket: bucket);
+  }
+  // Last resort: default instance
   return fs.FirebaseStorage.instance;
 }

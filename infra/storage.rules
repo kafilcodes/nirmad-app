@@ -5,7 +5,8 @@ service firebase.storage {
     function authed() { return request.auth != null; }
     function role() { return request.auth.token.role != null ? request.auth.token.role : ''; }
     function isDevAdmin() { return role() == 'dev_admin'; }
-    function isUploader() { return request.resource.metadata.uploaderId == request.auth.uid; }
+  // We no longer require custom metadata in writes on web to avoid CORS preflight issues
+  function isUploader() { return true; }
 
     // Size/type guards
     function isAllowedImage() {
@@ -33,37 +34,37 @@ service firebase.storage {
     match /projects/{projectId}/photos/{fileId} {
       allow read: if authed();
       // Enforce allowed images and tag uploader; dev admin may bypass uploader check
-      allow write: if authed() && isAllowedImage() && (isUploader() || isDevAdmin());
+  allow write: if authed() && isAllowedImage();
     }
 
     match /projects/{projectId}/videos/{fileId} {
       allow read: if authed();
-      allow write: if authed() && isVideoMp4() && (isUploader() || isDevAdmin());
+  allow write: if authed() && isVideoMp4();
     }
 
   match /projects/{projectId}/docs/{fileId} {
       allow read: if authed();
-      allow write: if authed() && isDocAcceptable() && (isUploader() || isDevAdmin());
+  allow write: if authed() && isDocAcceptable();
     }
 
     // Sanction subfolders
     match /projects/{projectId}/sanction/technical_approval_docs/{fileId} {
       allow read: if authed();
-      allow write: if authed() && request.resource.contentType == 'application/pdf' && request.resource.size <= 20 * 1024 * 1024 && (isUploader() || isDevAdmin());
+  allow write: if authed() && request.resource.contentType == 'application/pdf' && request.resource.size <= 20 * 1024 * 1024;
     }
     match /projects/{projectId}/sanction/technical_approval_photos/{fileId} {
       allow read: if authed();
-      allow write: if authed() && isAllowedImage() && (isUploader() || isDevAdmin());
+  allow write: if authed() && isAllowedImage();
     }
     match /projects/{projectId}/sanction/admin_approval_docs/{fileId} {
       allow read: if authed();
-      allow write: if authed() && request.resource.contentType == 'application/pdf' && request.resource.size <= 20 * 1024 * 1024 && (isUploader() || isDevAdmin());
+  allow write: if authed() && request.resource.contentType == 'application/pdf' && request.resource.size <= 20 * 1024 * 1024;
     }
 
     // Work categorized docs
     match /projects/{projectId}/work/{category}/{fileId} {
       allow read: if authed();
-      allow write: if authed() && isDocAcceptable() && (isUploader() || isDevAdmin());
+  allow write: if authed() && isDocAcceptable();
     }
 
   // Default: deny other writes; allow reads only to authed users (optional tighten later)

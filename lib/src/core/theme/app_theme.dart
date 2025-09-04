@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import '../ui/animation_policies.dart';
 
 class AppTheme {
-  // Global accent: purplish (#6C63FF)
-  static const _seed = Color(0xFF6C63FF);
+  // Global accent: updated brand purple (#6E60FE)
+  static const _seed = Color(0xFF6E60FE);
 
   static ThemeData get light {
     final base = ThemeData(

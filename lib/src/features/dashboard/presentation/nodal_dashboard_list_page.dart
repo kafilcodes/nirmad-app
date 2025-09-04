@@ -4,9 +4,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../projects/domain/project.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../../../services/functions_service.dart';
-import '../../../shared/ui/toast.dart';
+// import 'package:url_launcher/url_launcher.dart';
+// import '../../../services/functions_service.dart';
+// import '../../../shared/ui/toast.dart';
 import '../../../shared/widgets/no_data.dart';
 
 final _statusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
@@ -46,31 +46,7 @@ class NodalDashboardListPage extends ConsumerWidget {
               return ListTile(
                 title: Text(p.name),
                 subtitle: Text('${p.blockId} • ${p.status.name} • ${p.updatedAt.toLocal()}'),
-                trailing: PopupMenuButton<String>(
-                  onSelected: (value) async {
-                    if (value == 'export') {
-                      try {
-                        if (!context.mounted) return;
-                        showToast(context, 'Preparing export…', icon: CupertinoIcons.arrow_down_doc);
-                        final url = await ref.read(functionsServiceProvider).exportProjectZip(p.id);
-                        final uri = Uri.parse(url);
-                        if (!context.mounted) return;
-                        if (await canLaunchUrl(uri)) {
-                          await launchUrl(uri, mode: LaunchMode.externalApplication);
-                        } else {
-                          if (!context.mounted) return;
-                          showToast(context, 'Download link: $url', icon: CupertinoIcons.link);
-                        }
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        showToast(context, 'Export failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
-                      }
-                    }
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'export', child: Text('Export ZIP')),
-                  ],
-                ),
+                // Export ZIP removed; use Project Details to export PDF when applicable
               );
             },
           );

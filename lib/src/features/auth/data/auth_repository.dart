@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../data/auth/session_service.dart';
 import '../../../core/prefs/shared_prefs.dart';
 
 import '../domain/app_user.dart';
@@ -14,6 +15,7 @@ class AuthRepository {
   final FirebaseFirestore _db;
   final SharedPreferences _prefs;
 
+  late final SessionService _session = SessionService(_auth, _db);
   AuthRepository(this._auth, this._db, this._prefs);
 
   Stream<AppUser?> authStateChanges() async* {
@@ -21,14 +23,29 @@ class AuthRepository {
       if (user == null) {
         // Clear cache
         await _prefs.remove('auth_cache');
+        // Clear any lingering session doc optimistically
+        try { await _session.clearSession(); } catch (_) {}
         yield null;
         continue;
       }
+      // Enforce single-device + 6-month policy: if different device, sign out
+      final deviceSessionId = await _ensureDeviceSessionId();
+      try {
+        final allowed = await _session.canUseCurrentDevice(deviceSessionId);
+        if (!allowed) {
+          await _auth.signOut();
+          await _prefs.remove('auth_cache');
+          yield null;
+          continue;
+        }
+      } catch (_) {}
       final app = await _toAppUser(user);
       // Cache last user for faster cold start redirects
       try {
         _prefs.setString('auth_cache', jsonEncode(app.toJson()));
       } catch (_) {}
+      // Register/update current session (sets 6-month hint expiry server-side)
+      try { await _session.registerSession(deviceSessionId); } catch (_) {}
       yield app;
     }
   }
@@ -42,6 +59,11 @@ class AuthRepository {
   Future<void> signIn(String email, String password) async {
     try {
       await _auth.signInWithEmailAndPassword(email: email, password: password);
+      // Immediately register session so rules/UI can react
+      try {
+        final id = await _ensureDeviceSessionId();
+        await _session.registerSession(id);
+      } catch (_) {}
     } catch (e) {
       // ignore: avoid_print
       print('AuthRepository.signIn error: $e');
@@ -50,7 +72,8 @@ class AuthRepository {
   }
   Future<void> sendPasswordResetEmail(String email) => _auth.sendPasswordResetEmail(email: email);
   Future<void> signOut() async {
-    await _auth.signOut();
+  try { await _session.clearSession(); } catch (_) {}
+  await _auth.signOut();
     await _prefs.remove('auth_cache');
   }
 
@@ -124,6 +147,29 @@ class AuthRepository {
       displayName: displayName,
       assignedVillage: assignedVillage,
     );
+  }
+
+  // Persist a stable per-device session id in SharedPreferences
+  Future<String> _ensureDeviceSessionId() async {
+    const key = 'device_session_id';
+    final existing = _prefs.getString(key);
+    if (existing != null && existing.isNotEmpty) return existing;
+    final id = _randomId();
+    await _prefs.setString(key, id);
+    return id;
+  }
+
+  String _randomId() {
+    // Simple 22-char url-safe id
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    final rnd = DateTime.now().microsecondsSinceEpoch ^ _prefs.hashCode;
+    var x = rnd;
+    final codeUnits = <int>[];
+    for (int i = 0; i < 22; i++) {
+      x = 1664525 * x + 1013904223; // LCG
+      codeUnits.add(alphabet.codeUnitAt(x & 63));
+    }
+    return String.fromCharCodes(codeUnits);
   }
 }
 

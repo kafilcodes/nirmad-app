@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:gap/gap.dart';
 
 class NoData extends StatelessWidget {
   final String message;
@@ -27,10 +28,10 @@ class NoData extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const Gap(12),
           if (title != null) ...[
             Text(title!, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 6),
+            const Gap(6),
           ],
           Text(message, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: cs.outline), textAlign: TextAlign.center),
         ],

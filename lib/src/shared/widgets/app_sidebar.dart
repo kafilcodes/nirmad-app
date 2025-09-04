@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cupertino_sidebar/cupertino_sidebar.dart';
-import '../../features/auth/data/auth_repository.dart';
-import '../../features/auth/domain/app_user.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
+import 'package:animations/animations.dart';
+
+import '../../features/auth/data/auth_repository.dart';
+import '../../features/auth/domain/app_user.dart';
 import '../../core/theme/theme_controller.dart';
 import '../../core/i18n/locale_provider.dart';
 import '../../core/ui/responsive_policies.dart';
-import 'package:animations/animations.dart';
 
 typedef SidebarOnSelect = void Function(int index);
 
@@ -23,97 +24,80 @@ class AppSidebar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appUser = ref.watch(authStateProvider).value;
-  final theme = Theme.of(context);
-  final cs = theme.colorScheme;
-  final role = appUser?.role ?? UserRole.projectOwner;
+    final cs = Theme.of(context).colorScheme;
+    final role = appUser?.role ?? UserRole.projectOwner;
     final auth = ref.read(authRepositoryProvider);
-  // Unread notifications stream for Owner/Nodal only
-  final bool wantsUnread = role == UserRole.projectOwner || role == UserRole.superNodal || role == UserRole.subNodal;
-  final uid = fb.FirebaseAuth.instance.currentUser?.uid;
-  final Stream<int>? unreadStream = wantsUnread && uid != null
-    ? FirebaseFirestore.instance
-      .collection('notifications')
-      .where('userId', isEqualTo: uid)
-      .where('readAt', isNull: true)
-      .snapshots()
-      .map((s) => s.size)
-    : null;
-  return StreamBuilder<int>(
-    stream: unreadStream,
-    builder: (context, unreadSnap) {
-    final unread = unreadSnap.data ?? 0;
-    // Owner notifications at index 2 (Projects, Create, Notifications, Profile)
-    // Nodal at index 2; Admin has none
-    final int? notifIndex = role == UserRole.projectOwner
-      ? 2
-      : (role == UserRole.superNodal || role == UserRole.subNodal)
-        ? 2
+
+    // Unread notifications for Owner/Nodal
+    final wantsUnread = role == UserRole.projectOwner || role == UserRole.superNodal || role == UserRole.subNodal;
+    final uid = fb.FirebaseAuth.instance.currentUser?.uid;
+    final Stream<int>? unreadStream = wantsUnread && uid != null
+        ? FirebaseFirestore.instance
+            .collection('updates')
+            .where('userId', isEqualTo: uid)
+            .where('readAt', isNull: true)
+            .snapshots()
+            .map((s) => s.size)
         : null;
-    // Wrapper to render CupertinoSidebar on wide/desktop and still usable on web/mobile.
-  // compact avatar/initials removed; brand header used instead
-    // final brandTitle = Row(
-    //   children: [
-    //     SvgPicture.asset('logo.svg', width: 18, height: 18, colorFilter: ColorFilter.mode(cs.onSurface, BlendMode.srcIn)),
-    //     const SizedBox(width: 8),
-    //     const Text('NIR', style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-    //   ],
-    // );
 
-  final sidebar = CupertinoSidebar(
-      selectedIndex: selectedIndex,
-      onDestinationSelected: (i) => onSelect(i),
-      // navigationBar: SidebarNavigationBar(title: brandTitle),
-      backgroundColor: cs.surface,
-      isVibrant: isVibrant,
-      children: _buildSectionsForRole(role, cs, notifIndex, unread, selectedIndex),
-    );
+    return StreamBuilder<int>(
+      stream: unreadStream,
+      builder: (context, snap) {
+        final unread = snap.data ?? 0;
+        final int? notifIndex = role == UserRole.projectOwner
+            ? 2
+            : (role == UserRole.superNodal || role == UserRole.subNodal)
+                ? 2
+                : null;
 
-    // Decorate and make sidebar scrollable to avoid overflow in tight layouts
-  return LayoutBuilder(builder: (context, c) {
-      final maxH = c.maxHeight.isFinite ? c.maxHeight : MediaQuery.of(context).size.height;
-      return DecoratedBox(
-        decoration: BoxDecoration(
-      color: cs.surface,
-      borderRadius: BorderRadius.circular(20),
-      // Remove heavy elevation around sections; keep a subtle overall shadow
-      boxShadow: [BoxShadow(color: cs.shadow.withValues(alpha: 0.02), blurRadius: 6, offset: const Offset(0, 2))],
-        ),
-    child: SizedBox(
-          height: maxH,
-          child: Padding(
-      // Prefer tighter horizontal padding so labels get full width
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: R.gutter(context)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                PageTransitionSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  transitionBuilder: (child, a, sa) => FadeThroughTransition(animation: a, secondaryAnimation: sa, child: child),
-                  child: KeyedSubtree(key: ValueKey(appUser?.uid ?? 'guest'), child: _ProfileCard(appUser: appUser)),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: ClipRect(
-                    child: Theme(
-                      // Override any internal divider color to be transparent
-                      data: Theme.of(context).copyWith(
-                        dividerColor: Colors.transparent,
-                      ),
-                      child: sidebar,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _SidebarFooter(onLogout: () async {
-                  await auth.signOut();
-                  if (context.mounted) context.go('/');
-                }),
+        final sidebar = CupertinoSidebar(
+          selectedIndex: selectedIndex,
+          onDestinationSelected: onSelect,
+          backgroundColor: cs.surface,
+          isVibrant: isVibrant,
+          children: _buildSectionsForRole(role, cs, notifIndex, unread, selectedIndex),
+        );
+
+        return LayoutBuilder(builder: (context, c) {
+          final maxH = c.maxHeight.isFinite ? c.maxHeight : MediaQuery.of(context).size.height;
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(color: cs.shadow.withValues(alpha: 0.02), blurRadius: 6, offset: const Offset(0, 2)),
               ],
             ),
-          ),
-        ),
-      );
-    });
+            child: SizedBox(
+              height: maxH,
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: R.gutter(context)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    PageTransitionSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      transitionBuilder: (child, a, sa) => FadeThroughTransition(animation: a, secondaryAnimation: sa, child: child),
+                      child: KeyedSubtree(key: ValueKey(appUser?.uid ?? 'guest'), child: _ProfileCard(appUser: appUser)),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Theme(
+                        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                        child: sidebar,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SidebarFooter(onLogout: () async {
+                      await auth.signOut();
+                      if (context.mounted) context.go('/');
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          );
+        });
       },
     );
   }
@@ -177,7 +161,7 @@ class AppSidebar extends ConsumerWidget {
         SidebarSection(
           label: const Text('My Services'),
           children: [
-            dest(index: 2, icon: CupertinoIcons.bell, filled: CupertinoIcons.bell_fill, label: 'Notifications'),
+            dest(index: 2, icon: CupertinoIcons.bell, filled: CupertinoIcons.bell_fill, label: 'Updates'),
             dest(index: 3, icon: CupertinoIcons.person_crop_circle, filled: CupertinoIcons.person_crop_circle_fill, label: 'Profile'),
           ],
         ),
@@ -196,7 +180,7 @@ class AppSidebar extends ConsumerWidget {
       SidebarSection(
         label: const Text('My Services'),
         children: [
-          dest(index: 2, icon: CupertinoIcons.bell, filled: CupertinoIcons.bell_fill, label: 'Notifications'),
+          dest(index: 2, icon: CupertinoIcons.bell, filled: CupertinoIcons.bell_fill, label: 'Updates'),
           dest(index: 3, icon: CupertinoIcons.person_crop_circle, filled: CupertinoIcons.person_crop_circle_fill, label: 'Profile'),
         ],
       ),
@@ -231,24 +215,31 @@ class _ProfileCard extends StatelessWidget {
           // Unified avatar: same as profile page (Avatar.profile base + HashCachedImage overlay)
           _SidebarAvatar(text: name.isNotEmpty ? name : email, fallbackUrl: photoUrl),
           const SizedBox(height: 12),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(CupertinoIcons.person, size: 16),
-              const SizedBox(width: 6),
-              Flexible(child: Text(name.isNotEmpty ? name : email, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800))),
-            ],
-          ),
-          if (name.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Row(
+          LayoutBuilder(builder: (context, c) {
+            // Make horizontally scrollable on extremely narrow sidebars to avoid overflow
+            final row = Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(CupertinoIcons.mail, size: 14),
+                const Icon(CupertinoIcons.person, size: 16),
                 const SizedBox(width: 6),
-                Flexible(child: Text(email, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall)),
+                Flexible(child: Text(name.isNotEmpty ? name : email, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800))),
               ],
-            ),
+            );
+            return SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(constraints: BoxConstraints(minWidth: 0, maxWidth: c.maxWidth), child: row));
+          }),
+          if (name.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            LayoutBuilder(builder: (context, c) {
+              final row2 = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(CupertinoIcons.mail, size: 14),
+                  const SizedBox(width: 6),
+                  Flexible(child: Text(email, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall)),
+                ],
+              );
+              return SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(constraints: BoxConstraints(minWidth: 0, maxWidth: c.maxWidth), child: row2));
+            }),
           ],
           // Removed role chip as requested
         ],
@@ -276,7 +267,6 @@ class _SidebarAvatar extends ConsumerWidget {
     );
   }
 }
-
 class _SidebarFooter extends ConsumerWidget {
   const _SidebarFooter({required this.onLogout});
   final VoidCallback onLogout;

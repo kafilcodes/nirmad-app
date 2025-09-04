@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:animations/animations.dart';
+import 'package:go_transitions/go_transitions.dart';
 
 /// Centralized animation configuration for the app.
 class AppAnimations {
   AppAnimations._();
 
-  // Page transitions: prefer FadeThrough for lateral, SharedAxis for nested.
-  static const pageTransitions = PageTransitionsTheme(
+  // Page transitions: set platform-appropriate defaults using GoTransitions
+  static final pageTransitions = PageTransitionsTheme(
     builders: <TargetPlatform, PageTransitionsBuilder>{
-      TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
-      TargetPlatform.iOS: FadeThroughPageTransitionsBuilder(),
-      TargetPlatform.macOS: FadeThroughPageTransitionsBuilder(),
-      TargetPlatform.windows: FadeThroughPageTransitionsBuilder(),
-      TargetPlatform.linux: FadeThroughPageTransitionsBuilder(),
+      TargetPlatform.android: GoTransitions.fadeUpwards,
+      TargetPlatform.iOS: GoTransitions.cupertino,
+      TargetPlatform.macOS: GoTransitions.cupertino,
+      TargetPlatform.windows: GoTransitions.fadeUpwards,
+      TargetPlatform.linux: GoTransitions.fadeUpwards,
     },
   );
 

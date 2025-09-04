@@ -1,0 +1,24 @@
+[
+  {
+    "origin": [
+      "http://localhost:5000",
+      "http://127.0.0.1:5000",
+      "http://localhost:5173",
+      "https://*.web.app",
+      "https://*.firebaseapp.com",
+      "https://nirmad.app"
+    ],
+    "method": ["GET", "HEAD", "POST", "PUT", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "X-Goog-Upload-Protocol",
+      "X-Goog-Upload-Command",
+      "X-Goog-Upload-Header-Content-Type",
+      "X-Goog-Upload-Header-Content-Length",
+      "X-Goog-Upload-Offset",
+      "X-Goog-Upload-Status",
+      "x-goog-resumable"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -8,7 +8,8 @@ class DateFormField extends StatefulWidget {
   final DateTime? firstDate;
   final DateTime? lastDate;
   final String? Function(String?)? validator;
-  const DateFormField({super.key, required this.controller, required this.label, this.firstDate, this.lastDate, this.validator});
+  final FocusNode? focusNode;
+  const DateFormField({super.key, required this.controller, required this.label, this.firstDate, this.lastDate, this.validator, this.focusNode});
 
   @override
   State<DateFormField> createState() => _DateFormFieldState();
@@ -60,6 +61,7 @@ class _DateFormFieldState extends State<DateFormField> {
   @override
   Widget build(BuildContext context) {
     return TextFormField(
+  focusNode: widget.focusNode,
       controller: widget.controller,
       decoration: InputDecoration(
         labelText: widget.label,

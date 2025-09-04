@@ -2,14 +2,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb;
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/domain/app_user.dart';
-import '../../features/auth/presentation/login_page.dart';
+import '../../features/auth/presentation/modern_login_page.dart';
 import '../../features/dashboard/presentation/dashboard_wrapper_page.dart';
 import '../../features/owner/presentation/owner_shell.dart';
+import 'package:go_transitions/go_transitions.dart';
+import '../../core/logging/app_logger.dart';
 
 class _AuthNotifier extends ChangeNotifier {
-  _AuthNotifier(Stream<AppUser?> stream) {
+  _AuthNotifier(Stream<dynamic> stream) {
     _sub = stream.listen((_) => notifyListeners());
   }
   late final StreamSubscription _sub;
@@ -20,68 +23,68 @@ class _AuthNotifier extends ChangeNotifier {
   }
 }
 
+// Default transition setup for the app
+void _setDefaultTransitions() {
+  GoTransition.defaultCurve = Curves.easeInOut;
+  GoTransition.defaultDuration = const Duration(milliseconds: 300);
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
-  // Avoid using deprecated Provider.stream; subscribe to the repository stream directly for refresh
+  // Configure default transitions once
+  _setDefaultTransitions();
+  // Refresh router when the repository emits AppUser changes (ensures cache + role ready)
   final authStream = ref.read(authRepositoryProvider).authStateChanges();
-  final initial = ref.read(cachedRedirectPathProvider) ?? '/';
   return GoRouter(
-    initialLocation: initial,
+    initialLocation: '/splash',
     refreshListenable: _AuthNotifier(authStream),
     routes: <RouteBase>[
       GoRoute(
+        path: '/splash',
+        name: 'splash',
+        builder: (context, state) => const _SplashGate(),
+        pageBuilder: GoTransitions.fadeUpwards,
+      ),
+      GoRoute(
         path: '/',
         name: 'login',
-        builder: (context, state) => const LoginPage(),
+        builder: (context, state) => const ModernLoginPage(),
+  pageBuilder: GoTransitions.fadeUpwards,
       ),
       GoRoute(
         path: '/dashboard',
         name: 'dashboard',
-        builder: (context, state) => const DashboardWrapperPage(),
+  builder: (context, state) => const DashboardWrapperPage(),
+  pageBuilder: GoTransitions.zoom,
       ),
       GoRoute(
         path: '/owner',
         name: 'owner',
-        builder: (context, state) => const OwnerShell(),
+  builder: (context, state) => const OwnerShell(),
+  pageBuilder: GoTransitions.cupertino,
       ),
     ],
     redirect: (context, state) {
-      final authAsync = ref.read(authStateProvider);
-      final loggingIn = state.fullPath == '/';
-      // Fast path: if unauth and on '/', consider cached user to jump early
-      if (loggingIn && (authAsync.isLoading || (!authAsync.hasValue && !authAsync.hasError))) {
-        final cached = ref.read(cachedRedirectPathProvider);
-        if (cached != null) return cached;
+  if (state.matchedLocation == '/splash') return null; // let splash decide
+      final atLogin = state.matchedLocation == '/' || state.fullPath == '/';
+      final isLoggedIn = fb.FirebaseAuth.instance.currentUser != null;
+      AppLogger.i.d('Router redirect check -> loc: ${state.matchedLocation}, atLogin: $atLogin, isLoggedIn: $isLoggedIn');
+      if (!isLoggedIn) {
+        AppLogger.i.d('Router redirect -> not logged in, to /');
+        return atLogin ? null : '/';
       }
-
-      // If loading, we still allow immediate redirect to '/' when user becomes null on sign-out
-      // otherwise avoid jitter by returning null during loading
-      if (authAsync.isLoading) {
-  // While loading, keep current route; auth notifier will refresh once state resolves.
-        return null;
+      // Prefer cached role-based target for instant redirects
+      final cachedTarget = ref.read(cachedRedirectPathProvider);
+      String? target = cachedTarget;
+      if (target == null) {
+        final authAsync = ref.read(authStateProvider);
+        if (authAsync.hasValue && authAsync.value != null) {
+          final role = authAsync.value!.role;
+          target = (role == UserRole.projectOwner) ? '/owner' : '/dashboard';
+        }
       }
-      if (authAsync.hasError) {
-        // In case the auth stream errors, do not spin forever
-        return loggingIn ? null : '/';
-      }
-      final user = authAsync.value;
-
-      if (user == null) {
-        // Not signed in: always show login at '/' (instant on web)
-        return '/';
-      }
-
-  // Signed in: route based on role; default to dashboard unless project owner
-  final role = user.role;
-      if (role == UserRole.superNodal || role == UserRole.subNodal || role == UserRole.devAdmin) {
-        if (state.fullPath == '/dashboard') return null;
-        return '/dashboard';
-      }
-      if (role == UserRole.projectOwner) {
-        if (state.fullPath == '/owner') return null;
-        return '/owner';
-      }
-  // Unknown role, send to login (safe fallback)
-  return '/';
+      AppLogger.i.d('Router redirect -> target: ${target ?? '(none)'}');
+      if (target != null && state.matchedLocation != target) return target;
+      return null;
     },
     errorPageBuilder: (context, state) => MaterialPage(
       child: Scaffold(
@@ -91,3 +94,18 @@ final routerProvider = Provider<GoRouter>((ref) {
     ),
   );
 });
+
+class _SplashGate extends ConsumerWidget {
+  const _SplashGate({Key? key}) : super(key: key);
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cached = ref.read(cachedRedirectPathProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final isLoggedIn = fb.FirebaseAuth.instance.currentUser != null;
+      final target = isLoggedIn ? (cached ?? '/dashboard') : '/';
+      AppLogger.i.d('SplashGate -> isLoggedIn: $isLoggedIn, cached: ${cached ?? '(none)'}, go: $target');
+      if (context.mounted) context.go(target);
+    });
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}

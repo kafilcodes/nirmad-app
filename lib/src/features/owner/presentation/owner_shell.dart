@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 // SidebarX removed; using cupertino_sidebar via AppSidebar
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:fl_chart/fl_chart.dart';
+// import removed: chart visualization no longer used on projects page
 import 'package:cloud_firestore/cloud_firestore.dart';
 // Theme toggle moved to Profile page per spec
 import '../../../shared/widgets/app_sidebar.dart';
@@ -21,10 +21,13 @@ import 'package:firebase_storage/firebase_storage.dart' as fs;
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
 import 'dart:ui' as ui;
+// Image compression utility
+import '../../../utils/image_utils.dart' as image_utils;
 import 'dart:async';
 import 'package:image/image.dart' as image_lib;
 import '../../projects/domain/project.dart';
 import '../../../services/storage_service.dart';
+import '../../updates/data/updates_repository.dart';
 import '../../../services/draft_media_store.dart';
 import '../../profile/presentation/profile_page.dart';
 import '../../../shared/widgets/notifications_list.dart';
@@ -35,16 +38,27 @@ import '../../auth/data/auth_repository.dart';
 import '../../../utils/geohash.dart';
 import '../../../core/prefs/shared_prefs.dart';
 import '../../../services/local_draft_service.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:toastification/toastification.dart';
 import '../../../core/ui/responsive_policies.dart';
 import 'package:animations/animations.dart';
+// StateProvider is available from the main riverpod import above
 
 class _SchemeItem {
   final String en;
   final String hi;
   const _SchemeItem(this.en, this.hi);
 }
+
+// Owner Projects search query (simple client-side filter)
+final projectsSearchQueryProvider = StateProvider<String>((ref) => '');
+final projectsGridViewProvider = StateProvider<bool>((ref) {
+  try {
+    final prefs = ref.read(sharedPrefsProvider);
+    return prefs.getBool('projectsGrid') ?? true;
+  } catch (_) {
+    return true;
+  }
+}); // true=grid, false=list
 
 class OwnerShell extends ConsumerStatefulWidget {
   const OwnerShell({super.key});
@@ -54,9 +68,11 @@ class OwnerShell extends ConsumerStatefulWidget {
 
 class _OwnerShellState extends ConsumerState<OwnerShell> {
   int _index = 0;
-  Widget Function(BuildContext)? _overlayBuilder;
   bool _sidebarOpen = true;
   bool _autoManageSidebar = true;
+  // Success overlay state (after creating a project)
+  Project? _successProject;
+  String? _successProjectCode;
 
   @override
   void initState() {
@@ -86,20 +102,25 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
   final pages = <Widget>[
     _ProjectsPage(
         openDrawer: null,
-  onOpenProject: (Project p) {
-          setState(() {
-            _overlayBuilder = (ctx) => ProjectDetailPage(project: p);
-          });
+        onOpenProject: (Project p) {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: p)));
         },
         onCreateProject: () {
-      setState(() => _index = 1);
+          setState(() => _index = 1);
         },
       ),
-    const _ProjectCreatePage(),
-    _NotificationsPage(openDrawer: null),
+    _ProjectCreatePage(
+      onCreated: (project, {String? projectCode}) {
+        setState(() {
+          _successProject = project;
+          _successProjectCode = projectCode;
+        });
+      },
+    ),
+  _NotificationsPage(openDrawer: null),
     const ProfilePage(),
     ];
-  final titles = ['My Projects', 'Create Project', 'Notifications', 'Profile'];
+  final titles = ['My Projects', 'Create Project', 'Updates', 'Profile'];
 
     return Scaffold(
       body: Stack(
@@ -145,37 +166,94 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                           child: pages[_index],
                         ),
                       ),
-                      if (_overlayBuilder != null)
+                      // Project created success overlay
+                      if (_successProject != null)
                         Positioned.fill(
                           child: Material(
                             color: Colors.black.withValues(alpha: 0.32),
                             child: Center(
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 960, maxHeight: 720),
+                                constraints: const BoxConstraints(maxWidth: 520),
                                 child: Card(
-                                  clipBehavior: Clip.antiAlias,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                                   elevation: 8,
-                                  child: Column(
-                                    children: [
-                                      Container(
-                                        height: 48,
-                                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                                        alignment: Alignment.centerLeft,
-                                        child: Row(children: [
-                                          IconButton(onPressed: () => setState(() => _overlayBuilder = null), icon: const Icon(CupertinoIcons.xmark_circle)),
-                                          const SizedBox(width: 8),
-                                          const Text('Details'),
-                                        ]),
-                                      ),
-                                      const Divider(height: 1),
-                                      Expanded(child: _overlayBuilder!(context)),
-                                    ],
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(20.0),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                      children: [
+                                        TweenAnimationBuilder<double>(
+                                          tween: Tween(begin: 0.8, end: 1.0),
+                                          duration: const Duration(milliseconds: 350),
+                                          curve: Curves.easeOutBack,
+                                          builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+                                          child: Container(
+                                            width: 88,
+                                            height: 88,
+                                            decoration: BoxDecoration(
+                                              color: Theme.of(context).colorScheme.primaryContainer,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: Icon(CupertinoIcons.check_mark_circled_solid, size: 64, color: Theme.of(context).colorScheme.primary),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'Project created',
+                                          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        if (_successProjectCode != null) ...[
+                                          const SizedBox(height: 4),
+                                          Text(_successProjectCode!, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.primary)),
+                                        ],
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          _successProject!.name,
+                                          style: Theme.of(context).textTheme.bodyMedium,
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        const SizedBox(height: 20),
+                                        LayoutBuilder(builder: (context, c) {
+                                          final wide = c.maxWidth > 380;
+                                          final closeBtn = OutlinedButton.icon(
+                                            onPressed: () => setState(() => _successProject = null),
+                                            icon: const Icon(CupertinoIcons.xmark_circle),
+                                            label: const Text('Close'),
+                                          );
+                                          final viewBtn = FilledButton.icon(
+                                            onPressed: () {
+                                              final p = _successProject!;
+                                              setState(() {
+                                                _successProject = null;
+                                                _index = 0; // go to My Projects tab
+                                              });
+                                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: p)));
+                                            },
+                                            icon: const Icon(CupertinoIcons.arrow_right_circle_fill),
+                                            label: const Text('View Project'),
+                                          );
+                                          if (wide) {
+                                            return Row(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [closeBtn, const SizedBox(width: 12), viewBtn],
+                                            );
+                                          }
+                                          return Column(
+                                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                                            children: [viewBtn, const SizedBox(height: 8), closeBtn],
+                                          );
+                                        })
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
                         ),
+                      // Details overlay removed: we now navigate to a dedicated page
                     ],
                   ),
                 ),
@@ -241,9 +319,11 @@ class _ProjectsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final projectsAsync = ref.watch(ownerProjectsProvider);
+  final cached = ref.watch(ownerProjectsCachedProvider);
+  final projectsAsync = ref.watch(ownerProjectsProvider);
+  final query = ref.watch(projectsSearchQueryProvider);
   return Scaffold(
-      body: projectsAsync.when(
+  body: cached.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, st) {
           // Log Firestore index URL (if present) to console for copy-paste and hide from UI
@@ -262,8 +342,24 @@ class _ProjectsPage extends ConsumerWidget {
             asset: 'assets/server_error.svg',
           );
         },
-        data: (projects) {
-          if (projects.isEmpty) {
+        data: (cachedProjects) {
+          // If realtime stream has data, prefer it; else show cached
+          final allProjects = projectsAsync.asData?.value ?? cachedProjects;
+          final hadAny = allProjects.isNotEmpty;
+          final q = query.trim().toLowerCase();
+          var projects = allProjects;
+          if (q.isNotEmpty) {
+            projects = allProjects.where((p) {
+              final inId = p.id.toLowerCase().contains(q);
+              final inName = p.name.toLowerCase().contains(q);
+              final inAddr = (p.address ?? '').toLowerCase().contains(q);
+              final ld = p.landDetails;
+              final inBlock = ((ld['blockName'] ?? '') as String).toLowerCase().contains(q);
+              final inVillage = ((ld['villageName'] ?? '') as String).toLowerCase().contains(q);
+              return inId || inName || inAddr || inBlock || inVillage;
+            }).toList();
+          }
+          if (!hadAny) {
             return const NoData(
               title: 'No projects yet',
               message: 'Create your first project to get started.',
@@ -271,14 +367,53 @@ class _ProjectsPage extends ConsumerWidget {
             );
           }
           final total = projects.length;
-          final completed = projects.where((p) => p.status.name == 'completed').length;
-          final inProgress = projects.where((p) => p.status.name == 'in_progress').length;
-          final cancelled = projects.where((p) => p.status.name == 'cancelled').length;
-          final totalForPct = (completed + inProgress + cancelled).clamp(1, 1 << 30);
+          final completed = projects.where((p) => p.status == ProjectStatus.completed).length;
+          final cancelled = projects.where((p) => p.status == ProjectStatus.cancelled).length;
+          // Treat any non-completed/non-cancelled as in-progress for metrics (personalized expectation)
+          final inProgress = total - completed - cancelled;
+          // chart removed; percentage computation no longer needed
           return LayoutBuilder(builder: (context, c) {
             final isWide = c.maxWidth > 800;
             final gap = isWide ? 12.0 : 8.0;
             final cols = c.maxWidth > 1280 ? 4 : c.maxWidth > 960 ? 3 : c.maxWidth > 640 ? 2 : 1;
+
+            DateTime? deadlineOf(dynamic v) {
+              try {
+                if (v == null) return null;
+                if (v is Timestamp) return v.toDate();
+                if (v is DateTime) return v;
+                if (v is String) return DateTime.tryParse(v);
+                if (v is Map && v['seconds'] != null) {
+                  final secs = (v['seconds'] as num).toInt();
+                  return DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
+                }
+              } catch (_) {}
+              return null;
+            }
+            int byUrgency(Project a, Project b) {
+              final ad = deadlineOf(a.financials['deadline']);
+              final bd = deadlineOf(b.financials['deadline']);
+              if (ad == null && bd == null) return b.updatedAt.compareTo(a.updatedAt); // recent first
+              if (ad == null) return 1; // nulls last
+              if (bd == null) return -1;
+              return ad.compareTo(bd); // earlier first
+            }
+            final today = DateTime.now();
+            final startOfToday = DateTime(today.year, today.month, today.day);
+            final lateProjects = <Project>[];
+            final pendingProjects = <Project>[];
+            for (final p in projects) {
+              if (p.status == ProjectStatus.completed) continue;
+              final d = deadlineOf(p.financials['deadline']);
+              if (d != null && d.isBefore(startOfToday)) {
+                lateProjects.add(p);
+              } else {
+                pendingProjects.add(p);
+              }
+            }
+            lateProjects.sort(byUrgency);
+            pendingProjects.sort(byUrgency);
+
             return CustomScrollView(
               slivers: [
                 SliverToBoxAdapter(
@@ -286,6 +421,36 @@ class _ProjectsPage extends ConsumerWidget {
                     padding: const EdgeInsets.all(12.0),
                     child: Column(
                       children: [
+                        // Header row: search + view toggle
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 680),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _ProjectsSearchBar(onChanged: (q) {
+                                    ref.read(projectsSearchQueryProvider.notifier).state = q;
+                                  }),
+                                ),
+                                const SizedBox(width: 8),
+                                SegmentedButton<bool>(
+                                  segments: const [
+                                    ButtonSegment(value: true, icon: Icon(CupertinoIcons.square_grid_2x2)),
+                                    ButtonSegment(value: false, icon: Icon(CupertinoIcons.list_bullet)),
+                                  ],
+                                  selected: {ref.watch(projectsGridViewProvider)},
+                                  onSelectionChanged: (s) {
+                                    final v = s.first;
+                                    ref.read(projectsGridViewProvider.notifier).state = v;
+                                    try { ref.read(sharedPrefsProvider).setBool('projectsGrid', v); } catch (_) {}
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         LayoutBuilder(builder: (context, cc) {
                           final compact = cc.maxWidth < 720;
                           final metrics = [
@@ -306,69 +471,102 @@ class _ProjectsPage extends ConsumerWidget {
                           );
                         }),
                         const SizedBox(height: 12),
-                        SizedBox(
-                          height: 200,
-                          child: Card(
-                            clipBehavior: Clip.antiAlias,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            child: PieChart(
-                              PieChartData(
-                                sectionsSpace: 2,
-                                centerSpaceRadius: 40,
-                                startDegreeOffset: -90,
-                                // enable default animations in v1+
-                                pieTouchData: PieTouchData(enabled: true),
-                                sections: [
-                                  PieChartSectionData(
-                                    value: completed.toDouble(),
-                                    color: Colors.green,
-                                    title: '${((completed/totalForPct)*100).toStringAsFixed(0)}%',
-                                    titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
-                                  ),
-                                  PieChartSectionData(
-                                    value: inProgress.toDouble(),
-                                    color: Colors.orange,
-                                    title: '${((inProgress/totalForPct)*100).toStringAsFixed(0)}%',
-                                    titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
-                                  ),
-                                  PieChartSectionData(
-                                    value: cancelled.toDouble(),
-                                    color: Colors.redAccent,
-                                    title: '${((cancelled/totalForPct)*100).toStringAsFixed(0)}%',
-                                    titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Align(alignment: Alignment.centerLeft, child: Text('Projects', style: Theme.of(context).textTheme.titleMedium)),
+                        // Pie chart removed per spec to keep the page focused and clean.
                       ],
                     ),
                   ),
                 ),
-                SliverPadding(
-                  padding: const EdgeInsets.all(12.0),
-                  sliver: SliverGrid(
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: cols,
-                      crossAxisSpacing: gap,
-                      mainAxisSpacing: gap,
-                      childAspectRatio: 1.6,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        if (index == 0) {
-                          return _CreateProjectCard(onTap: onCreateProject);
-                        }
-                        final p = projects[index - 1];
-                        return _ProjectCard(project: p, onOpen: () => onOpenProject(p));
-                      },
-                      childCount: projects.length + 1,
+                // No-results state for search without blanking the whole page
+                if (q.isNotEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: NoData(
+                        title: 'No projects found',
+                        message: 'Try a different search term or clear the filter.',
+                        asset: 'assets/search_projects.svg',
+                      ),
                     ),
                   ),
-                ),
+                if (lateProjects.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text('Late (${lateProjects.length})', style: Theme.of(context).textTheme.titleMedium),
+                      ),
+                    ),
+                  ),
+                if (lateProjects.isNotEmpty)
+                  SliverPadding(
+                    padding: const EdgeInsets.all(12.0),
+                    sliver: ref.watch(projectsGridViewProvider)
+                        ? SliverGrid(
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: cols,
+                              crossAxisSpacing: gap,
+                              mainAxisSpacing: gap,
+                              childAspectRatio: 1.4,
+                            ),
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                final p = lateProjects[index];
+                                return _ProjectCard(project: p, onOpen: () => onOpenProject(p));
+                              },
+                              childCount: lateProjects.length,
+                            ),
+                          )
+                        : SliverList.builder(
+                            itemBuilder: (context, index) {
+                              final p = lateProjects[index];
+                              return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
+                            },
+                            itemCount: lateProjects.length,
+                          ),
+                  ),
+                if (pendingProjects.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('Your projects (${pendingProjects.length})', style: Theme.of(context).textTheme.titleMedium),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (pendingProjects.isNotEmpty)
+                  SliverPadding(
+                    padding: const EdgeInsets.all(12.0),
+                    sliver: ref.watch(projectsGridViewProvider)
+                        ? SliverGrid(
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: cols,
+                              crossAxisSpacing: gap,
+                              mainAxisSpacing: gap,
+                              childAspectRatio: 1.4,
+                            ),
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                final p = pendingProjects[index];
+                                return _ProjectCard(project: p, onOpen: () => onOpenProject(p));
+                              },
+                              childCount: pendingProjects.length,
+                            ),
+                          )
+                        : SliverList.builder(
+                            itemBuilder: (context, index) {
+                              final p = pendingProjects[index];
+                              return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
+                            },
+                            itemCount: pendingProjects.length,
+                          ),
+                  ),
               ],
             );
           });
@@ -414,8 +612,11 @@ Widget _metricCard(BuildContext context, _MetricData m) {
   );
 }
 
+typedef ProjectCreatedCallback = void Function(Project project, {String? projectCode});
+
 class _ProjectCreatePage extends ConsumerStatefulWidget {
-  const _ProjectCreatePage();
+  const _ProjectCreatePage({this.onCreated});
+  final ProjectCreatedCallback? onCreated;
   @override
   ConsumerState<_ProjectCreatePage> createState() => _ProjectCreatePageState();
 }
@@ -492,6 +693,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   
   // Section 4: Work Description controllers
   final _startDateCtrl = TextEditingController();
+  final _fnStartDate = FocusNode();
+  // New: Project deadline
+  final _deadlineCtrl = TextEditingController();
   WorkStage? _selectedWorkStage;
   ApramStatus? _selectedApramStatus;
   String? _selectedGramPanchayatName;
@@ -501,7 +705,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   bool _locating = false;
   final _photos = <XFile>[];
   final _docs = <XFile>[];
-  final _videos = <XFile>[];
+  // Removed video support per requirements
   // Section 2 specific files
   final _techApprovalDoc = <XFile>[]; // allow max 1
   final _techApprovalPhotos = <XFile>[]; // allow up to 3, <=7MB each
@@ -521,14 +725,14 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   int _completedUploads = 0;
   double _currentFileProgress = 0.0; // 0..1
   String _currentLabel = '';
+  String? _lastUploadError; // sticky capture for better error messages
   // Per-file status and progress
   // keyed by DraftMediaItem.id
   final Map<String, String> _photoStatus = {}; // id -> pending|uploading|done|fail
   final Map<String, double> _photoProgress = {}; // id -> 0..1
   final Map<String, String> _docStatus = {};
   final Map<String, double> _docProgress = {};
-  final Map<String, String> _videoStatus = {};
-  final Map<String, double> _videoProgress = {};
+  // Removed video status/progress per requirements
   // Finance & planning controllers
   final _budgetCtrl = TextEditingController();
   final _fundingCtrl = TextEditingController();
@@ -625,6 +829,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     _ifscCtrl.dispose();
   _bankNameCtrl.dispose();
     _startDateCtrl.dispose();
+  _deadlineCtrl.dispose();
   _saveTimer?.cancel();
   _autosaveBadgeTimer?.cancel();
     super.dispose();
@@ -728,42 +933,36 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       _branchCtrl,
       _ifscCtrl,
   _bankNameCtrl,
-      _startDateCtrl,
-    ];
-    for (final c in _draftControllers) {
-      c.addListener(_debounceSave);
-    }
-    // Initialize local draft service after first frame to access ref
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+  ];
+    // Initialize local draft service and restore any draft
+    try {
       final prefs = ref.read(sharedPrefsProvider);
-      setState(() {
-        _drafts = LocalDraftService(prefs);
-      });
-      // Initialize offline media store
-      () async {
-        final store = ref.read(draftMediaStoreProvider);
-        await store.init();
-        if (mounted) setState(() => _mediaStore = store);
-      }();
+      _drafts = LocalDraftService(prefs);
       _tryRestoreDraft();
-      // Auto-fetch current location on tab init if not already available
-      if (_lat == null || _lng == null) {
-        _getLocation();
-      }
-    });
+    } catch (_) {
+      // sharedPrefsProvider not overridden; skip drafts silently
+    }
+    // Debounced autosave on edits
+    for (final c in _draftControllers) {
+      c.addListener(_scheduleAutosave);
+    }
   }
 
-  void _debounceSave() {
+  void _scheduleAutosave() {
     _saveTimer?.cancel();
-    _saveTimer = Timer(const Duration(milliseconds: 600), () {
+    _saveTimer = Timer(const Duration(milliseconds: 800), () async {
+      await _saveDraftLocally();
       if (!mounted) return;
-      _saveDraftLocally();
-      // transient autosaved indicator
+      setState(() {
+        _showAutosaved = true;
+      });
       _autosaveBadgeTimer?.cancel();
-      setState(() => _showAutosaved = true);
-      _autosaveBadgeTimer = Timer(const Duration(milliseconds: 1500), () {
-        if (!mounted) return;
-        setState(() => _showAutosaved = false);
+      _autosaveBadgeTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) {
+          setState(() {
+            _showAutosaved = false;
+          });
+        }
       });
     });
   }
@@ -822,6 +1021,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     _ifscCtrl.text = (d['ifsc'] as String?) ?? _ifscCtrl.text;
     // Work
     _startDateCtrl.text = (d['workStartDate'] as String?) ?? _startDateCtrl.text;
+  _deadlineCtrl.text = (d['deadline'] as String?) ?? _deadlineCtrl.text;
     final ws = d['workStage'] as String?;
     if (ws != null) {
       _selectedWorkStage = WorkStage.values.firstWhere(
@@ -905,6 +1105,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   'ifsc': _ifscCtrl.text.trim(),
   // Work
   'workStartDate': _startDateCtrl.text.trim(),
+  'deadline': _deadlineCtrl.text.trim(),
   'workStage': _selectedWorkStage?.name,
   'apramStatus': _selectedApramStatus?.name,
       'location': {
@@ -917,56 +1118,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     await _drafts?.saveDraft(d);
   }
 
-  Future<void> _clearDraftLocally() async {
-    await _drafts?.clearDraft();
-  }
-
-  // Amount helpers
-  Widget _amountField(TextEditingController controller, String label, {bool required = false, FocusNode? focusNode}) {
-    final words = _amountToWords(controller.text);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextFormField(
-          focusNode: focusNode,
-          controller: controller,
-          decoration: InputDecoration(labelText: label, prefixIcon: Icon(CupertinoIcons.money_dollar), suffixText: '.00'),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
-            LengthLimitingTextInputFormatter(18),
-          ],
-          onChanged: (_) { setState(() {}); },
-          validator: (v){
-            final s = (v ?? '').replaceAll(',', '').trim();
-            if (!required && s.isEmpty) return null;
-            if (s.isEmpty) return 'Enter amount';
-            final d = double.tryParse(s);
-            if (d == null || d <= 0) return 'Enter valid amount';
-            return null;
-          },
-        ),
-        if (words.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 4.0),
-            child: Text('In words: $words', style: Theme.of(context).textTheme.bodySmall),
-          ),
-      ],
-    );
-  }
-
-  String _amountToWords(String input) {
-    final s = input.replaceAll(',', '').trim();
-    if (s.isEmpty) return '';
-    final value = double.tryParse(s);
-    if (value == null) return '';
-    final rupees = value.floor();
-    final paise = ((value - rupees) * 100).round();
-    final r = _toIndianWords(rupees);
-    final p = paise > 0 ? ' and ${_toIndianWords(paise)} paise' : '';
-    final rsLabel = rupees == 1 ? 'rupee' : 'rupees';
-    return '$r $rsLabel$p only';
-  }
+  // _pickVideos removed per requirements
 
   // Render a label with required indicator
   InputDecoration _req(String label, {Widget? prefixIcon}) => InputDecoration(
@@ -1019,6 +1171,162 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     return parts.join(' ');
   }
 
+  // Sanitize file names for Storage: allow letters, numbers, dot, underscore, hyphen; replace others with '_'
+  String _safeName(String s) => s.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
+
+  // Human-readable size like 1.2 MB
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024.0;
+    if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
+    final mb = kb / 1024.0;
+    return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+  }
+
+  // Icon color by content-type
+  (IconData, Color) _iconForContentType(String ct, BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    if (ct.startsWith('image/')) return (Icons.image, cs.primary);
+    if (ct == 'application/pdf') return (Icons.picture_as_pdf, Colors.redAccent);
+    if (ct.contains('sheet') || ct.contains('excel') || ct == 'text/csv') return (Icons.table_chart, Colors.green);
+    if (ct.contains('word') || ct.endsWith('/msword')) return (Icons.description, Colors.blueAccent);
+    return (Icons.insert_drive_file, cs.secondary);
+  }
+
+  // Unified file card with progress/status and remove
+  Widget _fileCard(DraftMediaItem it) {
+    final isImage = it.contentType.startsWith('image/');
+    final statusMap = isImage ? _photoStatus : _docStatus;
+    final progMap = isImage ? _photoProgress : _docProgress;
+    final status = statusMap[it.id] ?? 'pending';
+    final prog = progMap[it.id] ?? 0.0;
+    final (iconData, iconColor) = _iconForContentType(it.contentType, context);
+    return SizedBox(
+      width: 280,
+      child: Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.3)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(color: iconColor.withValues(alpha: 0.1), shape: BoxShape.circle),
+                    child: Icon(iconData, color: iconColor),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(it.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Text('${_formatBytes(it.size)} • ${it.contentType}', style: Theme.of(context).textTheme.labelSmall),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove',
+                    onPressed: () async {
+                      await _mediaStore?.remove(it.id);
+                      if (mounted) setState(() {});
+                    },
+                    icon: const Icon(CupertinoIcons.delete),
+                  ),
+                ],
+              ),
+              if (status == 'uploading' || status == 'fail' || status == 'done') ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    if (status == 'uploading') ...[
+                      Expanded(child: LinearProgressIndicator(value: prog)),
+                      const SizedBox(width: 8),
+                      Text('${(prog * 100).toStringAsFixed(0)}%', style: Theme.of(context).textTheme.labelSmall),
+                    ] else if (status == 'done') ...[
+                      const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                      const SizedBox(width: 6),
+                      Text('Uploaded', style: Theme.of(context).textTheme.labelSmall),
+                    ] else ...[
+                      const Icon(Icons.error_outline, color: Colors.redAccent, size: 16),
+                      const SizedBox(width: 6),
+                      Text('Failed', style: Theme.of(context).textTheme.labelSmall),
+                    ]
+                  ],
+                ),
+              ]
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Convert a numeric amount string to Indian currency words for helper text
+  String? _amountToWordsString(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return null;
+    // Normalize: remove commas, allow period for paise
+    final norm = t.replaceAll(',', '');
+    final value = double.tryParse(norm);
+    if (value == null) return null;
+    final rupees = value.floor();
+    final paise = ((value - rupees) * 100).round();
+    final r = _toIndianWords(rupees);
+    final rsLabel = rupees == 1 ? ' rupee' : ' rupees';
+    final p = paise > 0 ? ' and ${_twoDigits(paise)} paise' : '';
+    return '$r$rsLabel$p only';
+  }
+
+  // Common amount field with optional required validation and helper words
+  Widget _amountField(TextEditingController controller, String label, {bool required = false, FocusNode? focusNode}) {
+    final words = _amountToWordsString(controller.text);
+    final decoration = required
+        ? _req(label, prefixIcon: const Icon(Icons.currency_rupee))
+        : const InputDecoration(labelText: null).copyWith(labelText: label, prefixIcon: const Icon(Icons.currency_rupee));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          focusNode: focusNode,
+          controller: controller,
+          decoration: decoration,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r"[0-9,\.]")),
+            LengthLimitingTextInputFormatter(18),
+          ],
+          onChanged: (_) => setState(() {}),
+          validator: (v) {
+            final t = (v ?? '').trim();
+            if (required && t.isEmpty) return 'Required';
+            if (t.isEmpty) return null;
+            final norm = t.replaceAll(',', '');
+            if (double.tryParse(norm) == null) return 'Enter valid amount';
+            return null;
+          },
+        ),
+        if (words != null && words.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4.0),
+            child: Text('≈ $words', style: Theme.of(context).textTheme.labelSmall),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _clearDraftLocally() async {
+    await _drafts?.clearDraft();
+  }
+
   // Removed _focusFirstInvalidInCurrentStep() as Next no longer runs global validation.
 
   // After changing step, focus the first field in that step to guide data entry
@@ -1042,7 +1350,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         focus(_fnBankName);
         break;
       case 3:
-        focus(_fnName);
+  // Focus the Work section's first field (start date) to avoid jumping back to Basic Details
+  focus(_fnStartDate);
         break;
     }
   }
@@ -1209,8 +1518,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       );
       return;
     }
-    // Clear photos to enforce either-or, then add single doc
-    await _mediaStore?.removeByCategory('sanction_tech_photo');
+  // Allow both PDF and Photos together; do not clear other category
   final id = await _mediaStore!.addFromPlatformFile(f, category: 'sanction_tech_doc', maxBytes: StorageService.maxDocBytes);
   _docStatus[id] = 'pending';
   _docProgress[id] = 0.0;
@@ -1226,9 +1534,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     final picker = ImagePicker();
     final imgs = await picker.pickMultiImage(imageQuality: 85);
     if (!mounted) return;
-    const maxBytes = 5 * 1024 * 1024; // 5MB per photo
-    // Clear single doc to enforce either-or
-    await _mediaStore?.removeByCategory('sanction_tech_doc');
+  const maxBytes = 5 * 1024 * 1024; // 5MB per photo
+  // Allow both PDF and Photos together; do not clear other category
     int added = 0;
     for (final x in imgs) {
       if (added >= 3) break;
@@ -1277,55 +1584,6 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   _docProgress[id] = 0.0;
     }
     setState(() {});
-  }
-
-  Future<void> _pickVideos() async {
-    if (_mediaStore == null || !_mediaStore!.ready) {
-      final store = ref.read(draftMediaStoreProvider);
-      await store.init();
-      _mediaStore = store;
-    }
-    final picker = ImagePicker();
-    final vid = await picker.pickVideo(source: ImageSource.gallery, maxDuration: const Duration(minutes: 5));
-    if (vid == null) return;
-    if (!mounted) return;
-    if (await vid.length() > StorageService.maxVideoBytes) {
-      if (mounted) {
-        toastification.show(
-          context: context,
-          title: const Text('Video too large'),
-          description: const Text('Must be <= 20MB'),
-          type: ToastificationType.warning,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 3),
-          showProgressBar: false,
-          icon: const Icon(CupertinoIcons.video_camera),
-        );
-      }
-      return;
-    }
-    final ext = vid.path.split('.').last.toLowerCase();
-  // Restrict to MP4 only to match Storage rules
-  const allowedV = ['mp4'];
-    if (!allowedV.contains(ext)) {
-      if (mounted) {
-        toastification.show(
-          context: context,
-          title: const Text('Unsupported video type'),
-      description: const Text('Use MP4 only'),
-          type: ToastificationType.info,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 3),
-          showProgressBar: false,
-          icon: const Icon(CupertinoIcons.video_camera),
-        );
-      }
-      return;
-    }
-    final id = await _mediaStore!.addFromXFile(vid, category: 'work_video', maxBytes: StorageService.maxVideoBytes);
-    _videoStatus[id] = 'pending';
-    _videoProgress[id] = 0.0;
-    if (mounted) setState(() {});
   }
 
   Future<void> _pickGenericDocsCategory(String category) async {
@@ -1458,7 +1716,6 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   // Clear picks (legacy lists) and offline media store
   _photos.clear();
   _docs.clear();
-  _videos.clear();
   _techApprovalDoc.clear();
   _techApprovalPhotos.clear();
   _adminApprovalDocs.clear();
@@ -1472,8 +1729,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   _photoProgress.clear();
   _docStatus.clear();
   _docProgress.clear();
-  _videoStatus.clear();
-  _videoProgress.clear();
+  // video state removed
   // Clear selections (IDs not used in manual mode)
     _selectedSanctioningDepartmentName = null;
     _selectedSchemeName = null;
@@ -1601,7 +1857,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         DropdownButtonFormField<String>(
           isExpanded: true,
           decoration: const InputDecoration(labelText: 'Scheme (योजना)', prefixIcon: Icon(CupertinoIcons.square_grid_2x2)),
-          value: _selectedSchemeName?.isNotEmpty == true ? _selectedSchemeName : null,
+          initialValue: _selectedSchemeName?.isNotEmpty == true ? _selectedSchemeName : null,
           itemHeight: 56,
           menuMaxHeight: 420,
           selectedItemBuilder: (context) => _schemeItems
@@ -1712,11 +1968,28 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   _amountField(_approvedAmountCtrl, 'Approved Amount (स्वीकृत राशि) * (required)', required: true, focusNode: _fnApprovedAmount),
       ),
       const SizedBox(height: 12),
-  Align(alignment: Alignment.centerLeft, child: Text('Technical Approval, Map & Outline Upload (तकनीकी स्वीकृति, मानचित्र और रूपरेखा अपलोड)', style: Theme.of(context).textTheme.titleSmall)),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Technical Approval, Map & Outline Upload (तकनीकी स्वीकृति, मानचित्र और रूपरेखा अपलोड)', style: Theme.of(context).textTheme.titleSmall),
+          Tooltip(
+            message: 'Upload PDF (<=20MB) and/or 1–3 Photos (<=5MB each). You can attach both for technical approval.',
+            child: const Icon(Icons.info_outline, size: 18),
+          ),
+        ],
+      ),
       const SizedBox(height: 8),
       Wrap(spacing: 8, runSpacing: 8, children: [
-        FilledButton.icon(onPressed: _pickTechApprovalDoc, icon: const Icon(Icons.picture_as_pdf), label: Text('Upload Doc (<=20MB) • ${_mediaStore?.list(category: 'sanction_tech_doc').length ?? 0}')),
-        FilledButton.icon(onPressed: _pickTechApprovalPhotos, icon: const Icon(Icons.photo_library_outlined), label: Text('Upload Photos (1-3, <=5MB each) • ${_mediaStore?.list(category: 'sanction_tech_photo').length ?? 0}')),
+        FilledButton.icon(
+          onPressed: _pickTechApprovalDoc,
+          icon: const Icon(Icons.picture_as_pdf),
+          label: Text('Add PDF (<=20MB) • ${_mediaStore?.list(category: 'sanction_tech_doc').length ?? 0}'),
+        ),
+        FilledButton.icon(
+          onPressed: _pickTechApprovalPhotos,
+          icon: const Icon(Icons.photo_library_outlined),
+          label: Text('Add Photos (1–3, <=5MB) • ${_mediaStore?.list(category: 'sanction_tech_photo').length ?? 0}'),
+        ),
       ]),
       const SizedBox(height: 8),
       Builder(builder: (context) {
@@ -1725,24 +1998,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         return Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: items.map((it) {
-            final id = it.id;
-            final st = _docStatus[id] ?? 'pending';
-            final pr = _docProgress[id] ?? 0.0;
-            return InputChip(
-              avatar: Icon(st == 'done' ? Icons.check_circle : (st == 'fail' ? Icons.error_outline : Icons.cloud_upload)),
-              label: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(it.name, overflow: TextOverflow.ellipsis),
-                  if (st == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: pr)),
-                  if (st != 'uploading') Text('${(pr * 100).toStringAsFixed(0)}%', style: Theme.of(context).textTheme.labelSmall),
-                ],
-              ),
-              onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-            );
-          }).toList(),
+          children: items.map((it) => _fileCard(it)).toList(),
         );
       }),
       Builder(builder: (context) {
@@ -1751,54 +2007,26 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         return Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: items.map((it) {
-            final id = it.id;
-            final st = _photoStatus[id] ?? 'pending';
-            final pr = _photoProgress[id] ?? 0.0;
-            return InputChip(
-              avatar: Icon(st == 'done' ? Icons.check_circle : (st == 'fail' ? Icons.error_outline : Icons.cloud_upload)),
-              label: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(it.name, overflow: TextOverflow.ellipsis),
-                  if (st == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: pr)),
-                  if (st != 'uploading') Text('${(pr * 100).toStringAsFixed(0)}%', style: Theme.of(context).textTheme.labelSmall),
-                ],
-              ),
-              onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-            );
-          }).toList(),
+          children: items.map((it) => _fileCard(it)).toList(),
         );
       }),
       const SizedBox(height: 12),
-      Align(alignment: Alignment.centerLeft, child: Text('Admin Approval Documents (कम से कम 1)', style: Theme.of(context).textTheme.titleSmall)),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Admin Approval Documents (कम से कम 1)', style: Theme.of(context).textTheme.titleSmall),
+          const Tooltip(message: 'Upload one or more PDF files (<=20MB each).', child: Icon(Icons.info_outline, size: 18)),
+        ],
+      ),
       const SizedBox(height: 8),
-  FilledButton.icon(onPressed: _pickAdminApprovalDocs, icon: const Icon(Icons.attach_file), label: Text('Add (${_mediaStore?.list(category: 'sanction_admin_doc').length ?? 0})')),
+      FilledButton.icon(onPressed: _pickAdminApprovalDocs, icon: const Icon(Icons.attach_file), label: Text('Add PDF (${_mediaStore?.list(category: 'sanction_admin_doc').length ?? 0})')),
       const SizedBox(height: 8),
       Builder(builder: (context) {
         final items = _mediaStore?.list(category: 'sanction_admin_doc') ?? const [];
         return Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: items.map((it) {
-            final id = it.id;
-            final st = _docStatus[id] ?? 'pending';
-            final pr = _docProgress[id] ?? 0.0;
-            return InputChip(
-              avatar: Icon(st == 'done' ? Icons.check_circle : (st == 'fail' ? Icons.error_outline : Icons.cloud_upload)),
-              label: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(it.name, overflow: TextOverflow.ellipsis),
-                  if (st == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: pr)),
-                  if (st != 'uploading') Text('${(pr * 100).toStringAsFixed(0)}%', style: Theme.of(context).textTheme.labelSmall),
-                ],
-              ),
-              onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-            );
-          }).toList(),
+          children: items.map((it) => _fileCard(it)).toList(),
         );
       }),
     ]);
@@ -1813,7 +2041,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       ),
       const SizedBox(height: 8),
       DropdownButtonFormField<String>(
-        value: _installment1Status,
+        initialValue: _installment1Status,
         items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
         decoration: const InputDecoration(labelText: 'Installment 1 Received Status'),
         onChanged: (v) => setState(() => _installment1Status = v),
@@ -1832,7 +2060,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       ),
       const SizedBox(height: 8),
       DropdownButtonFormField<String>(
-        value: _installment2Status,
+        initialValue: _installment2Status,
         items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
         decoration: const InputDecoration(labelText: 'Installment 2 Received Status'),
         onChanged: (v) => setState(() => _installment2Status = v),
@@ -1851,7 +2079,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       ),
       const SizedBox(height: 8),
       DropdownButtonFormField<String>(
-        value: _installment3Status,
+        initialValue: _installment3Status,
         items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
         decoration: const InputDecoration(labelText: 'Installment 3 Received Status'),
         onChanged: (v) => setState(() => _installment3Status = v),
@@ -1917,17 +2145,28 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     return Column(children: [
       const SizedBox(height: 8),
       _pair(
-        DateFormField(
-          controller: _startDateCtrl,
-          label: 'Work Start Date (YYYY-MM-DD)',
-          validator: (v){
-            final s = (v ?? '').trim();
-            if (s.isEmpty) return null;
-            final re = RegExp(r'^\d{4}-\d{2}-\d{2}$');
-            if (!re.hasMatch(s)) return 'Use YYYY-MM-DD';
-            try { DateTime.parse(s); } catch (_){ return 'Invalid date'; }
-            return null;
-          },
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DateFormField(
+              focusNode: _fnStartDate,
+              controller: _startDateCtrl,
+              label: 'Work Start Date (YYYY-MM-DD)',
+              validator: (v){
+                final s = (v ?? '').trim();
+                if (s.isEmpty) return null;
+                final re = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+                if (!re.hasMatch(s)) return 'Use YYYY-MM-DD';
+                try { DateTime.parse(s); } catch (_){ return 'Invalid date'; }
+                return null;
+              },
+            ),
+            const SizedBox(height: 8),
+            DateFormField(
+              controller: _deadlineCtrl,
+              label: 'Project Deadline (YYYY-MM-DD)',
+            ),
+          ],
         ),
         DropdownButtonFormField<WorkStage>(
           decoration: const InputDecoration(labelText: 'Stage', prefixIcon: Icon(CupertinoIcons.chart_bar)),
@@ -1949,7 +2188,13 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       ),
       const SizedBox(height: 16),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Photos (फोटो) • max 5, <=5MB each', style: Theme.of(context).textTheme.bodySmall),
+        Row(
+          children: [
+            Text('Photos (फोटो) • max 5, <=5MB each', style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(width: 6),
+            const Tooltip(message: 'JPEG/PNG/HEIC up to 5MB each. You can add up to 5 photos.', child: Icon(Icons.info_outline, size: 16)),
+          ],
+        ),
         const SizedBox(height: 8),
         FilledButton.icon(onPressed: _pickPhotos, icon: const Icon(Icons.add_a_photo), label: Text('Add (${_mediaStore?.list(category: 'work_photo').length ?? 0}/5)')),
         const SizedBox(height: 8),
@@ -1958,40 +2203,17 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           return Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: items.map((it) {
-              final id = it.id;
-              final status = _photoStatus[id] ?? 'pending';
-              final prog = _photoProgress[id] ?? 0.0;
-              IconData icon; Color? color; String? sub;
-              switch (status) {
-                case 'uploading': icon = Icons.cloud_upload; color = Theme.of(context).colorScheme.primary; sub='${(prog * 100).toStringAsFixed(0)}%'; break;
-                case 'done': icon = Icons.check_circle; color = Colors.green; break;
-                case 'fail': icon = Icons.error_outline; color = Colors.redAccent; break;
-                default: icon = Icons.hourglass_bottom; color = Colors.grey;
-              }
-              return InputChip(
-                avatar: Icon(icon, color: color, size: 18),
-                label: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(it.name, overflow: TextOverflow.ellipsis),
-                    if (status == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: prog)),
-                    if (status != 'uploading' && sub != null) Text(sub, style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                ),
-                onDeleted: () async {
-                  await _mediaStore?.remove(id);
-                  if (mounted) setState(() {});
-                },
-              );
-            }).toList(),
+            children: items.map((it) => _fileCard(it)).toList(),
           );
         }),
   const SizedBox(height: 16),
   Divider(color: Theme.of(context).dividerColor.withValues(alpha: 0.4)),
   const SizedBox(height: 8),
-  Text('Documents (optional, <=10MB each)', style: Theme.of(context).textTheme.bodySmall),
+  Row(children: [
+    Text('Documents (optional, <=10MB each)', style: Theme.of(context).textTheme.bodySmall),
+    const SizedBox(width: 6),
+    const Tooltip(message: 'PDF, Excel, or Word (<=10MB each).', child: Icon(Icons.info_outline, size: 16)),
+  ]),
         const SizedBox(height: 8),
         FilledButton.icon(onPressed: _pickDocs, icon: const Icon(Icons.attach_file), label: Text('Add (${_mediaStore?.list(category: 'work_doc').length ?? 0})')),
         const SizedBox(height: 8),
@@ -2000,72 +2222,13 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           return Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: items.map((it) {
-              final id = it.id;
-              final status = _docStatus[id] ?? 'pending';
-              final prog = _docProgress[id] ?? 0.0;
-              IconData icon; Color? color; String? sub;
-              switch (status) {
-                case 'uploading': icon = Icons.cloud_upload; color = Theme.of(context).colorScheme.primary; sub='${(prog * 100).toStringAsFixed(0)}%'; break;
-                case 'done': icon = Icons.check_circle; color = Colors.green; break;
-                case 'fail': icon = Icons.error_outline; color = Colors.redAccent; break;
-                default: icon = Icons.hourglass_bottom; color = Colors.grey;
-              }
-              return InputChip(
-                avatar: Icon(icon, color: color, size: 18),
-                label: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(it.name, overflow: TextOverflow.ellipsis),
-                    if (status == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: prog)),
-                    if (status != 'uploading' && sub != null) Text(sub, style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                ),
-                onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-              );
-            }).toList(),
+            children: items.map((it) => _fileCard(it)).toList(),
           );
         }),
   const SizedBox(height: 16),
   Divider(color: Theme.of(context).dividerColor.withValues(alpha: 0.4)),
   const SizedBox(height: 8),
-  Text('Video (optional, <=20MB)', style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 8),
-        FilledButton.icon(onPressed: _pickVideos, icon: const Icon(Icons.video_file), label: Text('Add (${_mediaStore?.list(category: 'work_video').length ?? 0})')),
-        const SizedBox(height: 8),
-        Builder(builder: (context) {
-          final items = _mediaStore?.list(category: 'work_video') ?? const [];
-          return Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: items.map((it) {
-              final id = it.id;
-              final status = _videoStatus[id] ?? 'pending';
-              final prog = _videoProgress[id] ?? 0.0;
-              IconData icon; Color? color; String? sub;
-              switch (status) {
-                case 'uploading': icon = Icons.cloud_upload; color = Theme.of(context).colorScheme.primary; sub='${(prog * 100).toStringAsFixed(0)}%'; break;
-                case 'done': icon = Icons.check_circle; color = Colors.green; break;
-                case 'fail': icon = Icons.error_outline; color = Colors.redAccent; break;
-                default: icon = Icons.hourglass_bottom; color = Colors.grey;
-              }
-              return InputChip(
-                avatar: Icon(icon, color: color, size: 18),
-                label: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(it.name, overflow: TextOverflow.ellipsis),
-                    if (status == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: prog)),
-                    if (status != 'uploading' && sub != null) Text(sub, style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                ),
-                onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-              );
-            }).toList(),
-          );
-        }),
+  // Video section removed per requirements
   const SizedBox(height: 16),
   Divider(color: Theme.of(context).dividerColor.withValues(alpha: 0.4)),
   const SizedBox(height: 8),
@@ -2088,7 +2251,11 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           ),
         const SizedBox(height: 16),
         // Categorized documents
-  Text('Measurement Books (मेज़रमेंट बुक) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Row(children: [
+    Text('Measurement Books (मेज़रमेंट बुक) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+    const SizedBox(width: 6),
+    const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
+  ]),
         const SizedBox(height: 8),
   FilledButton.icon(onPressed: _pickMeasurementBooks, icon: const Icon(Icons.description_outlined), label: Text('Add (${_mediaStore?.list(category: 'work_mb').length ?? 0})')),
         const SizedBox(height: 8),
@@ -2097,35 +2264,15 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           return Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: items.map((it) {
-              final id = it.id;
-              final status = _docStatus[id] ?? 'pending';
-              final prog = _docProgress[id] ?? 0.0;
-              IconData icon; Color? color; String? sub;
-              switch (status) {
-                case 'uploading': icon = Icons.cloud_upload; color = Theme.of(context).colorScheme.primary; sub='${(prog * 100).toStringAsFixed(0)}%'; break;
-                case 'done': icon = Icons.check_circle; color = Colors.green; break;
-                case 'fail': icon = Icons.error_outline; color = Colors.redAccent; break;
-                default: icon = Icons.hourglass_bottom; color = Colors.grey;
-              }
-              return InputChip(
-                avatar: Icon(icon, color: color, size: 18),
-                label: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(it.name, overflow: TextOverflow.ellipsis),
-                    if (status == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: prog)),
-                    if (status != 'uploading' && sub != null) Text(sub, style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                ),
-                onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-              );
-            }).toList(),
+            children: items.map((it) => _fileCard(it)).toList(),
           );
         }),
         const SizedBox(height: 16),
-  Text('Test Reports (टेस्ट रिपोर्ट) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Row(children: [
+    Text('Test Reports (टेस्ट रिपोर्ट) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+    const SizedBox(width: 6),
+    const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
+  ]),
         const SizedBox(height: 8),
   FilledButton.icon(onPressed: _pickTestReports, icon: const Icon(Icons.science_outlined), label: Text('Add (${_mediaStore?.list(category: 'work_test').length ?? 0})')),
         const SizedBox(height: 8),
@@ -2134,35 +2281,15 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           return Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: items.map((it) {
-              final id = it.id;
-              final status = _docStatus[id] ?? 'pending';
-              final prog = _docProgress[id] ?? 0.0;
-              IconData icon; Color? color; String? sub;
-              switch (status) {
-                case 'uploading': icon = Icons.cloud_upload; color = Theme.of(context).colorScheme.primary; sub='${(prog * 100).toStringAsFixed(0)}%'; break;
-                case 'done': icon = Icons.check_circle; color = Colors.green; break;
-                case 'fail': icon = Icons.error_outline; color = Colors.redAccent; break;
-                default: icon = Icons.hourglass_bottom; color = Colors.grey;
-              }
-              return InputChip(
-                avatar: Icon(icon, color: color, size: 18),
-                label: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(it.name, overflow: TextOverflow.ellipsis),
-                    if (status == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: prog)),
-                    if (status != 'uploading' && sub != null) Text(sub, style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                ),
-                onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-              );
-            }).toList(),
+            children: items.map((it) => _fileCard(it)).toList(),
           );
         }),
         const SizedBox(height: 16),
-  Text('Work Reports (कार्य रिपोर्ट) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Row(children: [
+    Text('Work Reports (कार्य रिपोर्ट) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+    const SizedBox(width: 6),
+    const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
+  ]),
         const SizedBox(height: 8),
   FilledButton.icon(onPressed: _pickWorkReports, icon: const Icon(Icons.summarize_outlined), label: Text('Add (${_mediaStore?.list(category: 'work_workrep').length ?? 0})')),
         const SizedBox(height: 8),
@@ -2171,35 +2298,15 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           return Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: items.map((it) {
-              final id = it.id;
-              final status = _docStatus[id] ?? 'pending';
-              final prog = _docProgress[id] ?? 0.0;
-              IconData icon; Color? color; String? sub;
-              switch (status) {
-                case 'uploading': icon = Icons.cloud_upload; color = Theme.of(context).colorScheme.primary; sub='${(prog * 100).toStringAsFixed(0)}%'; break;
-                case 'done': icon = Icons.check_circle; color = Colors.green; break;
-                case 'fail': icon = Icons.error_outline; color = Colors.redAccent; break;
-                default: icon = Icons.hourglass_bottom; color = Colors.grey;
-              }
-              return InputChip(
-                avatar: Icon(icon, color: color, size: 18),
-                label: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(it.name, overflow: TextOverflow.ellipsis),
-                    if (status == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: prog)),
-                    if (status != 'uploading' && sub != null) Text(sub, style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                ),
-                onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-              );
-            }).toList(),
+            children: items.map((it) => _fileCard(it)).toList(),
           );
         }),
         const SizedBox(height: 16),
-  Text('Certificates (प्रमाण पत्र) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Row(children: [
+    Text('Certificates (प्रमाण पत्र) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+    const SizedBox(width: 6),
+    const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
+  ]),
         const SizedBox(height: 8),
   FilledButton.icon(onPressed: _pickCertificates, icon: const Icon(Icons.verified_outlined), label: Text('Add (${_mediaStore?.list(category: 'work_cert').length ?? 0})')),
         const SizedBox(height: 8),
@@ -2208,31 +2315,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           return Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: items.map((it) {
-              final id = it.id;
-              final status = _docStatus[id] ?? 'pending';
-              final prog = _docProgress[id] ?? 0.0;
-              IconData icon; Color? color; String? sub;
-              switch (status) {
-                case 'uploading': icon = Icons.cloud_upload; color = Theme.of(context).colorScheme.primary; sub='${(prog * 100).toStringAsFixed(0)}%'; break;
-                case 'done': icon = Icons.check_circle; color = Colors.green; break;
-                case 'fail': icon = Icons.error_outline; color = Colors.redAccent; break;
-                default: icon = Icons.hourglass_bottom; color = Colors.grey;
-              }
-              return InputChip(
-                avatar: Icon(icon, color: color, size: 18),
-                label: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(it.name, overflow: TextOverflow.ellipsis),
-                    if (status == 'uploading') SizedBox(width: 80, height: 3, child: LinearProgressIndicator(value: prog)),
-                    if (status != 'uploading' && sub != null) Text(sub, style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                ),
-                onDeleted: () async { await _mediaStore?.remove(id); if (mounted) setState(() {}); },
-              );
-            }).toList(),
+            children: items.map((it) => _fileCard(it)).toList(),
           );
         }),
       ]),
@@ -2458,7 +2541,10 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     ),
                   ),
                 const SizedBox(height: 12),
-                Form(
+                // Disable form while saving/uploads in progress
+                AbsorbPointer(
+                  absorbing: _saving,
+                  child: Form(
                   key: _formKey,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2601,6 +2687,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     ],
                   ),
                 ),
+                ),
                 const SizedBox(height: 12),
                 // helper to auto-focus first invalid field within current step
                 // considers only a subset of fields based on our validators
@@ -2630,6 +2717,34 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                 const SizedBox(height: 8),
                 LayoutBuilder(builder: (context, c) {
                   final narrow = c.maxWidth < 360;
+                  // Precompute simple validity to enable/disable Create button
+                  final techDocCnt = _mediaStore?.list(category: 'sanction_tech_doc').length ?? 0;
+                  final techPhotoCnt = _mediaStore?.list(category: 'sanction_tech_photo').length ?? 0;
+                  final adminDocCnt = _mediaStore?.list(category: 'sanction_admin_doc').length ?? 0;
+                  final techOk = techDocCnt > 0 || (techPhotoCnt > 0 && techPhotoCnt <= 3);
+                  final requiredCtrls = <TextEditingController>[
+                    _gramPanchayatCtrl,
+                    _sarpanchNameCtrl,
+                    _secretaryNameCtrl,
+                    _subEngineerNameCtrl,
+                    _sanctioningDepartmentCtrl,
+                    _itemCtrl,
+                    _planHeadCtrl,
+                    _technicalApprovalNoCtrl,
+                    _technicalApprovalDateCtrl,
+                    _adminApprovalNoCtrl,
+                    _adminApprovalDateCtrl,
+                    _approvedAmountCtrl,
+                  ];
+                  final textsOk = requiredCtrls.every((c) => c.text.trim().isNotEmpty);
+                  final mobilesOk = _sarpanchMobileCtrl.text.trim().length == 10 &&
+                      _secretaryMobileCtrl.text.trim().length == 10 &&
+                      _subEngineerMobileCtrl.text.trim().length == 10;
+                  final blockOk = (_selectedBlockId ?? '').isNotEmpty;
+                  final villageOk = _villageCtrl.text.trim().isNotEmpty;
+                  final gpsOk = _lat != null && _lng != null;
+                  final adminOk = adminDocCnt > 0;
+                  final canCreate = textsOk && mobilesOk && blockOk && villageOk && gpsOk && techOk && adminOk && !_saving;
                   final resetBtn = OutlinedButton.icon(
                     onPressed: _saving ? null : () async {
                         final confirmed = await showDialog<bool>(
@@ -2661,10 +2776,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     icon: const Icon(CupertinoIcons.refresh),
                     label: const Text('Reset form'),
                   );
-                  final saveBtn = FilledButton(
-                    onPressed: _saving
-                        ? null
-                        : () async {
+                  final saveBtn = FilledButton.icon(
+                    onPressed: canCreate
+                        ? () async {
                               // Using toastification for feedback
                               // Optional safety
                               if (!mounted) return;
@@ -2751,6 +2865,36 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 );
                                 return;
                               }
+                              // Final confirmation before creating (irreversible)
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) {
+                                  final workPhotoCnt = _mediaStore?.list(category: 'work_photo').length ?? 0;
+                                  final workDocCnt = _mediaStore?.list(category: 'work_doc').length ?? 0;
+                                  final certCnt2 = _mediaStore?.list(category: 'work_cert').length ?? 0;
+                                  return AlertDialog(
+                                    title: const Text('Create project?'),
+                                    content: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text('Please confirm all details are correct. This action cannot be undone.'),
+                                        const SizedBox(height: 8),
+                                        Text('Attachments: $workPhotoCnt photos, $workDocCnt docs, $certCnt2 certificates'),
+                                            if (_deadlineCtrl.text.trim().isNotEmpty) ...[
+                                              const SizedBox(height: 4),
+                                              Text('Deadline: ${_deadlineCtrl.text.trim()}'),
+                                            ],
+                                      ],
+                                    ),
+                                    actions: [
+                                      TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('No')),
+                                      FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Yes, create')),
+                                    ],
+                                  );
+                                },
+                              );
+                              if (confirm != true) return;
                               // Save a lightweight draft now (after dialog) before heavy operations
                               await _saveDraftLocally();
                               if (!mounted) return;
@@ -2760,6 +2904,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 _completedUploads = 0;
                                 _currentFileProgress = 0.0;
                                 _currentLabel = '';
+                                _lastUploadError = null;
                               });
                               try {
                                 final auth = await ref.read(authRepositoryProvider).currentUser();
@@ -2768,13 +2913,14 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 final storage = ref.read(storageServiceProvider);
                                 final now = DateTime.now();
                                 // simple retry helper for uploads
-                                Future<String?> uploadWithRetry(String label, Future<String> Function() action) async {
+            Future<String?> uploadWithRetry(String label, Future<String> Function() action) async {
                                   const attempts = 3;
                                   final delays = <Duration>[const Duration(milliseconds: 300), const Duration(milliseconds: 700), const Duration(milliseconds: 1200)];
                                   for (int i = 0; i < attempts; i++) {
                                     try {
                                       return await action();
                                     } catch (e) {
+                                      _lastUploadError = e.toString();
                                       // last attempt failed, give up
                                       if (i == attempts - 1) {
                                         debugPrint('Upload failed for $label after $attempts attempts: $e');
@@ -2785,6 +2931,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   }
                                   return null;
                                 }
+                                // Helpers
+                                DateTime? parseDate(String s) { final t = s.trim(); if (t.isEmpty) return null; try { return DateTime.parse(t); } catch (_) { return null; } }
+                                num? parseNum(String s) { final t = s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t); }
                                 // draft
                                 // capture finance inputs
                                 final budgetStr = _budgetCtrl.text.trim().replaceAll(',', '');
@@ -2801,10 +2950,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   },
                                   if (labourNum != null) 'labourCount': labourNum,
                                   if (etaStr.isNotEmpty) 'eta': etaStr,
+                                  if (_deadlineCtrl.text.trim().isNotEmpty) 'deadline': parseDate(_deadlineCtrl.text),
                                   if (_externalLinks.isNotEmpty) 'externalLinks': List.of(_externalLinks),
                                 };
-                                DateTime? parseDate(String s) { final t = s.trim(); if (t.isEmpty) return null; try { return DateTime.parse(t); } catch (_) { return null; } }
-                                num? parseNum(String s) { final t = s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t); }
                                 final prelim = PreliminaryDescription(
                                   sarpanchName: _sarpanchNameCtrl.text.trim().isEmpty ? null : _sarpanchNameCtrl.text.trim(),
                                   sarpanchMobile: _sarpanchMobileCtrl.text.trim().isEmpty ? null : _sarpanchMobileCtrl.text.trim(),
@@ -2873,8 +3021,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   ownerId: auth.uid,
                                   blockId: _selectedBlockId ?? (auth.blocks.isNotEmpty ? auth.blocks.first : ''),
                                   villageId: (auth.assignedVillage ?? ''),
-                                  status: ProjectStatus.draft,
-                                  phase: 0,
+                                  status: ProjectStatus.in_progress,
+                                  phase: 1,
                                   location: GeoPoint(_lat!, _lng!),
                                   address: _addressCtrl.text.trim(),
                                   geohash: encodeGeohash(_lat!, _lng!, precision: 10),
@@ -2891,19 +3039,18 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   createdAt: now,
                                   updatedAt: now,
                                 );
-                                final projectId = await repo.create(draft);
-                                // Generate sequential DMTNY code for creation only
+                                // Allocate an ID upfront to upload under a deterministic path
+                                final projectId = repo.allocateId();
+                                // Generate a sequential project code (best-effort)
                                 String? projectCode;
                                 try {
                                   projectCode = await repo.nextProjectCode();
-                                  await repo.setProjectCode(projectId, projectCode);
                                 } catch (_) {}
 
                                 // uploads (with retry)
                                 // Count uploads from offline store categories
                                 final workPhotos = _mediaStore?.list(category: 'work_photo') ?? const [];
                                 final workDocs = _mediaStore?.list(category: 'work_doc') ?? const [];
-                                final workVideos = _mediaStore?.list(category: 'work_video') ?? const [];
                                 final sanctionTechDocItems = _mediaStore?.list(category: 'sanction_tech_doc') ?? const [];
                                 final sanctionTechPhotoItems = _mediaStore?.list(category: 'sanction_tech_photo') ?? const [];
                                 final sanctionAdminDocItems = _mediaStore?.list(category: 'sanction_admin_doc') ?? const [];
@@ -2916,7 +3063,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 final workRepDocItems = _mediaStore?.list(category: 'work_workrep') ?? const [];
                                 final certDocItems = _mediaStore?.list(category: 'work_cert') ?? const [];
                                 setState(() {
-                                  _totalUploads = workPhotos.length + workDocs.length + workVideos.length + (includeMapSnapshot ? 1 : 0)
+                                  _totalUploads = workPhotos.length + workDocs.length + (includeMapSnapshot ? 1 : 0)
                                     + sanctionTechDocItems.length + sanctionTechPhotoItems.length + sanctionAdminDocItems.length
                                     + mbDocItems.length + testDocItems.length + workRepDocItems.length + certDocItems.length;
                                   _completedUploads = 0;
@@ -2957,7 +3104,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 // sanction uploads from store
                                 final sanctionUrls = <String>[];
                                 for (final it in sanctionTechDocItems) {
-                                  final dest = 'projects/$projectId/sanction/technical_approval_docs/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/sanction/technical_approval_docs/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Document: Technical Approval ${it.name}';
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
@@ -2975,12 +3122,21 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   if (mounted) setState(() { _completedUploads++; _currentFileProgress = 0.0; });
                                 }
                                 for (final it in sanctionTechPhotoItems) {
-                                  final dest = 'projects/$projectId/sanction/technical_approval_photos/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/sanction/technical_approval_photos/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Photo: Technical Approval ${it.name}';
+                                  // Compress JPEGs to reduce bandwidth/cost; keep non-JPEG as-is
+                                  final photoBytes = (() {
+                                    try {
+                                      if ((it.contentType).toLowerCase().startsWith('image/jpeg')) {
+                                        return image_utils.ImageUtils.compressJpeg(it.bytes, maxWidth: 1600, maxHeight: 1600, quality: 80);
+                                      }
+                                    } catch (_) {}
+                                    return it.bytes;
+                                  })();
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
                                     path: dest,
-                                    bytes: it.bytes,
+                                    bytes: photoBytes,
                                     metadata: fs.SettableMetadata(
                                       contentType: 'image/jpeg',
                                       customMetadata: {'uploaderId': auth.uid},
@@ -2993,7 +3149,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   if (mounted) setState(() { _completedUploads++; _currentFileProgress = 0.0; });
                                 }
                                 for (final it in sanctionAdminDocItems) {
-                                  final dest = 'projects/$projectId/sanction/admin_approval_docs/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/sanction/admin_approval_docs/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Document: Admin Approval ${it.name}';
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
@@ -3014,12 +3170,21 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 final photoUrls = <String>[];
                                 int photoFailures = 0;
                                 for (final it in workPhotos) {
-                                  final dest = 'projects/$projectId/photos/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/photos/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Photo: ${it.name}';
+                                  // Compress JPEGs; other formats unchanged
+                                  final photoBytes = (() {
+                                    try {
+                                      if ((it.contentType).toLowerCase().startsWith('image/jpeg')) {
+                                        return image_utils.ImageUtils.compressJpeg(it.bytes, maxWidth: 1600, maxHeight: 1600, quality: 80);
+                                      }
+                                    } catch (_) {}
+                                    return it.bytes;
+                                  })();
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
                                     path: dest,
-                                    bytes: it.bytes,
+                                    bytes: photoBytes,
                                     metadata: fs.SettableMetadata(
                                       contentType: 'image/jpeg',
                                       customMetadata: {'uploaderId': auth.uid},
@@ -3039,7 +3204,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 final docUrls = <String>[];
                                 int docFailures = 0;
                                 for (final it in workDocs) {
-                                  final dest = 'projects/$projectId/docs/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/docs/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Document: ${it.name}';
                                   final ct = it.contentType;
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
@@ -3062,36 +3227,12 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   }
                                   if (mounted) setState(() { _completedUploads++; _currentFileProgress = 0.0; });
                                 }
-                                final videoUrls = <String>[];
-                                int videoFailures = 0;
-                                for (final it in workVideos) {
-                                  final dest = 'projects/$projectId/videos/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
-                                  final label = 'Video: ${it.name}';
-                                  final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
-                                    label: label,
-                                    path: dest,
-                                    bytes: it.bytes,
-                                    metadata: fs.SettableMetadata(
-                                      contentType: 'video/mp4',
-                                      customMetadata: {'uploaderId': auth.uid},
-                                    ),
-                                    statusKey: it.id,
-                                    statusMap: _videoStatus,
-                                    progMap: _videoProgress,
-                                  ));
-                                  if (path != null) {
-                                    videoUrls.add(path);
-                                  } else {
-                                    videoFailures++;
-                                    setState(() { _videoStatus[it.id] = 'fail'; });
-                                  }
-                                  if (mounted) setState(() { _completedUploads++; _currentFileProgress = 0.0; });
-                                }
+                                // videos removed per requirements
 
                                 // Section 4 categorized uploads
                                 final mbUrls = <String>[];
                                 for (final it in mbDocItems) {
-                                  final dest = 'projects/$projectId/work/measurement_books/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/work/measurement_books/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Document: MB ${it.name}';
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
@@ -3110,7 +3251,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 }
                                 final testUrls = <String>[];
                                 for (final it in testDocItems) {
-                                  final dest = 'projects/$projectId/work/test_reports/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/work/test_reports/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Document: Test ${it.name}';
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
@@ -3129,7 +3270,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 }
                                 final workRepUrls = <String>[];
                                 for (final it in workRepDocItems) {
-                                  final dest = 'projects/$projectId/work/work_reports/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/work/work_reports/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Document: Work Report ${it.name}';
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
@@ -3148,7 +3289,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 }
                                 final certUrls = <String>[];
                                 for (final it in certDocItems) {
-                                  final dest = 'projects/$projectId/work/certificates/${DateTime.now().millisecondsSinceEpoch}_${it.name}';
+                                  final dest = 'projects/$projectId/work/certificates/${DateTime.now().millisecondsSinceEpoch}_${_safeName(it.name)}';
                                   final label = 'Document: Certificate ${it.name}';
                                   final path = await uploadWithRetry(label, () => uploadBytesWithProgress(
                                     label: label,
@@ -3207,34 +3348,85 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   }
                                 } catch (_) {}
 
-                                final updated = draft.copyWith(
+                                // Fail hard if mandatory uploads are missing after attempts
+                                if (sanctionUrls.isEmpty) {
+                                  throw Exception('Technical/Admin approval files failed to upload.');
+                                }
+                                // Build the final project object with URLs
+                                final finalProject = draft.copyWith(
                                   id: projectId,
                                   photoUrls: photoUrls,
                                   documentUrls: docUrls,
-                                  videoUrls: videoUrls,
                                   originalPhotoUrls: List.of(photoUrls),
                                   mapSnapshotUrl: mapSnapshotUrl,
                                   updatedAt: DateTime.now(),
-                                );
-                                await repo.update(updated.copyWith(
-                                  sanctionCompliance: updated.sanctionCompliance.copyWith(
+                                ).copyWith(
+                                  sanctionCompliance: draft.sanctionCompliance.copyWith(
                                     approvalDocumentUrls: sanctionUrls,
                                   ),
-                                  workDescription: updated.workDescription.copyWith(
+                                  workDescription: draft.workDescription.copyWith(
                                     measurementBookUrls: mbUrls,
                                     testReportUrls: testUrls,
                                     workReportUrls: workRepUrls,
                                     certificateUrls: certUrls,
                                   ),
-                                ));
+                                );
+                                // Create document now that uploads have succeeded
+                                await repo.createAt(projectId, finalProject, extra: {
+                                  if (projectCode != null) 'projectCode': projectCode,
+                                });
+                                // Fire updates feed entries (owner + nodals)
+                                try {
+                                  final updatesRepo = ref.read(updatesRepositoryProvider);
+                                  await updatesRepo.addEventForOwner(
+                                    projectId: projectId,
+                                    projectName: finalProject.name,
+                                    ownerId: finalProject.ownerId,
+                                    blockId: finalProject.blockId,
+                                    actorId: auth.uid,
+                                    actorRole: auth.role.key,
+                                    action: 'created',
+                                  );
+                                  await updatesRepo.addEventForNodals(
+                                    projectId: projectId,
+                                    projectName: finalProject.name,
+                                    ownerId: finalProject.ownerId,
+                                    blockId: finalProject.blockId,
+                                    actorId: auth.uid,
+                                    actorRole: auth.role.key,
+                                    action: 'created',
+                                  );
+                                } catch (_) {}
+                                // Post an "updated" event
+                                try {
+                                  final updatesRepo = ref.read(updatesRepositoryProvider);
+                                  await updatesRepo.addEventForOwner(
+                                    projectId: projectId,
+                                    projectName: finalProject.name,
+                                    ownerId: finalProject.ownerId,
+                                    blockId: finalProject.blockId,
+                                    actorId: auth.uid,
+                                    actorRole: auth.role.key,
+                                    action: 'updated',
+                                  );
+                                  await updatesRepo.addEventForNodals(
+                                    projectId: projectId,
+                                    projectName: finalProject.name,
+                                    ownerId: finalProject.ownerId,
+                                    blockId: finalProject.blockId,
+                                    actorId: auth.uid,
+                                    actorRole: auth.role.key,
+                                    action: 'updated',
+                                  );
+                                } catch (_) {}
 
                                 // inform if any uploads failed
-                                final failed = photoFailures + docFailures + videoFailures;
+                final failed = photoFailures + docFailures;
                                 if (failed > 0 && mounted) {
                                   toastification.show(
                                     context: context,
                                     title: const Text('Saved with some issues'),
-                                    description: Text('${photoUrls.length} photos, ${docUrls.length} docs, ${videoUrls.length} videos • $failed failed'),
+                  description: Text('${photoUrls.length} photos, ${docUrls.length} docs • $failed failed'),
                                     type: ToastificationType.warning,
                                     style: ToastificationStyle.fillColored,
                                     autoCloseDuration: const Duration(seconds: 4),
@@ -3244,24 +3436,21 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 }
 
                                 if (!mounted) return;
-                                toastification.show(
-                                  context: context,
-                                  title: Text('Project created${projectCode != null ? ' • $projectCode' : ''}'),
-                                  type: ToastificationType.success,
-                                  style: ToastificationStyle.fillColored,
-                                  autoCloseDuration: const Duration(seconds: 3),
-                                  showProgressBar: false,
-                                  icon: const Icon(CupertinoIcons.check_mark_circled),
-                                );
-                                // Clear local draft and offline media on success
+                                // Clear local draft, media, and form on success
                                 await _clearDraftLocally();
                                 await _mediaStore?.clear();
-                              } catch (e) {
+                                await _resetForm();
+                                // Notify parent to show success popup
+                                widget.onCreated?.call(
+                                  finalProject.copyWith(id: projectId),
+                                  projectCode: projectCode,
+                                );
+          } catch (e) {
                                 if (mounted) {
                                   toastification.show(
                                     context: context,
-                                    title: const Text('Save failed'),
-                                    description: Text('$e'),
+            title: const Text('Save failed'),
+                                    description: Text(_lastUploadError == null ? '$e' : '$e\n$_lastUploadError'),
                                     type: ToastificationType.error,
                                     style: ToastificationStyle.fillColored,
                                     autoCloseDuration: const Duration(seconds: 4),
@@ -3272,8 +3461,11 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                               } finally {
                                 if (mounted) setState(() => _saving = false);
                               }
-                            },
-                    child: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save Project'),
+              }
+            : null,
+          icon: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.plus_circle_fill),
+          label: const Text('Create Project'),
+          style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
                   );
                   if (!narrow) {
                     return Row(
@@ -3302,30 +3494,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   
 }
 
-class _CreateProjectCard extends StatelessWidget {
-  final VoidCallback onTap;
-  const _CreateProjectCard({required this.onTap});
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      child: Card(
-        elevation: 0,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(CupertinoIcons.add_circled, size: 36, color: cs.primary),
-              const SizedBox(height: 8),
-              Text('Create Project', style: TextStyle(color: cs.primary, fontWeight: FontWeight.w600)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+// _CreateProjectCard removed: creation handled via dedicated tab
 
 class _ProjectCard extends StatelessWidget {
   final Project project;
@@ -3334,32 +3503,244 @@ class _ProjectCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final gradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        cs.primary.withValues(alpha: 0.20),
+        cs.primaryContainer.withValues(alpha: 0.60),
+      ],
+    );
     return InkWell(
       onTap: onOpen,
       child: Card(
         elevation: 0,
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(CupertinoIcons.folder, color: cs.primary),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(project.name, style: const TextStyle(fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Builder(builder: (context) {
-                final code = (project as dynamic).projectCode as String?; // may be absent in model
-                final line = code != null && code.isNotEmpty
-                    ? '$code • ${project.status.name} • Phase ${project.phase}'
-                    : '#${project.id} • ${project.status.name} • Phase ${project.phase}';
-                return Text(line, style: Theme.of(context).textTheme.bodySmall);
-              }),
-            ],
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: gradient,
           ),
+          child: Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.building_2_fill, color: cs.onPrimaryContainer, size: 36),
+                const SizedBox(height: 8),
+                Text(
+                  project.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70), overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 6),
+                Builder(builder: (context) {
+                  final statusLabel = project.status == ProjectStatus.draft ? 'in_progress' : project.status.name;
+                  Color statusColor; IconData statusIcon;
+                  switch (project.status == ProjectStatus.draft ? ProjectStatus.in_progress : project.status) {
+                    case ProjectStatus.completed:
+                      statusColor = Colors.green; statusIcon = CupertinoIcons.check_mark_circled_solid; break;
+                    case ProjectStatus.cancelled:
+                      statusColor = Colors.grey; statusIcon = CupertinoIcons.xmark_circle_fill; break;
+                    case ProjectStatus.in_progress:
+                    case ProjectStatus.draft:
+                      statusColor = Colors.amber; statusIcon = CupertinoIcons.clock_solid; break;
+                  }
+                  final deadlineVal = project.financials['deadline'];
+                  final isLate = _isLate(deadlineVal);
+                  return Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      _StatusChip(label: statusLabel, inverted: true, color: statusColor, icon: statusIcon),
+                      if (project.phase > 0) _StatusChip(label: 'Phase ${project.phase}', inverted: true, color: Colors.white70, icon: CupertinoIcons.number),
+                      if (deadlineVal != null)
+                        _StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', inverted: true, color: isLate ? Colors.redAccent : Colors.white70, icon: CupertinoIcons.calendar),
+                    ],
+                  );
+                }),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  final String label;
+  final bool inverted;
+  final Color? color;
+  final IconData? icon;
+  const _StatusChip({required this.label, this.inverted = false, this.color, this.icon});
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final base = color ?? (inverted ? Colors.white : cs.primary);
+    final bg = inverted ? Colors.white.withValues(alpha: 0.16) : base.withValues(alpha: 0.12);
+    final border = inverted ? Colors.white24 : base.withValues(alpha: 0.24);
+    final fg = inverted ? Colors.white : base;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 14, color: fg),
+            const SizedBox(width: 4),
+          ],
+          Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: fg)),
+        ],
+      ),
+    );
+  }
+}
+
+String _fmtDeadline(dynamic v) {
+  if (v == null) return '';
+  try {
+    if (v is Timestamp) {
+      final d = v.toDate();
+      return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+    }
+    if (v is DateTime) {
+      return '${v.year}-${v.month.toString().padLeft(2,'0')}-${v.day.toString().padLeft(2,'0')}';
+    }
+    if (v is String) {
+      final d = DateTime.tryParse(v);
+      if (d != null) return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+    }
+    if (v is Map && v['seconds'] != null) {
+      final secs = (v['seconds'] as num).toInt();
+      final d = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
+      return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+    }
+  } catch (_) {}
+  return '';
+}
+
+bool _isLate(dynamic v) {
+  try {
+    if (v == null) return false;
+    DateTime? d;
+    if (v is Timestamp) d = v.toDate();
+    else if (v is DateTime) d = v;
+    else if (v is String) d = DateTime.tryParse(v);
+    else if (v is Map && v['seconds'] != null) {
+      final secs = (v['seconds'] as num).toInt();
+      d = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
+    }
+    if (d == null) return false;
+    final today = DateTime.now();
+    final startOfToday = DateTime(today.year, today.month, today.day);
+    return d.isBefore(startOfToday);
+  } catch (_) { return false; }
+}
+
+class _ProjectListTile extends StatelessWidget {
+  final Project project;
+  final VoidCallback onOpen;
+  const _ProjectListTile({required this.project, required this.onOpen});
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final ld = project.landDetails;
+    final block = (ld['blockName'] ?? '') as String?;
+    final village = (ld['villageName'] ?? '') as String?;
+    final location = [block, village].where((e) => (e ?? '').toString().trim().isNotEmpty).join(' • ');
+  final statusLabel = project.status == ProjectStatus.draft ? 'in_progress' : project.status.name;
+    Color statusColor; IconData statusIcon;
+    switch (project.status == ProjectStatus.draft ? ProjectStatus.in_progress : project.status) {
+      case ProjectStatus.completed:
+        statusColor = Colors.green; statusIcon = CupertinoIcons.check_mark_circled_solid; break;
+      case ProjectStatus.cancelled:
+        statusColor = Colors.grey; statusIcon = CupertinoIcons.xmark_circle_fill; break;
+      case ProjectStatus.in_progress:
+      case ProjectStatus.draft:
+        statusColor = Colors.amber; statusIcon = CupertinoIcons.clock_solid; break;
+    }
+  final deadlineVal = project.financials['deadline'];
+  final isLate = _isLate(deadlineVal);
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        onTap: onOpen,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(color: cs.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+          child: Icon(CupertinoIcons.building_2_fill, color: cs.primary),
+        ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(project.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: 8),
+            Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall),
+          ],
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 6.0),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (location.isNotEmpty) Text(location, maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 6),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              _StatusChip(label: statusLabel, color: statusColor, icon: statusIcon),
+              if (project.phase > 0) _StatusChip(label: 'Phase ${project.phase}', color: Theme.of(context).colorScheme.primary, icon: CupertinoIcons.number),
+              if (deadlineVal != null) _StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', color: isLate ? Colors.redAccent : Theme.of(context).colorScheme.secondary, icon: CupertinoIcons.calendar),
+            ]),
+          ]),
+        ),
+        trailing: const Icon(CupertinoIcons.forward),
+      ),
+    );
+  }
+}
+
+class _ProjectsSearchBar extends StatefulWidget {
+  final ValueChanged<String> onChanged;
+  const _ProjectsSearchBar({required this.onChanged});
+  @override
+  State<_ProjectsSearchBar> createState() => _ProjectsSearchBarState();
+}
+
+class _ProjectsSearchBarState extends State<_ProjectsSearchBar> {
+  final _ctrl = TextEditingController();
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 40,
+      child: TextField(
+        controller: _ctrl,
+        onChanged: widget.onChanged,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Search by id, name, block, village…',
+          prefixIcon: const Icon(CupertinoIcons.search, size: 18),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          filled: true,
+          fillColor: cs.surfaceContainerHighest,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: cs.outlineVariant)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: cs.outlineVariant)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: cs.primary)),
         ),
       ),
     );
@@ -3388,16 +3769,6 @@ class _PageScaffold extends StatelessWidget {
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Builder(builder: (context) {
-                  final isDark = Theme.of(context).brightness == Brightness.dark;
-                  return SvgPicture.asset(
-                    'logo.svg',
-                    width: 20,
-                    height: 20,
-                    colorFilter: isDark ? const ColorFilter.mode(Colors.white, BlendMode.srcIn) : null,
-                  );
-                }),
-                if (showText) const SizedBox(width: 8),
                 if (showText) Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
               ],
             );

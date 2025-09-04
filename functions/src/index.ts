@@ -11,6 +11,20 @@ initializeApp();
 const auth = getAuth();
 const db = getFirestore();
 const storage = getStorage();
+// Resolve bucket name: prefer runtime config or env override to align with client app bucket
+const runtimeBucket = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cfg = (functions as any).config?.();
+    const fromCfg = cfg?.storage?.bucket as string | undefined;
+    if (fromCfg && fromCfg.length > 0) return fromCfg;
+  } catch (_) {
+    // ignore
+  }
+  const fromEnv = process.env.FIREBASE_STORAGE_BUCKET;
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  return storage.bucket().name; // default project bucket
+})();
 const fcm = getMessaging();
 
 const WHITELISTED_UIDS = new Set<string>([
@@ -87,7 +101,7 @@ export const exportProjectZip = functions.https.onCall(async (
     }
   }
 
-  const output = storage.bucket().file(`exports/${projectId}-${Date.now()}.zip`);
+  const output = storage.bucket(runtimeBucket).file(`exports/${projectId}-${Date.now()}.zip`);
 
   const passthrough = output.createWriteStream({
     contentType: 'application/zip',
@@ -107,7 +121,7 @@ export const exportProjectZip = functions.https.onCall(async (
   archive.append(updatesJson, { name: 'updates.json' });
 
   // Collect files from Storage under projects/{id}/
-  const bucket = storage.bucket();
+  const bucket = storage.bucket(runtimeBucket);
   const [files] = await bucket.getFiles({ prefix: `projects/${projectId}/` });
   for (const f of files) {
     const stream = f.createReadStream();

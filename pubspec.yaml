@@ -47,7 +47,8 @@ dependencies:
   # State management & DI
   flutter_riverpod: ^2.6.1
   # Routing
-  go_router: ^16.2.0
+  go_router: ^16.2.1
+  go_transitions: ^0.8.2
   animations: ^2.0.11
   responsiveness: ^1.2.8
   # Models & serialization
@@ -70,13 +71,12 @@ dependencies:
   hive_flutter: ^1.1.0
   fl_chart: ^1.0.0
   cupertino_sidebar: ^1.0.1
-  flutter_login: ^5.1.0
   # UI/UX enhancements
   flutter_form_builder: ^10.2.0
   form_builder_validators: ^11.2.0
   flutter_animate: ^4.5.0
+  gap: ^3.0.1
   # cached_network_image removed in favor of hash_cached_image
-  # Image optimization & avatar rendering
   hash_cached_image: ^0.0.2
   avatar_better_pro: ^0.0.4
   image: ^4.3.0
@@ -93,6 +93,7 @@ dependencies:
   logger: ^2.6.1
   fire_storage_impl: ^0.1.0
   path: ^1.9.0
+  flutter_slidable: ^4.0.1
 
 dev_dependencies:
   flutter_test:
@@ -122,7 +123,9 @@ flutter:
   assets:
   - assets/
   - .env
-  - logo.svg
+  - assets/logo.png
+  - assets/login_page_graphics.svg
+  - assets/login_page_graphics_2.svg
 
   # To add assets to your application, add an assets section, like this:
   # assets:

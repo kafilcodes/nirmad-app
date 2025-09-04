@@ -49,3 +49,5 @@ DateTime? _toDateTime(dynamic v) {
   if (v is DateTime) return v;
   return null;
 }
+
+// location geotag can be stored alongside update doc with a direct set/merge in callers

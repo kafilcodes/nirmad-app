@@ -55,14 +55,23 @@ class StorageService {
   // Infer contentType; default to application/pdf
   final lower = file.path.toLowerCase();
   String contentType = 'application/pdf';
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) contentType = 'image/jpeg';
-  else if (lower.endsWith('.png')) contentType = 'image/png';
-  else if (lower.endsWith('.heic') || lower.endsWith('.heif')) contentType = 'image/heic';
-  else if (lower.endsWith('.xls')) contentType = 'application/vnd.ms-excel';
-  else if (lower.endsWith('.xlsx')) contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  else if (lower.endsWith('.csv')) contentType = 'text/csv';
-  else if (lower.endsWith('.doc')) contentType = 'application/msword';
-  else if (lower.endsWith('.docx')) contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+    contentType = 'image/jpeg';
+  } else if (lower.endsWith('.png')) {
+    contentType = 'image/png';
+  } else if (lower.endsWith('.heic') || lower.endsWith('.heif')) {
+    contentType = 'image/heic';
+  } else if (lower.endsWith('.xls')) {
+    contentType = 'application/vnd.ms-excel';
+  } else if (lower.endsWith('.xlsx')) {
+    contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  } else if (lower.endsWith('.csv')) {
+    contentType = 'text/csv';
+  } else if (lower.endsWith('.doc')) {
+    contentType = 'application/msword';
+  } else if (lower.endsWith('.docx')) {
+    contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
   final task = await ref.putFile(
       file,
       SettableMetadata(
@@ -98,14 +107,27 @@ class StorageService {
 
   Future<String> uploadBytes({required String path, required List<int> bytes, SettableMetadata? metadata}) async {
     final ref = _storage.ref(path);
-    final meta = metadata ?? SettableMetadata(customMetadata: {
-      'uploaderId': fb.FirebaseAuth.instance.currentUser?.uid ?? '',
-    });
+    final meta = (() {
+      if (kIsWeb) {
+        // Avoid custom metadata on web to minimize CORS preflight complexity
+  return metadata ?? SettableMetadata();
+      }
+      return metadata ?? SettableMetadata(customMetadata: {
+        'uploaderId': fb.FirebaseAuth.instance.currentUser?.uid ?? '',
+      });
+    })();
     final task = await ref.putData(Uint8List.fromList(bytes), meta);
     if (task.state != TaskState.success) {
       throw Exception('Upload failed');
     }
     return path;
+  }
+
+  // Resolve a storage path like 'projects/..../file.ext' to a signed download URL
+  Future<String> getDownloadURL(String path) async {
+    final ref = _storage.ref(path);
+    final url = await ref.getDownloadURL();
+    return url;
   }
 
   // Adapter: use fire_storage_impl with XFile when not on web; ensures our metadata (uploaderId)
@@ -121,7 +143,8 @@ class StorageService {
     // On Web, or when we prefer in-memory, use native putData (respects rules and progress elsewhere)
     if (kIsWeb) {
       final ref = _storage.ref(path);
-      final task = ref.putData(Uint8List.fromList(bytes), SettableMetadata(contentType: contentType, customMetadata: meta));
+  // Drop customMetadata on web
+  final task = ref.putData(Uint8List.fromList(bytes), SettableMetadata(contentType: contentType));
       await for (final s in task.snapshotEvents) {
         if (s.totalBytes > 0) onProgress?.call(s.bytesTransferred / s.totalBytes);
       }

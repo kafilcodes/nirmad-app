@@ -94,7 +94,7 @@ class _NodalDashboardPageState extends ConsumerState<NodalDashboardPage> with Si
                         ),
                       // 1: Projects list
                       const NodalDashboardListPage(),
-                      // 2: Notifications
+                      // 2: Updates
                       const NotificationsList(),
                       // 3: Profile
                       const ProfilePage(),

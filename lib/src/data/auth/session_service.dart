@@ -1,0 +1,39 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb;
+
+class SessionService {
+  final fb.FirebaseAuth _auth;
+  final FirebaseFirestore _db;
+  SessionService(this._auth, this._db);
+
+  // Call after login to register this device session. sessionId may be deviceId or randomly generated.
+  Future<void> registerSession(String sessionId) async {
+    final u = _auth.currentUser;
+    if (u == null) return;
+    final ref = _db.collection('users').doc(u.uid).collection('sessions').doc('current');
+    await ref.set({
+      'sessionId': sessionId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': DateTime.now().add(const Duration(days: 180)), // 6 months client hint
+    }, SetOptions(merge: true));
+  }
+
+  // Guard single-device: returns true if allowed, false if another active session exists.
+  Future<bool> canUseCurrentDevice(String sessionId) async {
+    final u = _auth.currentUser;
+    if (u == null) return false;
+    final ref = _db.collection('users').doc(u.uid).collection('sessions').doc('current');
+    final snap = await ref.get();
+    if (!snap.exists) return true;
+    final current = snap.data();
+    final activeId = current?['sessionId'] as String?;
+    return activeId == null || activeId == sessionId;
+  }
+
+  Future<void> clearSession() async {
+    final u = _auth.currentUser;
+    if (u == null) return;
+    final ref = _db.collection('users').doc(u.uid).collection('sessions').doc('current');
+    await ref.delete().catchError((_) {});
+  }
+}
