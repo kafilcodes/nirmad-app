@@ -12,12 +12,12 @@ class FunctionsService {
     return res.data;
   }
 
-  Future<void> setUserClaims({required String email, required String role, List<String>? blocks}) async {
+  Future<void> setUserClaims({required String email, required String role, String? blockId}) async {
     final callable = _functions.httpsCallable('setUserClaims');
     await callable.call({
       'email': email,
       'role': role,
-      if (blocks != null) 'blocks': blocks,
+      if (blockId != null && blockId.isNotEmpty) 'blockId': blockId,
     });
   }
 
@@ -52,6 +52,7 @@ class FunctionsService {
     required String password,
     required String role,
     String? displayName,
+    String? blockId,
   }) async {
     final callable = _functions.httpsCallable('adminCreateUser');
     final res = await callable.call({
@@ -59,6 +60,7 @@ class FunctionsService {
       'password': password,
       'role': role,
       if (displayName != null && displayName.isNotEmpty) 'displayName': displayName,
+      if (blockId != null && blockId.isNotEmpty) 'blockId': blockId,
     });
     final data = (res.data as Map).map((k, v) => MapEntry(k.toString(), v));
     return data;
@@ -68,7 +70,7 @@ class FunctionsService {
   // Expected callable: adminBulkCreateUsers
   // Payload: { users: [{ email, password, role, displayName? }, ...] }
   // Returns: { results: [{ email, uid, ok, error? }, ...] }
-  Future<List<Map<String, dynamic>>> bulkCreateAuthUsers(List<Map<String, String>> users) async {
+  Future<List<Map<String, dynamic>>> bulkCreateAuthUsers(List<Map<String, dynamic>> users) async {
     final callable = _functions.httpsCallable('adminBulkCreateUsers');
     final res = await callable.call({'users': users});
     final list = (res.data is List) ? (res.data as List) : (res.data['results'] as List);
@@ -92,6 +94,12 @@ class FunctionsService {
     final res = await callable.call({ 'uids': uids });
     final list = (res.data is List) ? (res.data as List) : (res.data['results'] as List);
     return list.map<Map<String, dynamic>>((e) => (e as Map).map((k, v) => MapEntry(k.toString(), v))).toList();
+  }
+
+  // Revoke refresh tokens for self or a specific uid (dev_admin only for others)
+  Future<void> revokeUserTokens({String? uid}) async {
+    final callable = _functions.httpsCallable('revokeUserTokens');
+    await callable.call({ if (uid != null && uid.isNotEmpty) 'uid': uid });
   }
 }
 

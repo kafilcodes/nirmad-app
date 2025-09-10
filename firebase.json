@@ -3,13 +3,31 @@
     "source": "functions"
   },
   "firestore": {
-    "rules": "infra/firestore.rules"
+  "rules": "infra/firestore.rules",
+  "indexes": "infra/firestore.indexes.json"
   },
   "storage": {
     "rules": "infra/storage.rules"
   },
   "hosting": {
-    "public": "web",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    "public": "build/web",
+  "ignore": ["firebase.json", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "**", "destination": "/index.html" }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(js|css|png|jpg|jpeg|svg|webp|wasm)",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        ]
+      },
+      {
+        "source": "index.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" }
+        ]
+      }
+    ]
   }
 }

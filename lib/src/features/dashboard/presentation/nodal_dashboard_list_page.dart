@@ -1,16 +1,32 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import '../../auth/data/auth_repository.dart';
+import '../../auth/domain/app_user.dart';
 import '../../projects/domain/project.dart';
+import '../../projects/presentation/project_detail_page.dart';
+import '../../projects/data/project_repository.dart';
 // import 'package:url_launcher/url_launcher.dart';
 // import '../../../services/functions_service.dart';
 // import '../../../shared/ui/toast.dart';
 import '../../../shared/widgets/no_data.dart';
+import '../../../shared/data/blocks_provider.dart';
+import '../../../shared/widgets/project_card.dart';
+import '../state/projects_snapshot_provider.dart';
 
-final _statusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
-final _lastDocProvider = StateProvider<DocumentSnapshot<Map<String, dynamic>>?>((_) => null);
+final nodalStatusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
+// Overdue-days filter (e.g., 30 or 60). Null means no overdue filter.
+final nodalOverdueDaysFilterProvider = StateProvider<int?>((_) => null);
+// Client-side paging: how many items are visible. Avoids resubscribing streams.
+final _visibleCountProvider = StateProvider<int>((_) => 25);
+final _accumulatedProvider = StateProvider<List<Project>>((_) => const []);
+final _viewGridProvider = StateProvider<bool>((_) => true);
+final _searchProvider = StateProvider<String>((_) => '');
+// Exposed (not private) so dashboard shell can reset this on tab changes.
+final blockFilterProvider = StateProvider<String?>((_) => null);
+enum _SortBy { updatedDesc, updatedAsc, nameAsc, nameDesc, status }
+final _sortProvider = StateProvider<_SortBy>((_) => _SortBy.updatedDesc);
 final _pageSize = 25;
 
 class NodalDashboardListPage extends ConsumerWidget {
@@ -18,64 +34,386 @@ class NodalDashboardListPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final status = ref.watch(_statusFilterProvider);
+  final status = ref.watch(nodalStatusFilterProvider);
+  final overdueDays = ref.watch(nodalOverdueDaysFilterProvider);
     final auth = ref.watch(authStateProvider).value;
+  final isGrid = ref.watch(_viewGridProvider);
+  final search = ref.watch(_searchProvider);
+  final blockFilter = ref.watch(blockFilterProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Projects')),
-      body: StreamBuilder(
-        stream: _query(ref, auth?.blocks ?? const [], status: status, limit: _pageSize, startAfter: ref.watch(_lastDocProvider)).snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final snap = snapshot.data as QuerySnapshot<Map<String, dynamic>>;
-          final docs = snap.docs;
-          if (docs.isEmpty) return const NoData(message: 'No projects');
-          final items = docs.map(Project.fromDoc).toList();
-          // Keep track of last doc
-          if (docs.isNotEmpty) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (ref.read(_lastDocProvider) != docs.last) {
-                ref.read(_lastDocProvider.notifier).state = docs.last;
-              }
-            });
-          }
-          return ListView.separated(
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final p = items[index];
-              return ListTile(
-                title: Text(p.name),
-                subtitle: Text('${p.blockId} • ${p.status.name} • ${p.updatedAt.toLocal()}'),
-                // Export ZIP removed; use Project Details to export PDF when applicable
-              );
-            },
-          );
-        },
-      ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Row(
-          children: [
-            const Text('Status:'),
-            const SizedBox(width: 8),
-            Flexible(
-              child: DropdownButton<ProjectStatus?>(
-                isExpanded: true,
-                value: status,
-                items: [
-                  const DropdownMenuItem(value: null, child: Text('All')),
-                  ...ProjectStatus.values.map((s) => DropdownMenuItem(value: s, child: Text(s.name, overflow: TextOverflow.ellipsis))),
-                ],
-                onChanged: (v) {
-                  ref.read(_statusFilterProvider.notifier).state = v;
-                  ref.read(_lastDocProvider.notifier).state = null; // reset pagination
+      appBar: AppBar(
+        toolbarHeight: 52,
+        titleSpacing: 8,
+        title: CupertinoSearchTextField(
+          placeholder: 'Search projects',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          onChanged: (v) {
+            ref.read(_searchProvider.notifier).state = v.trim();
+            _resetPagination(ref);
+          },
+        ),
+        actions: [
+          // Sort
+          IconButton(
+            tooltip: 'Sort',
+            icon: const Icon(CupertinoIcons.arrow_up_arrow_down_square),
+            onPressed: () => _openSortSheet(context, ref),
+          ),
+          // Status filter with active dot indicator
+      _withDot(
+      active: status != null,
+            child: IconButton(
+              tooltip: 'Status',
+              icon: const Icon(CupertinoIcons.checkmark_seal),
+              onPressed: () async {
+                final sel = await _pickStatus(context);
+        ref.read(nodalStatusFilterProvider.notifier).state = sel;
+        // Do not clear overdue filter automatically; allow combinations
+                _resetPagination(ref);
+              },
+            ),
+          ),
+          // Overdue (deadline) quick filter
+          _withDot(
+            active: overdueDays != null,
+            child: IconButton(
+              tooltip: 'Overdue',
+              icon: const Icon(CupertinoIcons.calendar),
+              onPressed: () async {
+                final sel = await _pickOverdueDays(context);
+                ref.read(nodalOverdueDaysFilterProvider.notifier).state = sel;
+                _resetPagination(ref);
+              },
+            ),
+          ),
+          if (auth != null && (auth.role == UserRole.superNodal || auth.role == UserRole.devAdmin))
+            _withDot(
+              active: blockFilter != null && blockFilter.isNotEmpty,
+              child: IconButton(
+                tooltip: 'Block',
+                icon: const Icon(CupertinoIcons.map_pin_ellipse),
+                onPressed: () async {
+                  final sel = await _pickBlock(context, ref);
+                  ref.read(blockFilterProvider.notifier).state = sel;
+                  _resetPagination(ref);
                 },
               ),
             ),
-            const Spacer(),
-            FilledButton(
-              onPressed: () => ref.read(_lastDocProvider.notifier).state = ref.read(_lastDocProvider),
-              child: const Text('Load more'),
+          // View toggle
+          IconButton(
+            tooltip: isGrid ? 'Grid view' : 'List view',
+            onPressed: () => ref.read(_viewGridProvider.notifier).state = !isGrid,
+            icon: Icon(isGrid ? CupertinoIcons.square_grid_2x2 : CupertinoIcons.list_bullet),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: Column(
+        children: [
+          // No extra controls here; kept compact via AppBar actions
+          Expanded(
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notif) {
+                if (notif.metrics.pixels + 200 >= notif.metrics.maxScrollExtent) {
+                  final current = ref.read(_visibleCountProvider);
+                  ref.read(_visibleCountProvider.notifier).state = current + _pageSize;
+                }
+                return false;
+              },
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final diskFirst = ref.watch(nodalFirstPageDiskFirstProvider).maybeWhen(data: (v) => v, orElse: () => const <Project>[]);
+                  final asyncSnap = ref.watch(dashboardProjectsStreamProvider);
+                  return asyncSnap.when(
+                    data: (snap) {
+                      // Map to models
+                      var items = snap.docs.map(Project.fromDoc).toList();
+                      // Defensive: if user is sub nodal, enforce alias-aware block filter client-side too
+                      if (auth?.role == UserRole.subNodal) {
+                        final keys = blockQueryKeys(auth?.blockId).map((e) => e.toLowerCase()).toSet();
+                        if (keys.isNotEmpty) {
+                          items = items.where((p) => keys.contains(p.blockId.toLowerCase())).toList();
+                        } else {
+                          items = const [];
+                        }
+                      }
+                      // Optional block filter for super/admin (client-side)
+                      if (blockFilter != null && blockFilter.isNotEmpty && (auth?.role == UserRole.superNodal || auth?.role == UserRole.devAdmin)) {
+                        final keys = blockQueryKeys(blockFilter).map((e) => e.toLowerCase()).toSet();
+                        items = items.where((p) => keys.contains(p.blockId.toLowerCase())).toList();
+                      }
+                      // Apply search/status/sort
+                      final shown = _applyFiltersAndSort(ref, items, search);
+                      // Persist accumulated for error fallback
+                      Future.microtask(() {
+                        try { ref.read(_accumulatedProvider.notifier).state = shown; } catch (_) {}
+                      });
+                      // Client-side paging
+                      final visible = ref.watch(_visibleCountProvider);
+                      final toShow = shown.take(visible).toList();
+                      if (toShow.isEmpty) {
+                        if (diskFirst.isNotEmpty) return _buildList(context, ref, diskFirst, isGrid, search);
+                        return const NoData(message: 'No projects', asset: 'assets/no_projects.svg');
+                      }
+                      return _buildList(context, ref, toShow, isGrid, search);
+                    },
+                    loading: () {
+                      final placeholder = ref.watch(_accumulatedProvider);
+                      if (placeholder.isNotEmpty) return _buildList(context, ref, placeholder, isGrid, search);
+                      if (diskFirst.isNotEmpty) return _buildList(context, ref, diskFirst, isGrid, search);
+                      return const Center(child: CircularProgressIndicator());
+                    },
+                    error: (_, __) {
+                      final placeholder = ref.watch(_accumulatedProvider);
+                      final list = placeholder.isNotEmpty ? placeholder : (diskFirst.isNotEmpty ? diskFirst : const <Project>[]);
+                      if (list.isNotEmpty) return _buildList(context, ref, list, isGrid, search);
+                      return const NoData(message: 'Failed to load projects', asset: 'assets/server_error.svg');
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _resetPagination(WidgetRef ref) {
+    ref.read(_visibleCountProvider.notifier).state = _pageSize;
+    ref.read(_accumulatedProvider.notifier).state = const [];
+  }
+
+  Widget _buildList(BuildContext context, WidgetRef ref, List<Project> items, bool isGrid, String search) {
+  // Always work on a mutable copy; some sources return unmodifiable lists in web builds
+  var filtered = List<Project>.from(items);
+    final q = search.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      filtered = items.where((p) {
+        final sarpanch = p.preliminaryDescription.sarpanchName?.toLowerCase() ?? '';
+        final gram = p.preliminaryDescription.gramPanchayat?.toLowerCase() ?? '';
+        final secretary = p.preliminaryDescription.secretaryName?.toLowerCase() ?? '';
+        return p.name.toLowerCase().contains(q) ||
+            p.blockId.toLowerCase().contains(q) ||
+            sarpanch.contains(q) ||
+            gram.contains(q) ||
+            secretary.contains(q);
+      }).toList();
+    }
+    // Apply status filter client-side to avoid composite index stalls
+  final statusFilter = ref.read(nodalStatusFilterProvider);
+    if (statusFilter != null) {
+      filtered = filtered.where((p) => p.status == statusFilter).toList();
+    }
+    // Apply overdue-days filter (deadline older than N days from today)
+    final days = ref.read(nodalOverdueDaysFilterProvider);
+    if (days != null) {
+      filtered = filtered.where((p) => _isOverdueByDays(p, days)).toList();
+    }
+    // Apply client-side sort when user changed preference
+    switch (ref.read(_sortProvider)) {
+      case _SortBy.updatedDesc:
+        filtered.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        break;
+      case _SortBy.updatedAsc:
+        filtered.sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+        break;
+      case _SortBy.nameAsc:
+        filtered.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case _SortBy.nameDesc:
+        filtered.sort((a, b) => b.name.toLowerCase().compareTo(a.name.toLowerCase()));
+        break;
+      case _SortBy.status:
+        filtered.sort((a, b) => a.status.name.compareTo(b.status.name));
+        break;
+    }
+
+    if (isGrid) {
+      return LayoutBuilder(
+        builder: (context, c) {
+          final maxW = c.maxWidth;
+          final itemMin = 360.0; // card target width
+          final columns = (maxW / itemMin).floor().clamp(1, 4);
+          return GridView.builder(
+            padding: const EdgeInsets.all(12),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              childAspectRatio: 1.35,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+            ),
+            itemCount: filtered.length,
+            itemBuilder: (context, i) {
+              final p = filtered[i];
+              return ProjectCard(project: p, onOpen: () => _openDetails(context, p, tabbed: true));
+            },
+          );
+        },
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      itemCount: filtered.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final p = filtered[index];
+        final cs = Theme.of(context).colorScheme;
+        IconData sIcon;
+        Color sColor;
+        switch (p.status) {
+          case ProjectStatus.completed:
+            sIcon = CupertinoIcons.checkmark_seal_fill;
+            sColor = Colors.green;
+            break;
+          case ProjectStatus.in_progress:
+            sIcon = CupertinoIcons.clock_fill;
+            sColor = Colors.orange;
+            break;
+          case ProjectStatus.cancelled:
+            sIcon = CupertinoIcons.xmark_circle_fill;
+            sColor = Colors.redAccent;
+            break;
+        }
+        return Card(
+          elevation: 0,
+          color: cs.surface,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _openDetails(context, p, tabbed: true),
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: sColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(sIcon, color: sColor, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 10,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Row(children: [const Icon(CupertinoIcons.location_solid, size: 14), const SizedBox(width: 4), Text(p.blockId)]),
+                            Row(children: [Icon(sIcon, size: 14, color: sColor), const SizedBox(width: 4), Text(p.status.name)]),
+                            Row(children: [const Icon(CupertinoIcons.time, size: 14), const SizedBox(width: 4), Text(_fmtWhen(p.updatedAt))]),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: () => _openDetails(context, p, tabbed: true),
+                    icon: const Icon(CupertinoIcons.chevron_right),
+                    tooltip: 'Open',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Filters + sort applied client-side over the unified stream
+  List<Project> _applyFiltersAndSort(WidgetRef ref, List<Project> items, String search) {
+  // Always work on a mutable copy; some sources return unmodifiable lists in web builds
+  var filtered = List<Project>.from(items);
+    final q = search.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      filtered = items.where((p) {
+        final sarpanch = p.preliminaryDescription.sarpanchName?.toLowerCase() ?? '';
+        final gram = p.preliminaryDescription.gramPanchayat?.toLowerCase() ?? '';
+        final secretary = p.preliminaryDescription.secretaryName?.toLowerCase() ?? '';
+        return p.name.toLowerCase().contains(q) ||
+            p.blockId.toLowerCase().contains(q) ||
+            sarpanch.contains(q) ||
+            gram.contains(q) ||
+            secretary.contains(q);
+      }).toList();
+    }
+  final statusFilter = ref.read(nodalStatusFilterProvider);
+    if (statusFilter != null) {
+      filtered = filtered.where((p) => p.status == statusFilter).toList();
+    }
+    final days = ref.read(nodalOverdueDaysFilterProvider);
+    if (days != null) {
+      filtered = filtered.where((p) => _isOverdueByDays(p, days)).toList();
+    }
+    switch (ref.read(_sortProvider)) {
+      case _SortBy.updatedDesc:
+        filtered.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        break;
+      case _SortBy.updatedAsc:
+        filtered.sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+        break;
+      case _SortBy.nameAsc:
+        filtered.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case _SortBy.nameDesc:
+        filtered.sort((a, b) => b.name.toLowerCase().compareTo(a.name.toLowerCase()));
+        break;
+      case _SortBy.status:
+        filtered.sort((a, b) => a.status.name.compareTo(b.status.name));
+        break;
+    }
+    return filtered;
+  }
+
+  void _openDetails(BuildContext context, Project p, {bool tabbed = false}) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: p, tabbed: tabbed)));
+  }
+
+  // Humanized updated time
+  String _fmtWhen(DateTime d) {
+    final now = DateTime.now();
+    final diff = now.difference(d);
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays == 1) return 'yesterday';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+  }
+
+  // Picker sheets
+  Future<ProjectStatus?> _pickStatus(BuildContext context) async {
+    return showModalBottomSheet<ProjectStatus?>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final s in ProjectStatus.values)
+              ListTile(
+                leading: Icon(
+                  s == ProjectStatus.completed
+                      ? Icons.check_circle
+                      : s == ProjectStatus.in_progress
+                          ? Icons.timelapse
+                          : Icons.cancel,
+                ),
+                title: Text(s.name),
+                onTap: () => Navigator.of(ctx).pop(s),
+              ),
+            ListTile(
+              leading: const Icon(CupertinoIcons.clear_thick),
+              title: const Text('Clear'),
+              onTap: () => Navigator.of(ctx).pop(null),
             ),
           ],
         ),
@@ -83,19 +421,133 @@ class NodalDashboardListPage extends ConsumerWidget {
     );
   }
 
-  Query<Map<String, dynamic>> _query(WidgetRef ref, List<String> blocks, {ProjectStatus? status, int limit = 50, DocumentSnapshot<Map<String, dynamic>>? startAfter}) {
-    final db = FirebaseFirestore.instance;
-    Query<Map<String, dynamic>> q = db.collection('projects').orderBy('updatedAt', descending: true).limit(limit);
-    if (status != null) {
-      q = q.where('status', isEqualTo: status.name);
+  Future<int?> _pickOverdueDays(BuildContext context) async {
+    return showModalBottomSheet<int?>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(CupertinoIcons.calendar_badge_minus),
+              title: const Text('Overdue 30 days'),
+              onTap: () => Navigator.of(ctx).pop(30),
+            ),
+            ListTile(
+              leading: const Icon(CupertinoIcons.calendar_badge_minus),
+              title: const Text('Overdue 60 days'),
+              onTap: () => Navigator.of(ctx).pop(60),
+            ),
+            ListTile(
+              leading: const Icon(CupertinoIcons.clear_thick),
+              title: const Text('Clear'),
+              onTap: () => Navigator.of(ctx).pop(null),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _isOverdueByDays(Project p, int days) {
+    if (p.status == ProjectStatus.completed) return false;
+    final d = _deadlineOf(p.financials['deadline']);
+    if (d == null) return false;
+    final today = DateTime.now();
+    final startOfToday = DateTime(today.year, today.month, today.day);
+    final cutoff = startOfToday.subtract(Duration(days: days));
+    return d.isBefore(cutoff);
+  }
+
+  DateTime? _deadlineOf(dynamic v) {
+    try {
+      if (v == null) return null;
+      if (v is Timestamp) return v.toDate();
+      if (v is DateTime) return v;
+      if (v is String) return DateTime.tryParse(v);
+      if (v is Map && v['seconds'] != null) {
+        final secs = (v['seconds'] as num).toInt();
+        return DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
-    if (blocks.isNotEmpty) {
-      // filter by blocks for sub nodal; super nodal will ignore
-      q = q.where('blockId', whereIn: blocks.take(10).toList());
+  }
+
+  Future<String?> _pickBlock(BuildContext context, WidgetRef ref) async {
+    return showModalBottomSheet<String?>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final b in ref.read(blocksListProvider))
+              ListTile(title: Text(b), onTap: () => Navigator.of(ctx).pop(b)),
+            ListTile(
+              leading: const Icon(CupertinoIcons.clear_thick),
+              title: const Text('Clear'),
+              onTap: () => Navigator.of(ctx).pop(null),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openSortSheet(BuildContext context, WidgetRef ref) async {
+    final current = ref.read(_sortProvider);
+    final selected = await showModalBottomSheet<_SortBy>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _sortTile(ctx, 'Newest', CupertinoIcons.sort_down, _SortBy.updatedDesc, current),
+            _sortTile(ctx, 'Oldest', CupertinoIcons.sort_up, _SortBy.updatedAsc, current),
+            _sortTile(ctx, 'A–Z', CupertinoIcons.textformat_abc, _SortBy.nameAsc, current),
+            _sortTile(ctx, 'Z–A', CupertinoIcons.textformat_abc_dottedunderline, _SortBy.nameDesc, current),
+            _sortTile(ctx, 'Status', CupertinoIcons.checkmark_seal, _SortBy.status, current),
+          ],
+        ),
+      ),
+    );
+    if (selected != null) {
+      ref.read(_sortProvider.notifier).state = selected;
+  _resetPagination(ref);
     }
-    if (startAfter != null) {
-      q = q.startAfterDocument(startAfter);
-    }
-    return q;
+  }
+
+  ListTile _sortTile(BuildContext ctx, String title, IconData icon, _SortBy value, _SortBy current) {
+    final selected = value == current;
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: selected ? const Icon(CupertinoIcons.check_mark) : null,
+      onTap: () => Navigator.of(ctx).pop(value),
+    );
+  }
+
+  // Small active indicator dot
+  Widget _withDot({required bool active, required Widget child}) {
+    if (!active) return child;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        child,
+        Positioned(
+          right: 8,
+          top: 8,
+          child: Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(4)),
+          ),
+        ),
+      ],
+    );
   }
 }

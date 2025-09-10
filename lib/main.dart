@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -10,37 +12,78 @@ import 'src/core/theme/app_theme.dart';
 import 'src/core/theme/theme_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'src/core/i18n/locale_provider.dart';
 import 'src/services/messaging_service.dart';
 import 'src/core/prefs/shared_prefs.dart';
+import 'src/core/bootstrap/bootstrap_prefetch.dart';
 import 'package:toastification/toastification.dart';
 import 'src/core/logging/app_logger.dart';
-import 'src/utils/firebase_storage_bucket.dart';
 import 'package:logger/logger.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'src/core/widgets/offline_monitor.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Configure logging early
-  Logger.level = Level.debug;
+  // Surface all uncaught errors to the console with context (helps on web release builds)
+  FlutterError.onError = (FlutterErrorDetails details) {
+    // Forward Flutter framework errors to the zone handler below
+    Zone.current.handleUncaughtError(details.exception, details.stack ?? StackTrace.current);
+  };
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    // Ensure top-level uncaught errors still print something useful
+    // Avoid leaking secrets; we only log error type/message
+    // ignore: avoid_print
+    print('Top-level error: ' + error.toString());
+    // ignore: avoid_print
+    print(stack.toString());
+    return true; // handled
+  };
+  // Configure logging early (quiet in release)
+  Logger.level = kReleaseMode ? Level.off : Level.debug;
   AppLogger.i.i('Booting Nirmad app');
   // Load .env (bundled as asset, path declared in pubspec.yaml)
-  await dotenv.load(fileName: ".env");
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e, st) {
+    // ignore: avoid_print
+    print('dotenv load error: ' + e.toString());
+    // ignore: avoid_print
+    print(st.toString());
+    rethrow;
+  }
   // Init Hive (for offline draft media)
   try { await Hive.initFlutter(); } catch (_) {}
   // Initialize Firebase
   if (kIsWeb) {
-    await Firebase.initializeApp(
-      options: FirebaseOptions(
-        apiKey: dotenv.get('FIREBASE_API_KEY'),
-  authDomain: dotenv.maybeGet('FIREBASE_AUTH_DOMAIN'),
-  projectId: dotenv.get('FIREBASE_PROJECT_ID'),
-  storageBucket: dotenv.maybeGet('FIREBASE_STORAGE_BUCKET'),
-        messagingSenderId: dotenv.get('FIREBASE_MESSAGING_SENDER_ID'),
-        appId: dotenv.get('FIREBASE_APP_ID'),
-        measurementId: dotenv.maybeGet('FIREBASE_MEASUREMENT_ID'),
-      ),
-    );
+    try {
+      final apiKey = dotenv.maybeGet('FIREBASE_API_KEY');
+      final projectId = dotenv.maybeGet('FIREBASE_PROJECT_ID');
+      final appId = dotenv.maybeGet('FIREBASE_APP_ID');
+      final msgSenderId = dotenv.maybeGet('FIREBASE_MESSAGING_SENDER_ID');
+      final authDomain = dotenv.maybeGet('FIREBASE_AUTH_DOMAIN');
+      final storageBucket = dotenv.maybeGet('FIREBASE_STORAGE_BUCKET');
+      if ([apiKey, projectId, appId, msgSenderId].any((v) => (v == null || v.isEmpty))) {
+        // ignore: avoid_print
+        print('FirebaseOptions missing required keys. projectId=$projectId, appId=$appId, senderId=$msgSenderId, authDomain=$authDomain, bucket=$storageBucket');
+        throw StateError('Missing FirebaseOptions keys from .env');
+      }
+      await Firebase.initializeApp(
+        options: FirebaseOptions(
+          apiKey: apiKey!,
+          authDomain: authDomain,
+          projectId: projectId!,
+          storageBucket: storageBucket,
+          messagingSenderId: msgSenderId!,
+          appId: appId!,
+          measurementId: dotenv.maybeGet('FIREBASE_MEASUREMENT_ID'),
+        ),
+      );
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('Firebase.initializeApp (web) failed: ' + e.toString());
+      // ignore: avoid_print
+      print(st.toString());
+      rethrow;
+    }
     // Log configured storage bucket for diagnostics (no normalization)
     try {
       final bucket = Firebase.app().options.storageBucket;
@@ -48,7 +91,15 @@ Future<void> main() async {
     } catch (_) {}
   } else {
     // On mobile/desktop, this uses platform-specific configuration files if present.
-    await Firebase.initializeApp();
+    try {
+      await Firebase.initializeApp();
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('Firebase.initializeApp (native) failed: ' + e.toString());
+      // ignore: avoid_print
+      print(st.toString());
+      rethrow;
+    }
   }
   // Enable offline persistence
   try {
@@ -62,44 +113,29 @@ Future<void> main() async {
   } catch (e) {
     // Don’t block app startup if messaging fails (e.g., missing service worker on web)
   }
-  // Optionally, re-register token on sign-in and refresh/clear avatar URL
+  // Do not prompt for permissions at startup. Request contextually when a feature needs it.
+  // Optionally, re-register token on sign-in
   FirebaseAuth.instance.authStateChanges().listen((user) async {
     if (user == null) return;
     try {
       await MessagingService.init();
     } catch (_) {}
-    // One-time avatar URL migration: resolve fresh URL from storage or clear invalid legacy URL
-    try {
-      final uid = user.uid;
-      final storage = storageForCurrentApp();
-      final ref = storage.ref().child('users/$uid/avatar.jpg');
-      try {
-        final fresh = await ref.getDownloadURL();
-        if (fresh.isNotEmpty && fresh != user.photoURL) {
-          await user.updatePhotoURL(fresh);
-          await FirebaseFirestore.instance.collection('users').doc(uid)
-              .set({'photoUrl': fresh, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
-          AppLogger.i.i('Migrated avatar URL to fresh download URL');
-        }
-      } catch (e) {
-        final raw = user.photoURL ?? '';
-        if (raw.contains('.firebasestorage.app')) {
-          await user.updatePhotoURL(null);
-          await FirebaseFirestore.instance.collection('users').doc(uid)
-              .set({'photoUrl': FieldValue.delete(), 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
-          AppLogger.i.i('Cleared invalid avatar URL');
-        }
-      }
-    } catch (_) {}
   });
   final prefs = await SharedPreferences.getInstance();
-  runApp(ProviderScope(
-    overrides: [
-      themeControllerProvider.overrideWith((ref) => ThemeController(prefs)),
-  sharedPrefsProvider.overrideWithValue(prefs),
-    ],
-    child: const MyApp(),
-  ));
+  runZonedGuarded(() {
+    runApp(ProviderScope(
+      overrides: [
+        themeControllerProvider.overrideWith((ref) => ThemeController(prefs)),
+        sharedPrefsProvider.overrideWithValue(prefs),
+      ],
+      child: const MyApp(),
+    ));
+  }, (error, stack) {
+    // ignore: avoid_print
+    print('Uncaught zone error: ' + error.toString());
+    // ignore: avoid_print
+    print(stack.toString());
+  });
 }
 
 class MyApp extends ConsumerWidget {
@@ -108,27 +144,33 @@ class MyApp extends ConsumerWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final goRouter = ref.watch(routerProvider);
-    final locale = ref.watch(localeProvider);
+  final goRouter = ref.watch(routerProvider);
+    // Kick off app warmup (disk-first snapshots, user doc, first page lists)
+    ref.watch(bootstrapPrefetchProvider);
     final themeMode = ref.watch(themeControllerProvider);
     return ToastificationWrapper(
-      child: MaterialApp.router(
+      child: OfflineMonitor(
+        child: DefaultTextHeightBehavior(
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: true,
+            applyHeightToLastDescent: true,
+            leadingDistribution: TextLeadingDistribution.even,
+          ),
+          child: MaterialApp.router(
       title: 'Nirmad',
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: themeMode,
       routerConfig: goRouter,
-      locale: locale,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [
-        Locale('en'),
-        Locale('hi'),
-      ],
+  supportedLocales: const [Locale('en')],
       debugShowCheckedModeBanner: false,
+          ),
+        ),
       ),
     );
   }

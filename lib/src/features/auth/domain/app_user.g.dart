@@ -11,6 +11,7 @@ _$AppUserImpl _$$AppUserImplFromJson(Map<String, dynamic> json) =>
       uid: json['uid'] as String,
       email: json['email'] as String,
       role: $enumDecode(_$UserRoleEnumMap, json['role']),
+      blockId: json['blockId'] as String?,
       blocks:
           (json['blocks'] as List<dynamic>?)
               ?.map((e) => e as String)
@@ -25,6 +26,7 @@ Map<String, dynamic> _$$AppUserImplToJson(_$AppUserImpl instance) =>
       'uid': instance.uid,
       'email': instance.email,
       'role': _$UserRoleEnumMap[instance.role]!,
+      'blockId': instance.blockId,
       'blocks': instance.blocks,
       'displayName': instance.displayName,
       'assignedVillage': instance.assignedVillage,

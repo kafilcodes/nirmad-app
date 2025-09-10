@@ -4,12 +4,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:gap/gap.dart';
 import 'package:go_router/go_router.dart';
 
 import '../data/auth_repository.dart';
 import '../domain/app_user.dart';
+import '../../../services/permission_service.dart';
 
 class ModernLoginPage extends ConsumerStatefulWidget {
   const ModernLoginPage({super.key});
@@ -25,12 +25,31 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
   bool _obscure = true;
   bool _rememberMe = true;
   bool _loading = false;
+  // Permissions are not required to login; we track them only to offer quick-fix later.
+  bool _permissionsOk = true;
+  List<String> _missing = const [];
 
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshPermissions();
+  }
+
+  Future<void> _refreshPermissions() async {
+    final ok = await PermissionService.allGranted();
+    final miss = ok ? const <String>[] : await PermissionService.missingPermissions();
+    if (!mounted) return;
+    setState(() {
+      _permissionsOk = ok;
+      _missing = miss;
+    });
   }
 
   String _mapFirebaseError(FirebaseAuthException e) {
@@ -90,8 +109,82 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
       }
-    } catch (_) {
-      if (mounted) {
+    } catch (e) {
+      final err = e.toString();
+      // Detect our single-device guard error and offer takeover
+      final conflict = err.contains('already active on another device');
+      if (mounted && conflict) {
+        final confirmedPassword = await showDialog<String?>(
+          context: context,
+          builder: (ctx) {
+            final confirmCtrl = TextEditingController();
+            final formKey = GlobalKey<FormState>();
+            return AlertDialog(
+              title: const Text('Active session detected'),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('This account is signed in on another device. To continue here, confirm your password. The other device will be logged out immediately.'),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: confirmCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'Password'),
+                      validator: (v) => (v == null || v.length < 6) ? 'Enter your password' : null,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('Cancel')),
+                FilledButton(
+                  onPressed: () {
+                    if (formKey.currentState?.validate() ?? false) {
+          Navigator.pop(ctx, confirmCtrl.text);
+                    }
+                  },
+                  child: const Text('Continue here'),
+                ),
+              ],
+            );
+          },
+        );
+    if (confirmedPassword != null) {
+          try {
+            await ref.read(authRepositoryProvider).forceSignInTakeover(
+                  _emailCtrl.text.trim(),
+      confirmedPassword,
+                );
+            if (!mounted) return;
+            // Navigate as in normal sign-in
+            try {
+              await FirebaseAuth.instance.authStateChanges().firstWhere((u) => u != null);
+            } catch (_) {}
+            String? target = ref.read(cachedRedirectPathProvider);
+            if (target == null) {
+              try {
+                final app = await ref.read(authRepositoryProvider).currentUser();
+                if (app != null) {
+                  target = app.role == UserRole.projectOwner ? '/owner' : '/dashboard';
+                }
+              } catch (_) {}
+            }
+            if (target != null) context.go(target);
+          } on FirebaseAuthException catch (e2) {
+            final msg = _mapFirebaseError(e2);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+            }
+          } catch (_) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unable to continue here. Try again.')));
+            }
+          }
+        }
+      } else if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('Something went wrong. Please try again.')));
       }
@@ -128,6 +221,8 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
         fit: StackFit.expand,
         children: [
           _AnimatedBackdrop(isDark: isDark),
+          // Small header mark: Dhamtari district logo (login-only)
+          // Dhamtari district logo removed from login page per spec.
           SafeArea(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -143,6 +238,18 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
                   onSubmit: _signIn,
                   onForgotPassword: _resetPassword,
                   loading: _loading,
+                  permissionsOk: _permissionsOk,
+                  onFixPermissions: () async {
+                    final ok = await PermissionService.requestCorePermissions();
+                    await _refreshPermissions();
+                    if (!ok && mounted) {
+                      final list = _missing.isEmpty ? 'required permissions' : _missing.join(', ');
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Please grant $list to continue.')),
+                      );
+                    }
+                  },
+                  missing: _missing,
                 );
 
                 if (!isWide) {
@@ -206,12 +313,16 @@ class _BrandHeader extends StatelessWidget {
   final double copyGap = small ? 2 : (medium ? 4 : 6);
     final double copyMaxWidth = small ? 520 : 560;
 
-    Widget logo = Padding(
+  Widget logo = Padding(
       padding: EdgeInsets.only(left: pad, right: pad, top: pad, bottom: bottomPad),
       child: SizedBox(
         width: logoSize,
         height: logoSize,
-        child: Image.asset('assets/logo.png', fit: BoxFit.contain),
+    child: Builder(builder: (context) {
+  // Primary login logo is always Nirmad (app brand)
+  const asset = 'assets/logo.png';
+  return Image.asset(asset, fit: BoxFit.contain);
+    }),
       ),
     ).animate().fadeIn(duration: 250.ms).moveY(begin: 6, end: 0);
 
@@ -267,6 +378,9 @@ class _AuthCard extends StatelessWidget {
     required this.onSubmit,
     required this.onForgotPassword,
     required this.loading,
+  required this.permissionsOk,
+  required this.onFixPermissions,
+  required this.missing,
   });
 
   final GlobalKey<FormState> formKey;
@@ -279,6 +393,9 @@ class _AuthCard extends StatelessWidget {
   final Future<void> Function() onSubmit;
   final Future<void> Function() onForgotPassword;
   final bool loading;
+  final bool permissionsOk;
+  final Future<void> Function() onFixPermissions;
+  final List<String> missing;
 
   @override
   Widget build(BuildContext context) {
@@ -301,6 +418,29 @@ class _AuthCard extends StatelessWidget {
               Text('Sign in',
                   style: theme.textTheme.headlineSmall
                       ?.copyWith(fontWeight: FontWeight.w700)),
+              // Don't block login if permissions are missing. Show a light hint instead.
+              if (!permissionsOk) ...[
+                const Gap(8),
+                Row(
+                  children: [
+                    const Icon(Icons.info_outline, size: 18),
+                    const Gap(6),
+                    Expanded(
+                      child: Text(
+                        missing.isEmpty
+                            ? 'Some features may require permissions later.'
+                            : 'Missing permissions: ${missing.join(', ')}',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: onFixPermissions,
+                      icon: const Icon(Icons.security, size: 18),
+                      label: const Text('Fix'),
+                    )
+                  ],
+                ),
+              ],
               const Gap(12),
               _LabeledField(
                 label: 'Email',
@@ -383,6 +523,14 @@ class _AuthCard extends StatelessWidget {
                       )
                     : const Icon(Icons.login),
                 label: const Text('Sign in'),
+                style: FilledButton.styleFrom(
+                  alignment: Alignment.center,
+                  textStyle: theme.textTheme.labelLarge?.copyWith(
+                        height: 1.0,
+                        leadingDistribution: TextLeadingDistribution.even,
+                        textBaseline: TextBaseline.alphabetic,
+                      ),
+                ),
               ),
             ],
           ),
@@ -421,6 +569,7 @@ class _LabeledField extends StatelessWidget {
       obscureText: obscureText,
       keyboardType: keyboardType,
       validator: validator,
+  textAlignVertical: TextAlignVertical.center,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
@@ -437,11 +586,7 @@ class _AnimatedBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-  final w = MediaQuery.of(context).size.width;
-  final bool small = w < 600;
-  final bool medium = w >= 600 && w < 1000;
-  final double pad = small ? 16 : (medium ? 24 : 40);
-  final double svgSize = small ? 260 : (medium ? 420 : 520);
+  // Background only needs theme; size-based SVGs removed.
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -464,40 +609,7 @@ class _AnimatedBackdrop extends StatelessWidget {
         )
             .animate(onPlay: (c) => c.repeat(reverse: true))
             .moveY(begin: -8, end: 8, curve: Curves.easeInOut, duration: 6.seconds),
-        Align(
-          alignment: Alignment.bottomRight,
-          child: IgnorePointer(
-            child: Padding(
-              padding: EdgeInsets.all(pad),
-              child: Opacity(
-                opacity: 0.7,
-                child: SvgPicture.asset(
-                  'assets/login_page_graphics.svg',
-                  width: svgSize,
-                  height: svgSize,
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.topLeft,
-          child: IgnorePointer(
-            child: Padding(
-              padding: EdgeInsets.all(pad),
-              child: Opacity(
-                opacity: 0.7,
-                child: SvgPicture.asset(
-                  'assets/login_page_graphics_2.svg',
-                  width: svgSize,
-                  height: svgSize,
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-          ),
-        ),
+  // Removed background SVG ornaments per request; keep subtle animated blob backdrop only.
       ],
     );
   }

@@ -27,7 +27,8 @@ class AppUser with _$AppUser {
     required String uid,
     required String email,
     required UserRole role,
-    @Default(<String>[]) List<String> blocks,
+  String? blockId,
+  @Default(<String>[]) List<String> blocks,
     String? displayName,
     String? assignedVillage,
   }) = _AppUser;

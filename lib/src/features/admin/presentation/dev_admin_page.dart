@@ -36,7 +36,7 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Assign Role & Blocks to User (by email)', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Assign Role & Block to User (by email)', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             TextField(
               controller: _emailCtrl,
@@ -67,7 +67,7 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
             TextField(
               controller: _blocksCtrl,
               decoration: const InputDecoration(
-                labelText: 'Blocks (comma separated, for sub_nodal)',
+                labelText: 'Block ID (for sub_nodal)',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -105,14 +105,10 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
   showToast(context, 'Email is required', icon: CupertinoIcons.exclamationmark_triangle, error: true);
       return;
     }
-    final blocks = _blocksCtrl.text
-        .split(',')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+  final blockId = _blocksCtrl.text.trim();
     setState(() => _busy = true);
     try {
-      await ref.read(functionsServiceProvider).setUserClaims(email: email, role: _role, blocks: blocks.isEmpty ? null : blocks);
+  await ref.read(functionsServiceProvider).setUserClaims(email: email, role: _role, blockId: blockId.isEmpty ? null : blockId);
   if (!mounted) return; showToast(context, 'Claims updated', icon: CupertinoIcons.checkmark_seal);
     } catch (e) {
   if (!mounted) return; showToast(context, 'Failed: $e', icon: CupertinoIcons.exclamationmark_triangle, error: true);
@@ -127,11 +123,11 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
       final owners = int.tryParse(_ownersCtrl.text.trim()) ?? 0;
       final nodals = int.tryParse(_nodalsCtrl.text.trim()) ?? 0;
       final domain = _domainCtrl.text.trim().isEmpty ? 'example.com' : _domainCtrl.text.trim();
-      final blocks = _blocksCtrl.text
-          .split(',')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList();
+    final blocks = _blocksCtrl.text
+      .split(',')
+      .map((e) => e.trim())
+      .where((e) => e.isNotEmpty)
+      .toList();
   final svc = ref.read(functionsServiceProvider);
   await svc.seedTestUsers(owners: owners, nodals: nodals, domain: domain, blockIds: blocks.isEmpty ? null : blocks);
   if (!mounted) return; showToast(context, 'Seeding requested. Check Firebase Auth for new users.', icon: CupertinoIcons.person_2);

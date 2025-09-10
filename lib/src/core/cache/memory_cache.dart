@@ -1,10 +1,10 @@
-import 'dart:collection';
+// Simple in-memory cache with TTL and rough LRU behavior.
 
 class MemoryCache<V> {
   final int maxEntries;
   final Duration ttl;
 
-  final _values = LinkedHashMap<String, _Entry<V>>();
+  final _values = <String, _Entry<V>>{};
 
   MemoryCache({this.maxEntries = 200, this.ttl = const Duration(minutes: 5)});
 

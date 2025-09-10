@@ -6,7 +6,11 @@ import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../data/auth/session_service.dart';
+import '../../../services/functions_service.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../../../core/prefs/shared_prefs.dart';
+import '../../../shared/data/blocks_provider.dart';
 
 import '../domain/app_user.dart';
 
@@ -18,13 +22,48 @@ class AuthRepository {
   late final SessionService _session = SessionService(_auth, _db);
   AuthRepository(this._auth, this._db, this._prefs);
 
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sessionWatchSub;
+  String? _currentWatchedSessionId;
+
+  void _startSessionWatch(String sessionId) {
+    final u = _auth.currentUser;
+    if (u == null) return;
+    // Cancel any existing watcher if sessionId changed
+    if (_currentWatchedSessionId == sessionId && _sessionWatchSub != null) return;
+    _sessionWatchSub?.cancel();
+    _currentWatchedSessionId = sessionId;
+    final ref = _db.collection('users').doc(u.uid).collection('sessions').doc('current');
+    _sessionWatchSub = ref.snapshots().listen((snap) async {
+      // Production resilience: avoid spurious sign-outs on refresh/offline/errors.
+      // Only sign out on explicit mismatch where an active sessionId exists and differs.
+      final data = snap.data();
+      final activeId = data == null ? null : (data['sessionId'] as String?);
+      if (activeId != null && activeId.isNotEmpty && activeId != _currentWatchedSessionId) {
+        await signOut();
+      }
+      // When activeId is null or doc missing, do nothing; a later update will enforce if needed.
+    }, onError: (e, st) async {
+      // Do not sign out on transient listener errors; keep the watcher alive.
+      // Intentionally no-op to prevent logout flicker on web refresh.
+    });
+  }
+
   Stream<AppUser?> authStateChanges() async* {
     await for (final user in _auth.authStateChanges()) {
       if (user == null) {
         // Clear cache
         await _prefs.remove('auth_cache');
         // Clear any lingering session doc optimistically
-        try { await _session.clearSession(); } catch (_) {}
+        try {
+          final id = _prefs.getString('device_session_id');
+          if (id != null && id.isNotEmpty) {
+            await _session.clearSessionIfMatches(id);
+          }
+        } catch (_) {}
+        // Stop watcher
+        try { await _sessionWatchSub?.cancel(); } catch (_) {}
+        _sessionWatchSub = null;
+        _currentWatchedSessionId = null;
         yield null;
         continue;
       }
@@ -46,6 +85,8 @@ class AuthRepository {
       } catch (_) {}
       // Register/update current session (sets 6-month hint expiry server-side)
       try { await _session.registerSession(deviceSessionId); } catch (_) {}
+      // Begin real-time enforcement: if another device overwrites session, this device logs out immediately
+      _startSessionWatch(deviceSessionId);
       yield app;
     }
   }
@@ -59,11 +100,19 @@ class AuthRepository {
   Future<void> signIn(String email, String password) async {
     try {
       await _auth.signInWithEmailAndPassword(email: email, password: password);
-      // Immediately register session so rules/UI can react
+      // Enforce single-device strictly: check before registering and bail out if mismatch
       try {
         final id = await _ensureDeviceSessionId();
+        final ok = await _session.canUseCurrentDevice(id);
+        if (!ok) {
+          // Revert sign-in and surface an error
+          await _auth.signOut();
+          throw StateError('This account is already active on another device. Please log out there first.');
+        }
         await _session.registerSession(id);
-      } catch (_) {}
+      } catch (e) {
+        rethrow;
+      }
     } catch (e) {
       // ignore: avoid_print
       print('AuthRepository.signIn error: $e');
@@ -72,9 +121,36 @@ class AuthRepository {
   }
   Future<void> sendPasswordResetEmail(String email) => _auth.sendPasswordResetEmail(email: email);
   Future<void> signOut() async {
-  try { await _session.clearSession(); } catch (_) {}
+  try {
+    final id = _prefs.getString('device_session_id');
+    if (id != null && id.isNotEmpty) {
+      await _session.clearSessionIfMatches(id);
+    }
+  } catch (_) {}
+  try { await _sessionWatchSub?.cancel(); } catch (_) {}
+  _sessionWatchSub = null;
+  _currentWatchedSessionId = null;
   await _auth.signOut();
     await _prefs.remove('auth_cache');
+    // Clear per-user local drafts and caches
+    try { await _prefs.remove('profile_draft'); } catch (_) {}
+    try { await _prefs.remove('project_creation_draft'); } catch (_) {}
+  }
+
+  /// Force takeover the active session on another device after user confirmation.
+  /// This signs in and immediately registers this device's sessionId, overwriting
+  /// the previous session. Any active device watcher will sign out in real-time.
+  Future<void> forceSignInTakeover(String email, String password) async {
+    await _auth.signInWithEmailAndPassword(email: email, password: password);
+    final id = await _ensureDeviceSessionId();
+    await _session.registerSession(id);
+    _startSessionWatch(id);
+    // Best-effort: revoke tokens so previous device refresh tokens are invalidated immediately
+    try {
+      final region = dotenv.maybeGet('FIREBASE_FUNCTIONS_REGION') ?? 'us-central1';
+      final fns = FirebaseFunctions.instanceFor(region: region);
+      await FunctionsService(fns).revokeUserTokens();
+    } catch (_) {}
   }
 
   Future<void> signUpAdmin(String email, String password) async {
@@ -83,7 +159,8 @@ class AuthRepository {
     await _db.collection('users').doc(uid).set({
       'email': email,
       'role': 'dev_admin',
-      'blocks': <String>[],
+  // Use single blockId model; dev_admin has access to all, so null
+  'blockId': null,
       'displayName': cred.user!.displayName,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
@@ -101,8 +178,9 @@ class AuthRepository {
     final bool isWhitelistedAdmin =
         bootstrapAdminUids.contains(user.uid) || (user.email != null && bootstrapAdminEmails.contains(user.email!.toLowerCase()));
 
-    UserRole? role;
-    List<String> blocks = const [];
+  UserRole? role;
+  String? blockId;
+  List<String> blocks = const [];
     String? assignedVillage;
     String? displayName = user.displayName;
 
@@ -122,9 +200,20 @@ class AuthRepository {
     }
     if (data != null) {
       role = UserRole.fromKey(data['role'] as String?);
+      // Prefer new single blockId; keep array and legacy keys for back-compat
+      blockId = (data['blockId'] as String?)?.trim();
+      // Legacy lowercase keys sometimes used in older user docs
+      blockId ??= (data['blockid'] as String?)?.trim();
+      blockId ??= (data['block'] as String?)?.trim();
       final v = data['blocks'];
       if (v is List) {
         blocks = v.whereType<String>().toList();
+        // Fill blockId if missing
+        blockId ??= blocks.isNotEmpty ? blocks.first : null;
+      }
+      // Canonicalize common aliases/casing (e.g., 'dhamtari' -> 'Dhamtari')
+  if (blockId != null && blockId.isNotEmpty) {
+        blockId = canonicalizeBlockId(blockId);
       }
       assignedVillage = data['assignedVillage'] as String?;
       displayName = (data['displayName'] as String?) ?? displayName;
@@ -143,7 +232,8 @@ class AuthRepository {
       uid: user.uid,
       email: user.email ?? '',
       role: role ?? UserRole.projectOwner,
-      blocks: blocks,
+  blockId: blockId,
+  blocks: blocks,
       displayName: displayName,
       assignedVillage: assignedVillage,
     );
@@ -215,4 +305,38 @@ final currentUserDocProvider = StreamProvider<DocumentSnapshot<Map<String, dynam
   final user = fb.FirebaseAuth.instance.currentUser;
   if (user == null) return const Stream.empty();
   return FirebaseFirestore.instance.collection('users').doc(user.uid).snapshots();
+});
+
+/// A unified, single source of truth for the current user's profile for UI use.
+/// Combines FirebaseAuth user fields with Firestore `users/{uid}` document data.
+class CurrentUserProfile {
+  final String uid;
+  final String email;
+  final String displayName; // best-effort, may be empty
+  final Map<String, dynamic> data; // raw Firestore user doc data
+  final UserRole role;
+  const CurrentUserProfile({
+    required this.uid,
+    required this.email,
+    required this.displayName,
+    required this.data,
+    required this.role,
+  });
+}
+
+/// Unified profile stream combining authStateProvider (AppUser for role) and user doc.
+final currentUserProfileProvider = Provider<CurrentUserProfile?>((ref) {
+  final appUser = ref.watch(authStateProvider).value;
+  final fbUser = fb.FirebaseAuth.instance.currentUser;
+  if (appUser == null || fbUser == null) return null;
+  final userDocSnap = ref.watch(currentUserDocProvider).value;
+  final data = userDocSnap?.data() ?? const <String, dynamic>{};
+  final displayName = ((data['displayName'] as String?) ?? (fbUser.displayName ?? '')).trim();
+  return CurrentUserProfile(
+    uid: appUser.uid,
+    email: appUser.email,
+    displayName: displayName,
+    data: data,
+    role: appUser.role,
+  );
 });

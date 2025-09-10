@@ -4,7 +4,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 part 'project.freezed.dart';
 
 // ignore: constant_identifier_names
-enum ProjectStatus { draft, in_progress, completed, cancelled }
+enum ProjectStatus { in_progress, completed, cancelled }
 
 // Work stages for project progression
 enum WorkStage { layout, plinth, lintel, finishing, completed }
@@ -204,6 +204,7 @@ class AllotmentDetails with _$AllotmentDetails {
 class WorkDescription with _$WorkDescription {
   const factory WorkDescription({
     DateTime? startDate,
+  DateTime? endDate,
     WorkStage? stage,
     ApramStatus? apramStatus,
     @Default(<String>[]) List<String> measurementBookUrls,
@@ -234,6 +235,7 @@ class WorkDescription with _$WorkDescription {
     }
     return WorkDescription(
       startDate: _toDateTime(d['startDate']),
+      endDate: _toDateTime(d['endDate']),
       stage: stage,
       apramStatus: apram,
       measurementBookUrls: ((d['measurementBookUrls'] as List?) ?? const []).whereType<String>().toList(),
@@ -245,6 +247,7 @@ class WorkDescription with _$WorkDescription {
 
   Map<String, dynamic> toMap() => {
         'startDate': startDate == null ? null : Timestamp.fromDate(startDate!),
+        'endDate': endDate == null ? null : Timestamp.fromDate(endDate!),
         'stage': stage?.name,
         'apramStatus': apramStatus?.name,
         'measurementBookUrls': measurementBookUrls,
@@ -263,7 +266,7 @@ class Project with _$Project {
     required String ownerId,
     required String blockId,
     required String villageId,
-    @Default(ProjectStatus.draft) ProjectStatus status,
+  @Default(ProjectStatus.in_progress) ProjectStatus status,
     @Default(0) int phase,
     GeoPoint? location,
     String? address,
@@ -271,6 +274,8 @@ class Project with _$Project {
     String? mapSnapshotUrl,
     @Default({}) Map<String, dynamic> landDetails,
     @Default({}) Map<String, dynamic> financials,
+  // Owner details snapshot captured at creation time for quick access
+  @Default({}) Map<String, dynamic> ownerDetails,
 
     // Preliminary Description (Section 1)
     @Default(PreliminaryDescription()) PreliminaryDescription preliminaryDescription,
@@ -300,12 +305,14 @@ class Project with _$Project {
 
   static Project fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
-    ProjectStatus status = ProjectStatus.draft;
+    ProjectStatus status = ProjectStatus.in_progress;
     final s = data['status'] as String?;
     if (s != null) {
+      // Coerce legacy 'draft' to 'in_progress'
+      final key = s == 'draft' ? 'in_progress' : s;
       status = ProjectStatus.values.firstWhere(
-        (e) => e.name == s,
-        orElse: () => ProjectStatus.draft,
+        (e) => e.name == key,
+        orElse: () => ProjectStatus.in_progress,
       );
     }
     return Project(
@@ -323,6 +330,7 @@ class Project with _$Project {
       mapSnapshotUrl: data['mapSnapshotUrl'] as String?,
       landDetails: (data['landDetails'] as Map<String, dynamic>?) ?? const {},
       financials: (data['financials'] as Map<String, dynamic>?) ?? const {},
+  ownerDetails: (data['ownerDetails'] as Map<String, dynamic>?) ?? const {},
 
       // New sections
       preliminaryDescription: PreliminaryDescription.fromMap(data['preliminaryDescription'] as Map<String, dynamic>?),
@@ -355,6 +363,7 @@ class Project with _$Project {
       'mapSnapshotUrl': mapSnapshotUrl,
       'landDetails': landDetails,
       'financials': financials,
+  'ownerDetails': ownerDetails,
 
       // New sections
       'preliminaryDescription': preliminaryDescription.toMap(),

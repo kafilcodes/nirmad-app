@@ -30,10 +30,17 @@ class SessionService {
     return activeId == null || activeId == sessionId;
   }
 
-  Future<void> clearSession() async {
+  /// Delete session doc only if it matches the provided sessionId.
+  Future<void> clearSessionIfMatches(String sessionId) async {
     final u = _auth.currentUser;
     if (u == null) return;
     final ref = _db.collection('users').doc(u.uid).collection('sessions').doc('current');
-    await ref.delete().catchError((_) {});
+    try {
+      final snap = await ref.get();
+      final activeId = snap.data()?['sessionId'] as String?;
+      if (activeId == sessionId) {
+        await ref.delete().catchError((_) {});
+      }
+    } catch (_) {}
   }
 }

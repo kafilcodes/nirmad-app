@@ -70,6 +70,8 @@ android/app/*.jks
 android/app/*.keystore.properties
 android/app/*.keystore.jks
 
+local_data.json
+
 # Firebase local configs (keep templates tracked separately)
 .firebase/
 .firebaserc.local

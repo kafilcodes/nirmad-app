@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../features/auth/data/auth_repository.dart';
-import 'package:go_router/go_router.dart';
 import 'app_sidebar.dart';
+import '../navigation/unsaved_changes_guard.dart';
 
 /// AppShell is a reusable scaffold that renders a SidebarX-based navigation
 /// and a top app bar with an optional title and actions. Use it across pages
@@ -23,6 +22,8 @@ class _AppShellState extends ConsumerState<AppShell> {
   int _index = 0;
   bool _sidebarOpen = true;
   bool _autoManageSidebar = true;
+  bool _sidebarCollapsed = false; // desktop icon-only mode
+  bool _sidebarHidden = false; // desktop fully hidden
 
   @override
   void initState() {
@@ -37,7 +38,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = ref.read(authRepositoryProvider);
+  // final auth = ref.read(authRepositoryProvider); // logout moved to sidebar footer
     final screenW = MediaQuery.of(context).size.width;
     final overlaySidebar = screenW < 900; // overlay on phones/tablets
     final desiredOpen = !overlaySidebar; // open by default on wide screens
@@ -53,20 +54,32 @@ class _AppShellState extends ConsumerState<AppShell> {
           Row(
             children: [
               if (!overlaySidebar) ...[
-                SizedBox(
-                  width: 256,
-                  child: AppSidebar(
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  width: _sidebarHidden ? 0 : (_sidebarCollapsed ? 72 : 256),
+                  child: _sidebarHidden
+                      ? const SizedBox.shrink()
+                      : AppSidebar(
                     selectedIndex: _index,
-                    onSelect: (i) {
+                    onSelect: (i) async {
+                      final guard = ref.read(unsavedChangesGuardProvider);
+                      final ok = await guard.confirm();
+                      if (!ok) return;
                       setState(() => _index = i);
                       widget.onSelect?.call(i);
                     },
+                    collapsed: _sidebarCollapsed,
                   ),
                 ),
-                VerticalDivider(width: 1, color: Theme.of(context).dividerColor),
+                // Removed sidebar divider for a flat, seamless layout
+                // (no visual separation between sidebar and content)
               ],
               Expanded(
-                child: Column(
+                child: SafeArea(
+                  top: true,
+                  bottom: false,
+                  child: Column(
                   children: [
                     SizedBox(
                       height: 56,
@@ -80,8 +93,27 @@ class _AppShellState extends ConsumerState<AppShell> {
                             }),
                             tooltip: 'Menu',
                           )
-                        else
-                          const SizedBox(width: 12),
+                        else ...[
+                          const SizedBox(width: 6),
+                          Row(children: [
+                            Tooltip(
+                              message: _sidebarHidden ? 'Show sidebar' : 'Hide sidebar',
+                              child: IconButton(
+                                icon: Icon(_sidebarHidden ? Icons.menu : Icons.menu_open),
+                                onPressed: () => setState(() => _sidebarHidden = !_sidebarHidden),
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Tooltip(
+                              message: _sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+                              child: IconButton(
+                                icon: Icon(_sidebarCollapsed ? CupertinoIcons.right_chevron : CupertinoIcons.left_chevron),
+                                onPressed: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed),
+                              ),
+                            ),
+                          ]),
+                          const SizedBox(width: 6),
+                        ],
                         if (widget.title != null)
                           Expanded(
                             child: Text(
@@ -91,19 +123,12 @@ class _AppShellState extends ConsumerState<AppShell> {
                           )
                         else
                           const Spacer(),
-                        IconButton(
-                          onPressed: () async {
-                            await auth.signOut();
-                            if (context.mounted) context.go('/');
-                          },
-                          icon: const Icon(CupertinoIcons.square_arrow_right),
-                          tooltip: 'Sign out',
-                        ),
                       ]),
                     ),
                     Divider(height: 1, color: Theme.of(context).dividerColor),
                     Expanded(child: widget.body),
                   ],
+                  ),
                 ),
               ),
             ],
@@ -126,12 +151,16 @@ class _AppShellState extends ConsumerState<AppShell> {
               left: _sidebarOpen ? 0 : -300,
               width: 280,
               child: Material(
-                elevation: 8,
+                // Remove elevation to match the flat sidebar design
+                elevation: 0,
                 color: Theme.of(context).colorScheme.surface,
                 child: SafeArea(
                   child: AppSidebar(
                     selectedIndex: _index,
-                    onSelect: (i) {
+                    onSelect: (i) async {
+                      final guard = ref.read(unsavedChangesGuardProvider);
+                      final ok = await guard.confirm();
+                      if (!ok) return;
                       setState(() {
                         _index = i;
                         _sidebarOpen = false; // close on selection

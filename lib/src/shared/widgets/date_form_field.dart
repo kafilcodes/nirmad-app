@@ -9,7 +9,19 @@ class DateFormField extends StatefulWidget {
   final DateTime? lastDate;
   final String? Function(String?)? validator;
   final FocusNode? focusNode;
-  const DateFormField({super.key, required this.controller, required this.label, this.firstDate, this.lastDate, this.validator, this.focusNode});
+  final bool required;
+  final bool enabled;
+  const DateFormField({
+    super.key,
+    required this.controller,
+    required this.label,
+    this.firstDate,
+    this.lastDate,
+    this.validator,
+    this.focusNode,
+    this.required = false,
+    this.enabled = true,
+  });
 
   @override
   State<DateFormField> createState() => _DateFormFieldState();
@@ -60,11 +72,20 @@ class _DateFormFieldState extends State<DateFormField> {
 
   @override
   Widget build(BuildContext context) {
+    final labelWidget = Row(mainAxisSize: MainAxisSize.min, children: [
+      Flexible(child: Text(widget.label)),
+      const Text(' *', style: TextStyle(color: Colors.red)),
+      const SizedBox(width: 4),
+      Text('(required)', style: Theme.of(context).textTheme.labelSmall),
+    ]);
     return TextFormField(
   focusNode: widget.focusNode,
+  enabled: widget.enabled,
       controller: widget.controller,
+      textAlignVertical: TextAlignVertical.center,
       decoration: InputDecoration(
-        labelText: widget.label,
+        label: widget.required ? labelWidget : null,
+        labelText: widget.required ? null : widget.label,
         suffixIcon: IconButton(
           icon: const Icon(CupertinoIcons.calendar),
           onPressed: _pick,

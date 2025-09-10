@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:toastification/toastification.dart';
 
 /// Compact, floating toast used across the app (wraps toastification).
@@ -9,13 +10,16 @@ void showToast(
   bool error = false,
   double width = 380, // kept for backward compat; not used by toastification
 }) {
+  final cs = Theme.of(context).colorScheme;
+  final type = error ? ToastificationType.error : ToastificationType.success;
   toastification.show(
     context: context,
-    title: Text(message),
-    type: error ? ToastificationType.error : ToastificationType.info,
-    style: ToastificationStyle.fillColored,
+    type: type,
+    style: ToastificationStyle.flat,
     autoCloseDuration: const Duration(seconds: 3),
     showProgressBar: false,
-    icon: Icon(icon),
+    title: Text(message, style: TextStyle(color: error ? cs.onError : cs.onPrimary)),
+    backgroundColor: error ? cs.error : cs.primary,
+    icon: Icon(icon, color: error ? cs.onError : cs.onPrimary),
   );
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:go_router/go_router.dart';
-import '../../../core/i18n/locale_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/widgets/branding_footer.dart';
 import '../../auth/data/auth_repository.dart';
@@ -21,22 +20,7 @@ class LandingPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Nirmad'),
-        actions: [
-          Builder(
-            builder: (context) {
-              final current = ref.watch(localeProvider) ?? const Locale('en');
-              final isEn = current.languageCode == 'en';
-              final label = isEn ? 'EN' : 'HI';
-              final icon = isEn ? CupertinoIcons.globe : CupertinoIcons.textformat_alt;
-              return TextButton.icon(
-                onPressed: () => ref.read(localeProvider.notifier).state = isEn ? const Locale('hi') : const Locale('en'),
-                icon: Icon(icon),
-                label: Text(label),
-              );
-            },
-          ),
-          const Gap(4),
-        ],
+  actions: const [Gap(4)],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -92,6 +76,11 @@ class _Tile extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 16),
+          textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                height: 1.0,
+                leadingDistribution: TextLeadingDistribution.even,
+                textBaseline: TextBaseline.alphabetic,
+              ),
         ),
       ),
     );

@@ -2,6 +2,12 @@
 
 Production-grade Flutter app to track government construction projects.
 
+### Nodal dashboard (recent)
+- Role-scoped metrics and charts (fl_chart) for Super/Sub Nodal.
+- Sub Nodal automatically filtered to assigned blocks.
+- Projects tab supports grid/list toggle, basic status filter, and search box.
+- Project details lets nodal officers send comments to owners (<= 300 chars), visible in updates and delivered as notifications.
+
 Project context and requirements live in `.project_context/prd.md` and `.project_context/rules.md`.
 
 ## Setup

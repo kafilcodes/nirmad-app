@@ -1,20 +1,13 @@
-import 'dart:io';
-
-import 'package:firebase_messaging/firebase_messaging.dart';
-
+// Notifications service disabled; keep API no-ops to avoid breaking imports.
 class NotificationsService {
-  final FirebaseMessaging _messaging;
-  NotificationsService(this._messaging);
+  NotificationsService();
 
   Future<void> initialize() async {
-    if (Platform.isIOS || Platform.isMacOS) {
-      await _messaging.requestPermission(alert: true, badge: true, sound: true);
-    }
-    await _messaging.setAutoInitEnabled(true);
+    // No-op
   }
 
-  Future<void> subscribeUser(String userId) => _messaging.subscribeToTopic('user_$userId');
-  Future<void> unsubscribeUser(String userId) => _messaging.unsubscribeFromTopic('user_$userId');
-  Future<void> subscribeBlock(String blockId) => _messaging.subscribeToTopic('block_$blockId');
-  Future<void> unsubscribeBlock(String blockId) => _messaging.unsubscribeFromTopic('block_$blockId');
+  Future<void> subscribeUser(String userId) async {}
+  Future<void> unsubscribeUser(String userId) async {}
+  Future<void> subscribeBlock(String blockId) async {}
+  Future<void> unsubscribeBlock(String blockId) async {}
 }

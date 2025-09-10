@@ -1487,6 +1487,7 @@ abstract class _AllotmentDetails extends AllotmentDetails {
 /// @nodoc
 mixin _$WorkDescription {
   DateTime? get startDate => throw _privateConstructorUsedError;
+  DateTime? get endDate => throw _privateConstructorUsedError;
   WorkStage? get stage => throw _privateConstructorUsedError;
   ApramStatus? get apramStatus => throw _privateConstructorUsedError;
   List<String> get measurementBookUrls => throw _privateConstructorUsedError;
@@ -1510,6 +1511,7 @@ abstract class $WorkDescriptionCopyWith<$Res> {
   @useResult
   $Res call({
     DateTime? startDate,
+    DateTime? endDate,
     WorkStage? stage,
     ApramStatus? apramStatus,
     List<String> measurementBookUrls,
@@ -1535,6 +1537,7 @@ class _$WorkDescriptionCopyWithImpl<$Res, $Val extends WorkDescription>
   @override
   $Res call({
     Object? startDate = freezed,
+    Object? endDate = freezed,
     Object? stage = freezed,
     Object? apramStatus = freezed,
     Object? measurementBookUrls = null,
@@ -1547,6 +1550,10 @@ class _$WorkDescriptionCopyWithImpl<$Res, $Val extends WorkDescription>
             startDate: freezed == startDate
                 ? _value.startDate
                 : startDate // ignore: cast_nullable_to_non_nullable
+                      as DateTime?,
+            endDate: freezed == endDate
+                ? _value.endDate
+                : endDate // ignore: cast_nullable_to_non_nullable
                       as DateTime?,
             stage: freezed == stage
                 ? _value.stage
@@ -1589,6 +1596,7 @@ abstract class _$$WorkDescriptionImplCopyWith<$Res>
   @useResult
   $Res call({
     DateTime? startDate,
+    DateTime? endDate,
     WorkStage? stage,
     ApramStatus? apramStatus,
     List<String> measurementBookUrls,
@@ -1613,6 +1621,7 @@ class __$$WorkDescriptionImplCopyWithImpl<$Res>
   @override
   $Res call({
     Object? startDate = freezed,
+    Object? endDate = freezed,
     Object? stage = freezed,
     Object? apramStatus = freezed,
     Object? measurementBookUrls = null,
@@ -1625,6 +1634,10 @@ class __$$WorkDescriptionImplCopyWithImpl<$Res>
         startDate: freezed == startDate
             ? _value.startDate
             : startDate // ignore: cast_nullable_to_non_nullable
+                  as DateTime?,
+        endDate: freezed == endDate
+            ? _value.endDate
+            : endDate // ignore: cast_nullable_to_non_nullable
                   as DateTime?,
         stage: freezed == stage
             ? _value.stage
@@ -1660,6 +1673,7 @@ class __$$WorkDescriptionImplCopyWithImpl<$Res>
 class _$WorkDescriptionImpl extends _WorkDescription {
   const _$WorkDescriptionImpl({
     this.startDate,
+    this.endDate,
     this.stage,
     this.apramStatus,
     final List<String> measurementBookUrls = const <String>[],
@@ -1674,6 +1688,8 @@ class _$WorkDescriptionImpl extends _WorkDescription {
 
   @override
   final DateTime? startDate;
+  @override
+  final DateTime? endDate;
   @override
   final WorkStage? stage;
   @override
@@ -1717,7 +1733,7 @@ class _$WorkDescriptionImpl extends _WorkDescription {
 
   @override
   String toString() {
-    return 'WorkDescription(startDate: $startDate, stage: $stage, apramStatus: $apramStatus, measurementBookUrls: $measurementBookUrls, testReportUrls: $testReportUrls, workReportUrls: $workReportUrls, certificateUrls: $certificateUrls)';
+    return 'WorkDescription(startDate: $startDate, endDate: $endDate, stage: $stage, apramStatus: $apramStatus, measurementBookUrls: $measurementBookUrls, testReportUrls: $testReportUrls, workReportUrls: $workReportUrls, certificateUrls: $certificateUrls)';
   }
 
   @override
@@ -1727,6 +1743,7 @@ class _$WorkDescriptionImpl extends _WorkDescription {
             other is _$WorkDescriptionImpl &&
             (identical(other.startDate, startDate) ||
                 other.startDate == startDate) &&
+            (identical(other.endDate, endDate) || other.endDate == endDate) &&
             (identical(other.stage, stage) || other.stage == stage) &&
             (identical(other.apramStatus, apramStatus) ||
                 other.apramStatus == apramStatus) &&
@@ -1752,6 +1769,7 @@ class _$WorkDescriptionImpl extends _WorkDescription {
   int get hashCode => Object.hash(
     runtimeType,
     startDate,
+    endDate,
     stage,
     apramStatus,
     const DeepCollectionEquality().hash(_measurementBookUrls),
@@ -1775,6 +1793,7 @@ class _$WorkDescriptionImpl extends _WorkDescription {
 abstract class _WorkDescription extends WorkDescription {
   const factory _WorkDescription({
     final DateTime? startDate,
+    final DateTime? endDate,
     final WorkStage? stage,
     final ApramStatus? apramStatus,
     final List<String> measurementBookUrls,
@@ -1786,6 +1805,8 @@ abstract class _WorkDescription extends WorkDescription {
 
   @override
   DateTime? get startDate;
+  @override
+  DateTime? get endDate;
   @override
   WorkStage? get stage;
   @override
@@ -1823,6 +1844,8 @@ mixin _$Project {
   String? get mapSnapshotUrl => throw _privateConstructorUsedError;
   Map<String, dynamic> get landDetails => throw _privateConstructorUsedError;
   Map<String, dynamic> get financials =>
+      throw _privateConstructorUsedError; // Owner details snapshot captured at creation time for quick access
+  Map<String, dynamic> get ownerDetails =>
       throw _privateConstructorUsedError; // Preliminary Description (Section 1)
   PreliminaryDescription get preliminaryDescription =>
       throw _privateConstructorUsedError; // Sanction & Compliance (Section 2)
@@ -1867,6 +1890,7 @@ abstract class $ProjectCopyWith<$Res> {
     String? mapSnapshotUrl,
     Map<String, dynamic> landDetails,
     Map<String, dynamic> financials,
+    Map<String, dynamic> ownerDetails,
     PreliminaryDescription preliminaryDescription,
     SanctionCompliance sanctionCompliance,
     AllotmentDetails allotmentDetails,
@@ -1915,6 +1939,7 @@ class _$ProjectCopyWithImpl<$Res, $Val extends Project>
     Object? mapSnapshotUrl = freezed,
     Object? landDetails = null,
     Object? financials = null,
+    Object? ownerDetails = null,
     Object? preliminaryDescription = null,
     Object? sanctionCompliance = null,
     Object? allotmentDetails = null,
@@ -1984,6 +2009,10 @@ class _$ProjectCopyWithImpl<$Res, $Val extends Project>
             financials: null == financials
                 ? _value.financials
                 : financials // ignore: cast_nullable_to_non_nullable
+                      as Map<String, dynamic>,
+            ownerDetails: null == ownerDetails
+                ? _value.ownerDetails
+                : ownerDetails // ignore: cast_nullable_to_non_nullable
                       as Map<String, dynamic>,
             preliminaryDescription: null == preliminaryDescription
                 ? _value.preliminaryDescription
@@ -2103,6 +2132,7 @@ abstract class _$$ProjectImplCopyWith<$Res> implements $ProjectCopyWith<$Res> {
     String? mapSnapshotUrl,
     Map<String, dynamic> landDetails,
     Map<String, dynamic> financials,
+    Map<String, dynamic> ownerDetails,
     PreliminaryDescription preliminaryDescription,
     SanctionCompliance sanctionCompliance,
     AllotmentDetails allotmentDetails,
@@ -2154,6 +2184,7 @@ class __$$ProjectImplCopyWithImpl<$Res>
     Object? mapSnapshotUrl = freezed,
     Object? landDetails = null,
     Object? financials = null,
+    Object? ownerDetails = null,
     Object? preliminaryDescription = null,
     Object? sanctionCompliance = null,
     Object? allotmentDetails = null,
@@ -2224,6 +2255,10 @@ class __$$ProjectImplCopyWithImpl<$Res>
             ? _value._financials
             : financials // ignore: cast_nullable_to_non_nullable
                   as Map<String, dynamic>,
+        ownerDetails: null == ownerDetails
+            ? _value._ownerDetails
+            : ownerDetails // ignore: cast_nullable_to_non_nullable
+                  as Map<String, dynamic>,
         preliminaryDescription: null == preliminaryDescription
             ? _value.preliminaryDescription
             : preliminaryDescription // ignore: cast_nullable_to_non_nullable
@@ -2283,7 +2318,7 @@ class _$ProjectImpl extends _Project {
     required this.ownerId,
     required this.blockId,
     required this.villageId,
-    this.status = ProjectStatus.draft,
+    this.status = ProjectStatus.in_progress,
     this.phase = 0,
     this.location,
     this.address,
@@ -2291,6 +2326,7 @@ class _$ProjectImpl extends _Project {
     this.mapSnapshotUrl,
     final Map<String, dynamic> landDetails = const {},
     final Map<String, dynamic> financials = const {},
+    final Map<String, dynamic> ownerDetails = const {},
     this.preliminaryDescription = const PreliminaryDescription(),
     this.sanctionCompliance = const SanctionCompliance(),
     this.allotmentDetails = const AllotmentDetails(),
@@ -2304,6 +2340,7 @@ class _$ProjectImpl extends _Project {
     this.completedAt,
   }) : _landDetails = landDetails,
        _financials = financials,
+       _ownerDetails = ownerDetails,
        _photoUrls = photoUrls,
        _documentUrls = documentUrls,
        _videoUrls = videoUrls,
@@ -2352,6 +2389,17 @@ class _$ProjectImpl extends _Project {
     if (_financials is EqualUnmodifiableMapView) return _financials;
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableMapView(_financials);
+  }
+
+  // Owner details snapshot captured at creation time for quick access
+  final Map<String, dynamic> _ownerDetails;
+  // Owner details snapshot captured at creation time for quick access
+  @override
+  @JsonKey()
+  Map<String, dynamic> get ownerDetails {
+    if (_ownerDetails is EqualUnmodifiableMapView) return _ownerDetails;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_ownerDetails);
   }
 
   // Preliminary Description (Section 1)
@@ -2420,7 +2468,7 @@ class _$ProjectImpl extends _Project {
 
   @override
   String toString() {
-    return 'Project(id: $id, name: $name, description: $description, ownerId: $ownerId, blockId: $blockId, villageId: $villageId, status: $status, phase: $phase, location: $location, address: $address, geohash: $geohash, mapSnapshotUrl: $mapSnapshotUrl, landDetails: $landDetails, financials: $financials, preliminaryDescription: $preliminaryDescription, sanctionCompliance: $sanctionCompliance, allotmentDetails: $allotmentDetails, workDescription: $workDescription, photoUrls: $photoUrls, documentUrls: $documentUrls, videoUrls: $videoUrls, originalPhotoUrls: $originalPhotoUrls, createdAt: $createdAt, updatedAt: $updatedAt, completedAt: $completedAt)';
+    return 'Project(id: $id, name: $name, description: $description, ownerId: $ownerId, blockId: $blockId, villageId: $villageId, status: $status, phase: $phase, location: $location, address: $address, geohash: $geohash, mapSnapshotUrl: $mapSnapshotUrl, landDetails: $landDetails, financials: $financials, ownerDetails: $ownerDetails, preliminaryDescription: $preliminaryDescription, sanctionCompliance: $sanctionCompliance, allotmentDetails: $allotmentDetails, workDescription: $workDescription, photoUrls: $photoUrls, documentUrls: $documentUrls, videoUrls: $videoUrls, originalPhotoUrls: $originalPhotoUrls, createdAt: $createdAt, updatedAt: $updatedAt, completedAt: $completedAt)';
   }
 
   @override
@@ -2451,6 +2499,10 @@ class _$ProjectImpl extends _Project {
             const DeepCollectionEquality().equals(
               other._financials,
               _financials,
+            ) &&
+            const DeepCollectionEquality().equals(
+              other._ownerDetails,
+              _ownerDetails,
             ) &&
             (identical(other.preliminaryDescription, preliminaryDescription) ||
                 other.preliminaryDescription == preliminaryDescription) &&
@@ -2501,6 +2553,7 @@ class _$ProjectImpl extends _Project {
     mapSnapshotUrl,
     const DeepCollectionEquality().hash(_landDetails),
     const DeepCollectionEquality().hash(_financials),
+    const DeepCollectionEquality().hash(_ownerDetails),
     preliminaryDescription,
     sanctionCompliance,
     allotmentDetails,
@@ -2539,6 +2592,7 @@ abstract class _Project extends Project {
     final String? mapSnapshotUrl,
     final Map<String, dynamic> landDetails,
     final Map<String, dynamic> financials,
+    final Map<String, dynamic> ownerDetails,
     final PreliminaryDescription preliminaryDescription,
     final SanctionCompliance sanctionCompliance,
     final AllotmentDetails allotmentDetails,
@@ -2580,7 +2634,9 @@ abstract class _Project extends Project {
   @override
   Map<String, dynamic> get landDetails;
   @override
-  Map<String, dynamic> get financials; // Preliminary Description (Section 1)
+  Map<String, dynamic> get financials; // Owner details snapshot captured at creation time for quick access
+  @override
+  Map<String, dynamic> get ownerDetails; // Preliminary Description (Section 1)
   @override
   PreliminaryDescription get preliminaryDescription; // Sanction & Compliance (Section 2)
   @override

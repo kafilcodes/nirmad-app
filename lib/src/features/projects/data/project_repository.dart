@@ -9,11 +9,13 @@ import '../domain/project_update.dart';
 import '../../../services/storage_service.dart';
 import '../../../data/firestore/firestore_dao.dart';
 import '../../../data/firestore/query_spec.dart';
+import '../../../core/providers/firebase_providers.dart';
+import '../../auth/domain/app_user.dart';
 
 class ProjectRepository {
-  ProjectRepository(this._db);
+  ProjectRepository(this._db, {FirestoreDao? dao}) : _dao = dao ?? FirestoreDao(FirebaseFirestore.instance);
   final FirebaseFirestore _db;
-  final FirestoreDao _dao = FirestoreDao(FirebaseFirestore.instance);
+  final FirestoreDao _dao;
 
   CollectionReference<Map<String, dynamic>> get _col => _db.collection('projects');
 
@@ -105,7 +107,7 @@ class ProjectRepository {
 }
 
 final projectRepositoryProvider = Provider<ProjectRepository>((ref) {
-  return ProjectRepository(FirebaseFirestore.instance);
+  return ProjectRepository(ref.watch(firestoreProvider), dao: ref.watch(firestoreDaoProvider));
 });
 
 final ownerProjectsProvider = StreamProvider.autoDispose<List<Project>>((ref) {
@@ -119,6 +121,86 @@ final ownerProjectsCachedProvider = FutureProvider.autoDispose<List<Project>>((r
   final auth = ref.watch(authStateProvider).value;
   if (auth == null) return const <Project>[];
   return ref.read(projectRepositoryProvider).fetchOwnerProjectsCached(ownerId: auth.uid, limit: 50);
+});
+
+/// Disk-first cached owner projects for instant UI, falls back to SWR fetch.
+final ownerProjectsDiskFirstProvider = FutureProvider.autoDispose<List<Project>>((ref) async {
+  final auth = ref.watch(authStateProvider).value;
+  if (auth == null) return const <Project>[];
+  final disk = ref.watch(diskCacheProvider);
+  final key = 'ownerProjects:${auth.uid}';
+  final cached = disk.getJson<List<Project>>(key, (v) {
+    final list = (v as List?) ?? const [];
+    return list.map((e) {
+      final m = (e as Map).cast<String, dynamic>();
+      return Project(
+        id: m['id'] as String,
+        name: (m['name'] as String?) ?? '',
+        ownerId: auth.uid,
+        blockId: (m['blockId'] as String?) ?? '',
+        villageId: '',
+        status: ProjectStatus.values.firstWhere(
+          (s) => s.name == ((m['status'] as String? ?? 'in_progress') == 'draft' ? 'in_progress' : (m['status'] as String? ?? 'in_progress')),
+          orElse: () => ProjectStatus.in_progress,
+        ),
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch((m['updatedAt'] as num?)?.toInt() ?? 0),
+      );
+    }).toList();
+  });
+  if (cached != null && cached.isNotEmpty) return cached;
+  return ref.read(projectRepositoryProvider).fetchOwnerProjectsCached(ownerId: auth.uid, limit: 50);
+});
+
+/// Disk-first generic nodal first-page list for immediate render; UI will filter.
+final nodalFirstPageDiskFirstProvider = FutureProvider.autoDispose<List<Project>>((ref) async {
+  final auth = ref.watch(authStateProvider).value;
+  if (auth == null) return const <Project>[];
+  if (auth.role == UserRole.projectOwner) return const <Project>[];
+  final disk = ref.watch(diskCacheProvider);
+  final cached = disk.getJson<List<Project>>('nodal:projects:first', (v) {
+    final list = (v as List?) ?? const [];
+    return list.map((e) {
+      final m = (e as Map).cast<String, dynamic>();
+  final statusKey = ((m['status'] as String?) ?? 'in_progress') == 'draft' ? 'in_progress' : ((m['status'] as String?) ?? 'in_progress');
+      return Project(
+        id: (m['id'] as String?) ?? '',
+        name: (m['name'] as String?) ?? '',
+        description: m['description'] as String?,
+        ownerId: (m['ownerId'] as String?) ?? '',
+        blockId: (m['blockId'] as String?) ?? '',
+        villageId: (m['villageId'] as String?) ?? '',
+  status: ProjectStatus.values.firstWhere((s) => s.name == statusKey, orElse: () => ProjectStatus.in_progress),
+        phase: (m['phase'] as num?)?.toInt() ?? 0,
+        createdAt: DateTime.fromMillisecondsSinceEpoch((m['createdAt'] as num?)?.toInt() ?? 0),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch((m['updatedAt'] as num?)?.toInt() ?? 0),
+      );
+    }).toList();
+  });
+  return cached ?? const <Project>[];
+});
+
+/// Disk-first project detail by ID for instant re-open, then refreshes via DAO.
+final projectByIdDiskFirstProvider = FutureProvider.autoDispose.family<Project?, String>((ref, id) async {
+  final disk = ref.watch(diskCacheProvider);
+  final cached = disk.getJson<Project>('project:detail:$id', (v) {
+    final m = (v is Map ? v.cast<String, dynamic>() : const <String, dynamic>{});
+  final statusKey = ((m['status'] as String?) ?? 'in_progress') == 'draft' ? 'in_progress' : ((m['status'] as String?) ?? 'in_progress');
+    return Project(
+      id: id,
+      name: (m['name'] as String?) ?? '',
+      description: m['description'] as String?,
+      ownerId: (m['ownerId'] as String?) ?? '',
+      blockId: (m['blockId'] as String?) ?? '',
+      villageId: (m['villageId'] as String?) ?? '',
+  status: ProjectStatus.values.firstWhere((s) => s.name == statusKey, orElse: () => ProjectStatus.in_progress),
+      phase: (m['phase'] as num?)?.toInt() ?? 0,
+      createdAt: DateTime.fromMillisecondsSinceEpoch((m['createdAt'] as num?)?.toInt() ?? 0),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch((m['updatedAt'] as num?)?.toInt() ?? 0),
+    );
+  });
+  if (cached != null) return cached;
+  return ref.read(projectRepositoryProvider).getById(id);
 });
 
 // Paged stream provider for owner's projects with adjustable limit

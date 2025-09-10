@@ -24,6 +24,7 @@ mixin _$AppUser {
   String get uid => throw _privateConstructorUsedError;
   String get email => throw _privateConstructorUsedError;
   UserRole get role => throw _privateConstructorUsedError;
+  String? get blockId => throw _privateConstructorUsedError;
   List<String> get blocks => throw _privateConstructorUsedError;
   String? get displayName => throw _privateConstructorUsedError;
   String? get assignedVillage => throw _privateConstructorUsedError;
@@ -46,6 +47,7 @@ abstract class $AppUserCopyWith<$Res> {
     String uid,
     String email,
     UserRole role,
+    String? blockId,
     List<String> blocks,
     String? displayName,
     String? assignedVillage,
@@ -70,6 +72,7 @@ class _$AppUserCopyWithImpl<$Res, $Val extends AppUser>
     Object? uid = null,
     Object? email = null,
     Object? role = null,
+    Object? blockId = freezed,
     Object? blocks = null,
     Object? displayName = freezed,
     Object? assignedVillage = freezed,
@@ -88,6 +91,10 @@ class _$AppUserCopyWithImpl<$Res, $Val extends AppUser>
                 ? _value.role
                 : role // ignore: cast_nullable_to_non_nullable
                       as UserRole,
+            blockId: freezed == blockId
+                ? _value.blockId
+                : blockId // ignore: cast_nullable_to_non_nullable
+                      as String?,
             blocks: null == blocks
                 ? _value.blocks
                 : blocks // ignore: cast_nullable_to_non_nullable
@@ -118,6 +125,7 @@ abstract class _$$AppUserImplCopyWith<$Res> implements $AppUserCopyWith<$Res> {
     String uid,
     String email,
     UserRole role,
+    String? blockId,
     List<String> blocks,
     String? displayName,
     String? assignedVillage,
@@ -141,6 +149,7 @@ class __$$AppUserImplCopyWithImpl<$Res>
     Object? uid = null,
     Object? email = null,
     Object? role = null,
+    Object? blockId = freezed,
     Object? blocks = null,
     Object? displayName = freezed,
     Object? assignedVillage = freezed,
@@ -159,6 +168,10 @@ class __$$AppUserImplCopyWithImpl<$Res>
             ? _value.role
             : role // ignore: cast_nullable_to_non_nullable
                   as UserRole,
+        blockId: freezed == blockId
+            ? _value.blockId
+            : blockId // ignore: cast_nullable_to_non_nullable
+                  as String?,
         blocks: null == blocks
             ? _value._blocks
             : blocks // ignore: cast_nullable_to_non_nullable
@@ -183,6 +196,7 @@ class _$AppUserImpl implements _AppUser {
     required this.uid,
     required this.email,
     required this.role,
+    this.blockId,
     final List<String> blocks = const <String>[],
     this.displayName,
     this.assignedVillage,
@@ -197,6 +211,8 @@ class _$AppUserImpl implements _AppUser {
   final String email;
   @override
   final UserRole role;
+  @override
+  final String? blockId;
   final List<String> _blocks;
   @override
   @JsonKey()
@@ -213,7 +229,7 @@ class _$AppUserImpl implements _AppUser {
 
   @override
   String toString() {
-    return 'AppUser(uid: $uid, email: $email, role: $role, blocks: $blocks, displayName: $displayName, assignedVillage: $assignedVillage)';
+    return 'AppUser(uid: $uid, email: $email, role: $role, blockId: $blockId, blocks: $blocks, displayName: $displayName, assignedVillage: $assignedVillage)';
   }
 
   @override
@@ -224,6 +240,7 @@ class _$AppUserImpl implements _AppUser {
             (identical(other.uid, uid) || other.uid == uid) &&
             (identical(other.email, email) || other.email == email) &&
             (identical(other.role, role) || other.role == role) &&
+            (identical(other.blockId, blockId) || other.blockId == blockId) &&
             const DeepCollectionEquality().equals(other._blocks, _blocks) &&
             (identical(other.displayName, displayName) ||
                 other.displayName == displayName) &&
@@ -238,6 +255,7 @@ class _$AppUserImpl implements _AppUser {
     uid,
     email,
     role,
+    blockId,
     const DeepCollectionEquality().hash(_blocks),
     displayName,
     assignedVillage,
@@ -262,6 +280,7 @@ abstract class _AppUser implements AppUser {
     required final String uid,
     required final String email,
     required final UserRole role,
+    final String? blockId,
     final List<String> blocks,
     final String? displayName,
     final String? assignedVillage,
@@ -275,6 +294,8 @@ abstract class _AppUser implements AppUser {
   String get email;
   @override
   UserRole get role;
+  @override
+  String? get blockId;
   @override
   List<String> get blocks;
   @override

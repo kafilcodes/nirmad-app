@@ -10,9 +10,13 @@ class DashboardWrapperPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user = ref.watch(authStateProvider).value;
+    final userAsync = ref.watch(authStateProvider);
+    if (!userAsync.hasValue) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    final user = userAsync.value;
     if (user == null) {
-      return const Scaffold(body: SizedBox.shrink());
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final isAdmin = user.role == UserRole.devAdmin;
     return isAdmin ? const ProdAdminDashboardPage() : const NodalDashboardPage();

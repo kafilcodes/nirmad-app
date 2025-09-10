@@ -1,0 +1,46 @@
+{
+  "indexes": [
+    {
+  "collectionId": "projects",
+  "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "blockId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+  "collectionId": "projects",
+  "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+  "collectionId": "updates",
+  "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "targetRoles", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "blockId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+  "collectionId": "updates",
+  "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "targetRoles", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+  "collectionId": "updates",
+  "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -7,7 +7,7 @@ class NoData extends StatelessWidget {
   final String? title;
   final String asset;
   final double maxWidth;
-  const NoData({super.key, required this.message, this.title, this.asset = 'assets/no_data.svg', this.maxWidth = 320});
+  const NoData({super.key, required this.message, this.title, this.asset = 'assets/no_projects.svg', this.maxWidth = 320});
 
   @override
   Widget build(BuildContext context) {

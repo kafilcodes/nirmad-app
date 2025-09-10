@@ -38,16 +38,29 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic> _initialValues = const {};
   // Local draft autosave
   Map<String, dynamic> _draft = {};
+  int _viewGen = 0; // bump to animate a single smooth transition after save
   // markers (not currently used in UI but kept for potential restore banners)
   // DateTime _lastChange = DateTime.now();
   // bool _restoring = true;
   // Debounce timer
   Timer? _saveDebounce;
+  StreamSubscription<fb.User?>? _authSub;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // Keep the disabled email field in sync with the live auth user
+    _authSub = fb.FirebaseAuth.instance.userChanges().listen((u) {
+      final email = (u?.email ?? '').trim();
+      if (email.isEmpty) return;
+      // Only patch email field; avoid unnecessary rebuilds
+      final currentEmail = (_initialValues['email'] as String?)?.trim() ?? '';
+      if (email == currentEmail) return;
+      _initialValues = Map<String, dynamic>.from(_initialValues)..['email'] = email;
+      _formKey.currentState?.patchValue({'email': email});
+      // No setState here to avoid double refresh; form field updates itself
+    });
   }
 
   Future<void> _load() async {
@@ -168,11 +181,8 @@ class _ProfilePageState extends State<ProfilePage> {
         await fb.FirebaseAuth.instance.currentUser?.updateDisplayName(displayName);
       }
 
-      // Notify listeners to refresh sidebar/user info by invalidating known providers
-      try {
-        final container = ProviderScope.containerOf(context, listen: false);
-        container.invalidate(authStateProvider);
-      } catch (_) {}
+  // No global provider invalidation here to avoid double refresh; unified
+  // profile provider listens to Firestore and will update the UI.
 
       // Clear local draft on successful save
       try {
@@ -190,7 +200,7 @@ class _ProfilePageState extends State<ProfilePage> {
         showProgressBar: false,
         icon: const Icon(Icons.check_circle),
       );
-      // Update initial values and reset edit state
+      // Update initial values and reset edit state (single smooth transition)
       setState(() {
         _initialValues = {
           'displayName': displayName,
@@ -206,6 +216,7 @@ class _ProfilePageState extends State<ProfilePage> {
         _editing = false;
         _dirty = false;
         _requireAllFields = false;
+        _viewGen++;
       });
     } catch (e) {
       if (!mounted) return;
@@ -225,6 +236,13 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   @override
+  void dispose() {
+    _authSub?.cancel();
+  _saveDebounce?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SingleChildScrollView(
@@ -236,9 +254,15 @@ class _ProfilePageState extends State<ProfilePage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+                  child: Consumer(builder: (context, ref, _) {
+                    final prof = ref.watch(currentUserProfileProvider);
+                    final liveUser = fb.FirebaseAuth.instance.currentUser;
+                    final displayName = (prof?.displayName ?? liveUser?.displayName ?? '').trim();
+                    final email = (prof?.email ?? liveUser?.email ?? '').trim();
+                    final displayLabel = displayName.isNotEmpty ? displayName : (email.split('@').first);
+                    return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                       InkWell(
                         borderRadius: const BorderRadius.all(Radius.circular(64)),
                         // Disable photo upload per request; rely on generated avatar
@@ -250,9 +274,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             width: 128,
                             height: 128,
                             child: Consumer(builder: (context, ref, _) {
-                              final u = fb.FirebaseAuth.instance.currentUser;
-                              final display = (u?.displayName ?? '').trim();
-                              final email = (u?.email ?? '').trim();
+                              final display = displayLabel;
                               final first = (display.isNotEmpty ? display[0] : (email.isNotEmpty ? email[0] : '?')).toUpperCase();
                               final cs = Theme.of(context).colorScheme;
                               return CircleAvatar(
@@ -260,10 +282,19 @@ class _ProfilePageState extends State<ProfilePage> {
                                 backgroundColor: cs.primary,
                                 child: Text(
                                   first,
+                                  textAlign: TextAlign.center,
+                                  textHeightBehavior: const TextHeightBehavior(
+                                    applyHeightToFirstAscent: true,
+                                    applyHeightToLastDescent: true,
+                                    leadingDistribution: TextLeadingDistribution.even,
+                                  ),
                                   style: TextStyle(
                                     fontSize: 48,
                                     fontWeight: FontWeight.w700,
                                     color: cs.onPrimary,
+                                    height: 1.0,
+                                    leadingDistribution: TextLeadingDistribution.even,
+                                    textBaseline: TextBaseline.alphabetic,
                                   ),
                                 ),
                               );
@@ -316,9 +347,7 @@ class _ProfilePageState extends State<ProfilePage> {
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
-                              (fb.FirebaseAuth.instance.currentUser?.displayName ?? '').trim().isNotEmpty
-                                  ? fb.FirebaseAuth.instance.currentUser!.displayName!
-                                  : (fb.FirebaseAuth.instance.currentUser?.email ?? 'Your Profile'),
+                              displayLabel.isNotEmpty ? displayLabel : 'Your Profile',
                               style: Theme.of(context).textTheme.titleLarge,
                               textAlign: TextAlign.center,
                               overflow: TextOverflow.ellipsis,
@@ -334,7 +363,7 @@ class _ProfilePageState extends State<ProfilePage> {
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
-                              fb.FirebaseAuth.instance.currentUser?.email ?? '-',
+                              email.isNotEmpty ? email : '-',
                               style: Theme.of(context).textTheme.bodySmall,
                               textAlign: TextAlign.center,
                               overflow: TextOverflow.ellipsis,
@@ -342,11 +371,17 @@ class _ProfilePageState extends State<ProfilePage> {
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                        ],
+            );
+          }),
                 ),
                 const SizedBox(height: 16),
-                Card(
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  child: Card(
+                    key: ValueKey('form-$_viewGen'),
                   clipBehavior: Clip.antiAlias,
                   elevation: 1,
                   child: Padding(
@@ -576,6 +611,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       }),
                     ),
                   ),
+                ),
                 ),
                 const SizedBox(height: 12),
                 Align(

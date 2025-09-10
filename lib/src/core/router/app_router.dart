@@ -6,10 +6,13 @@ import 'package:firebase_auth/firebase_auth.dart' as fb;
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/modern_login_page.dart';
+import '../../features/auth/presentation/onboarding_page.dart';
 import '../../features/dashboard/presentation/dashboard_wrapper_page.dart';
 import '../../features/owner/presentation/owner_shell.dart';
 import 'package:go_transitions/go_transitions.dart';
 import '../../core/logging/app_logger.dart';
+import '../bootstrap/bootstrap_prefetch.dart';
+import '../prefs/shared_prefs.dart';
 
 class _AuthNotifier extends ChangeNotifier {
   _AuthNotifier(Stream<dynamic> stream) {
@@ -45,6 +48,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         pageBuilder: GoTransitions.fadeUpwards,
       ),
       GoRoute(
+        path: '/onboarding',
+        name: 'onboarding',
+        builder: (context, state) => const OnboardingPage(),
+        pageBuilder: GoTransitions.fadeUpwards,
+      ),
+      GoRoute(
         path: '/',
         name: 'login',
         builder: (context, state) => const ModernLoginPage(),
@@ -69,18 +78,29 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isLoggedIn = fb.FirebaseAuth.instance.currentUser != null;
       AppLogger.i.d('Router redirect check -> loc: ${state.matchedLocation}, atLogin: $atLogin, isLoggedIn: $isLoggedIn');
       if (!isLoggedIn) {
+        // Allow onboarding while logged out
+        if (state.matchedLocation == '/' || state.matchedLocation == '/onboarding') {
+          return null;
+        }
         AppLogger.i.d('Router redirect -> not logged in, to /');
-        return atLogin ? null : '/';
+        return '/';
       }
-      // Prefer cached role-based target for instant redirects
-      final cachedTarget = ref.read(cachedRedirectPathProvider);
-      String? target = cachedTarget;
-      if (target == null) {
-        final authAsync = ref.read(authStateProvider);
-        if (authAsync.hasValue && authAsync.value != null) {
-          final role = authAsync.value!.role;
+      // Prefer live auth role over cached; fall back to cached only if auth hasn't loaded yet
+      final authAsync = ref.watch(authStateProvider);
+      String? target;
+      if (authAsync.hasValue && authAsync.value != null) {
+        final role = authAsync.value!.role;
+        // Hard guard: if user is not owner, keep them out of /owner; if owner, keep them out of /dashboard
+        if (state.matchedLocation.startsWith('/owner') && role != UserRole.projectOwner) {
+          target = '/dashboard';
+        } else if (state.matchedLocation.startsWith('/dashboard') && role == UserRole.projectOwner) {
+          target = '/owner';
+        } else {
           target = (role == UserRole.projectOwner) ? '/owner' : '/dashboard';
         }
+      } else {
+        // Use cached hint while auth is loading
+        target = ref.read(cachedRedirectPathProvider);
       }
       AppLogger.i.d('Router redirect -> target: ${target ?? '(none)'}');
       if (target != null && state.matchedLocation != target) return target;
@@ -96,13 +116,20 @@ final routerProvider = Provider<GoRouter>((ref) {
 });
 
 class _SplashGate extends ConsumerWidget {
-  const _SplashGate({Key? key}) : super(key: key);
+  const _SplashGate();
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cached = ref.read(cachedRedirectPathProvider);
+    final prefs = ref.read(sharedPrefsProvider);
+  // Fire-and-forget prefetch to warm caches
+  ref.read(bootstrapPrefetchProvider.future).ignore();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final isLoggedIn = fb.FirebaseAuth.instance.currentUser != null;
-      final target = isLoggedIn ? (cached ?? '/dashboard') : '/';
+      // If not logged in, check onboarding gate
+      final seen = prefs.getBool('onboarding_seen') ?? false;
+      final target = isLoggedIn
+          ? (cached ?? '/dashboard')
+          : (seen ? '/' : '/onboarding');
       AppLogger.i.d('SplashGate -> isLoggedIn: $isLoggedIn, cached: ${cached ?? '(none)'}, go: $target');
       if (context.mounted) context.go(target);
     });

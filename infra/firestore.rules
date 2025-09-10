@@ -9,9 +9,20 @@ service cloud.firestore {
     function isSubNodal() { return role() == 'sub_nodal'; }
     function isSuperNodal() { return role() == 'super_nodal'; }
     function myUid() { return request.auth.uid; }
+    // Normalize common alias variants to a single comparable key
+    function _normBlock(b) {
+      return (
+        b == null ? '' :
+        (lower(b) == 'nagari' || lower(b) == 'nagarí') ? 'nagri' :
+        (lower(b) == 'dhamtari (town)' || lower(b) == 'dhamtari town') ? 'dhamtari' :
+        lower(b)
+      );
+    }
     function hasBlock(blockId) {
-      return (request.auth.token.blocks != null) &&
-             (blockId in request.auth.token.blocks);
+      return (
+        (request.auth.token.blockId != null && _normBlock(request.auth.token.blockId) == _normBlock(blockId)) ||
+        (request.auth.token.blocks != null && (_normBlock(blockId) in request.auth.token.blocks.map(b, _normBlock(b))))
+      );
     }
 
     // Users: user can read/write own profile; dev admin can read/write all
@@ -35,7 +46,44 @@ service cloud.firestore {
           isDevAdmin() || (isProjectOwner() && request.resource.data.ownerId == myUid())
         );
       allow update, delete: if authed() && (
-          isDevAdmin() || (isProjectOwner() && resource.data.ownerId == myUid())
+          // Full control
+          isDevAdmin() || isSuperNodal() ||
+          // Owner: limited fields only
+          (
+            isProjectOwner() && resource.data.ownerId == myUid() &&
+            let diff = request.resource.data.diff(resource.data);
+            // Only allow updating status, description, workDescription.stage, and updatedAt
+            diff.changedKeys().hasOnly(['status','description','workDescription','updatedAt']) &&
+            // If workDescription changed, only stage may change within it
+            (
+              (
+                (request.resource.data.workDescription == null && resource.data.workDescription == null) ||
+                (
+                  (request.resource.data.workDescription == null ? {} : request.resource.data.workDescription)
+                    .diff(resource.data.workDescription == null ? {} : resource.data.workDescription)
+                    .changedKeys()
+                    .hasOnly(['stage'])
+                )
+              )
+            )
+          ) ||
+          // Sub-nodal: limited fields for projects within their block
+          (
+            isSubNodal() && hasBlock(resource.data.blockId) &&
+            let diff2 = request.resource.data.diff(resource.data);
+            diff2.changedKeys().hasOnly(['status','description','workDescription','updatedAt']) &&
+            (
+              (
+                (request.resource.data.workDescription == null && resource.data.workDescription == null) ||
+                (
+                  (request.resource.data.workDescription == null ? {} : request.resource.data.workDescription)
+                    .diff(resource.data.workDescription == null ? {} : resource.data.workDescription)
+                    .changedKeys()
+                    .hasOnly(['stage'])
+                )
+              )
+            )
+          )
         );
 
       // updates subcollection: align with project doc permissions
@@ -45,8 +93,15 @@ service cloud.firestore {
           (isProjectOwner() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == myUid()) ||
           (isSubNodal() && hasBlock(get(/databases/$(database)/documents/projects/$(projectId)).data.blockId))
         );
-        allow create, update, delete: if authed() && (
-          isDevAdmin() || (isProjectOwner() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == myUid())
+        // Allow create by: dev_admin, super_nodal, project_owner, and sub_nodal (within block)
+        allow create: if authed() && (
+          isDevAdmin() || isSuperNodal() ||
+          (isProjectOwner() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == myUid()) ||
+          (isSubNodal() && hasBlock(get(/databases/$(database)/documents/projects/$(projectId)).data.blockId))
+        );
+        // Allow update/delete by dev_admin, super_nodal, or project owner
+        allow update, delete: if authed() && (
+          isDevAdmin() || isSuperNodal() || (isProjectOwner() && get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId == myUid())
         );
       }
     }

@@ -35,12 +35,16 @@ import '../../../shared/widgets/no_data.dart';
 import '../../../shared/widgets/illustrated_background.dart';
 import '../../../shared/widgets/date_form_field.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/domain/app_user.dart';
 import '../../../utils/geohash.dart';
 import '../../../core/prefs/shared_prefs.dart';
 import '../../../services/local_draft_service.dart';
 import 'package:toastification/toastification.dart';
 import '../../../core/ui/responsive_policies.dart';
 import 'package:animations/animations.dart';
+import 'package:go_router/go_router.dart';
+import '../../../shared/data/local_gp_data.dart' as gpdata;
+import 'package:gap/gap.dart';
 // StateProvider is available from the main riverpod import above
 
 class _SchemeItem {
@@ -89,6 +93,24 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
 
   @override
   Widget build(BuildContext context) {
+  // Hard guard: only Project Owners may access this shell
+  final userAsync = ref.watch(authStateProvider);
+  if (!userAsync.hasValue) {
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+  final user = userAsync.value;
+  if (user == null) {
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+  if (user.role != UserRole.projectOwner) {
+    // Defer navigation to the next frame to avoid build-time setState
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        context.go('/dashboard');
+      }
+    });
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
   // Adapt sidebar when resizing, unless user has manually toggled it
   final screenW = MediaQuery.of(context).size.width;
   final desiredOpen = screenW >= 900;
@@ -145,8 +167,7 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                         )
                       : const SizedBox.shrink(),
                 ),
-              if (!overlaySidebar && _sidebarOpen)
-                VerticalDivider(width: 1, color: Theme.of(context).dividerColor),
+              // Removed sidebar divider for flat, seamless design
               Expanded(
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 250),
@@ -221,6 +242,14 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                                             onPressed: () => setState(() => _successProject = null),
                                             icon: const Icon(CupertinoIcons.xmark_circle),
                                             label: const Text('Close'),
+                                            style: OutlinedButton.styleFrom(
+                                              alignment: Alignment.center,
+                                              textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                                    height: 1.0,
+                                                    leadingDistribution: TextLeadingDistribution.even,
+                                                    textBaseline: TextBaseline.alphabetic,
+                                                  ),
+                                            ),
                                           );
                                           final viewBtn = FilledButton.icon(
                                             onPressed: () {
@@ -233,6 +262,14 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                                             },
                                             icon: const Icon(CupertinoIcons.arrow_right_circle_fill),
                                             label: const Text('View Project'),
+                                            style: FilledButton.styleFrom(
+                                              alignment: Alignment.center,
+                                              textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                                    height: 1.0,
+                                                    leadingDistribution: TextLeadingDistribution.even,
+                                                    textBaseline: TextBaseline.alphabetic,
+                                                  ),
+                                            ),
                                           );
                                           if (wide) {
                                             return Row(
@@ -280,7 +317,7 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                 child: Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Material(
-                    elevation: 8,
+                    elevation: 0,
                     borderRadius: BorderRadius.circular(16),
                     clipBehavior: Clip.antiAlias,
                     child: AppSidebar(
@@ -319,7 +356,7 @@ class _ProjectsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-  final cached = ref.watch(ownerProjectsCachedProvider);
+  final cached = ref.watch(ownerProjectsDiskFirstProvider);
   final projectsAsync = ref.watch(ownerProjectsProvider);
   final query = ref.watch(projectsSearchQueryProvider);
   return Scaffold(
@@ -339,7 +376,7 @@ class _ProjectsPage extends ConsumerWidget {
           return const NoData(
             title: 'Something went wrong',
             message: 'We couldn\'t load your projects right now.',
-            asset: 'assets/server_error.svg',
+            asset: 'assets/server_down.svg',
           );
         },
         data: (cachedProjects) {
@@ -414,8 +451,47 @@ class _ProjectsPage extends ConsumerWidget {
             lateProjects.sort(byUrgency);
             pendingProjects.sort(byUrgency);
 
+            String greetFor(DateTime now) {
+              // Convert to IST (UTC+5:30)
+              final ist = now.toUtc().add(const Duration(hours: 5, minutes: 30));
+              final h = ist.hour;
+              if (h < 12) return 'Good Morning';
+              if (h < 17) return 'Good Afternoon';
+              return 'Good Evening';
+            }
+            String firstNameFrom(String? displayName, String email) {
+              final n = (displayName ?? '').trim();
+              if (n.isNotEmpty) {
+                final parts = n.split(' ');
+                return parts.first;
+              }
+              final local = email.split('@').first;
+              return local;
+            }
+            final prof = ref.watch(currentUserProfileProvider);
+            final greetName = firstNameFrom(prof?.displayName, prof?.email ?? '');
+            final greetingPhrase = greetFor(DateTime.now());
+
             return CustomScrollView(
               slivers: [
+                // Greeting above Your Projects (mobile-first spacing)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Builder(builder: (context) {
+                        final cs = Theme.of(context).colorScheme;
+                        return Text.rich(
+                          TextSpan(children: [
+                            TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
+                            TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                          ]),
+                        );
+                      }),
+                    ),
+                  ),
+                ),
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
@@ -450,7 +526,7 @@ class _ProjectsPage extends ConsumerWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const Gap(12),
                         LayoutBuilder(builder: (context, cc) {
                           final compact = cc.maxWidth < 720;
                           final metrics = [
@@ -470,7 +546,7 @@ class _ProjectsPage extends ConsumerWidget {
                             ],
                           );
                         }),
-                        const SizedBox(height: 12),
+                        const Gap(12),
                         // Pie chart removed per spec to keep the page focused and clean.
                       ],
                     ),
@@ -507,7 +583,8 @@ class _ProjectsPage extends ConsumerWidget {
                               crossAxisCount: cols,
                               crossAxisSpacing: gap,
                               mainAxisSpacing: gap,
-                              childAspectRatio: 1.4,
+                              // Slightly taller cards reduce vertical overflow risk on small widths
+                              childAspectRatio: 1.2,
                             ),
                             delegate: SliverChildBuilderDelegate(
                               (context, index) {
@@ -549,7 +626,8 @@ class _ProjectsPage extends ConsumerWidget {
                               crossAxisCount: cols,
                               crossAxisSpacing: gap,
                               mainAxisSpacing: gap,
-                              childAspectRatio: 1.4,
+                              // Slightly taller cards reduce vertical overflow risk on small widths
+                              childAspectRatio: 1.2,
                             ),
                             delegate: SliverChildBuilderDelegate(
                               (context, index) {
@@ -626,11 +704,11 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   // Focus nodes for validation autofocus
   final _fnName = FocusNode();
   final _fnAddress = FocusNode();
-  final _fnVillage = FocusNode();
-  final _fnSarpanchName = FocusNode();
+  // final _fnVillage = FocusNode(); // replaced by dropdown
+  // final _fnSarpanchName = FocusNode(); // name is auto-filled and read-only now
   final _fnSarpanchMobile = FocusNode();
-  final _fnGramPanchayat = FocusNode();
-  final _fnSecretaryName = FocusNode();
+  // final _fnGramPanchayat = FocusNode(); // removed with Basic Details dropdown
+  // final _fnSecretaryName = FocusNode(); // name is auto-filled and read-only now
   final _fnSecretaryMobile = FocusNode();
   final _fnSubEngineerName = FocusNode();
   final _fnSubEngineerMobile = FocusNode();
@@ -639,7 +717,6 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   final _fnPlanHead = FocusNode();
   final _fnTechApprovalNo = FocusNode();
   final _fnAdminApprovalNo = FocusNode();
-  final _fnApprovedAmount = FocusNode();
   final _fnBankName = FocusNode();
   final _fnAccountNumber = FocusNode();
   final _fnBranch = FocusNode();
@@ -690,9 +767,13 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   final _ifscCtrl = TextEditingController();
   final _bankNameCtrl = TextEditingController();
   String? _selectedBankName;
+  // Optional installments visibility
+  bool _showInstallment2 = false;
+  bool _showInstallment3 = false;
   
   // Section 4: Work Description controllers
   final _startDateCtrl = TextEditingController();
+  final _endDateCtrl = TextEditingController();
   final _fnStartDate = FocusNode();
   // New: Project deadline
   final _deadlineCtrl = TextEditingController();
@@ -828,11 +909,27 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     _branchCtrl.dispose();
     _ifscCtrl.dispose();
   _bankNameCtrl.dispose();
-    _startDateCtrl.dispose();
+  _startDateCtrl.dispose();
+  _endDateCtrl.dispose();
   _deadlineCtrl.dispose();
   _saveTimer?.cancel();
   _autosaveBadgeTimer?.cancel();
     super.dispose();
+  }
+
+  IconData _stageIcon(WorkStage s) {
+    switch (s) {
+      case WorkStage.layout:
+        return CupertinoIcons.map;
+      case WorkStage.plinth:
+        return Icons.foundation;
+      case WorkStage.lintel:
+        return Icons.architecture;
+      case WorkStage.finishing:
+        return Icons.brush;
+      case WorkStage.completed:
+        return CupertinoIcons.check_mark_circled;
+    }
   }
 
   // Responsive helpers: stack on narrow screens, two-up on wide screens
@@ -1020,7 +1117,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     _branchCtrl.text = (d['branch'] as String?) ?? _branchCtrl.text;
     _ifscCtrl.text = (d['ifsc'] as String?) ?? _ifscCtrl.text;
     // Work
-    _startDateCtrl.text = (d['workStartDate'] as String?) ?? _startDateCtrl.text;
+  _startDateCtrl.text = (d['workStartDate'] as String?) ?? _startDateCtrl.text;
+  _endDateCtrl.text = (d['workEndDate'] as String?) ?? _endDateCtrl.text;
   _deadlineCtrl.text = (d['deadline'] as String?) ?? _deadlineCtrl.text;
     final ws = d['workStage'] as String?;
     if (ws != null) {
@@ -1053,10 +1151,19 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         ..addAll(ln.whereType<String>());
     }
     // Step index
-    final step = d['currentStep'];
+  final step = d['currentStep'];
     if (step is int) {
       _currentStep = step.clamp(0, 3);
     }
+  // Reveal optional installments if any fields were entered
+  _showInstallment2 = _installment2AmountCtrl.text.trim().isNotEmpty ||
+    _installment2DateCtrl.text.trim().isNotEmpty ||
+    _installment2ReceivedAmountCtrl.text.trim().isNotEmpty ||
+    _installment2ReceivedDateCtrl.text.trim().isNotEmpty;
+  _showInstallment3 = _installment3AmountCtrl.text.trim().isNotEmpty ||
+    _installment3DateCtrl.text.trim().isNotEmpty ||
+    _installment3ReceivedAmountCtrl.text.trim().isNotEmpty ||
+    _installment3ReceivedDateCtrl.text.trim().isNotEmpty;
   setState(() { _didRestoreDraft = true; });
   }
 
@@ -1105,6 +1212,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   'ifsc': _ifscCtrl.text.trim(),
   // Work
   'workStartDate': _startDateCtrl.text.trim(),
+  'workEndDate': _endDateCtrl.text.trim(),
   'deadline': _deadlineCtrl.text.trim(),
   'workStage': _selectedWorkStage?.name,
   'apramStatus': _selectedApramStatus?.name,
@@ -1132,7 +1240,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       );
 
   // Section 3: received status options
-  static const receivedStatusOptions = <String>['Received', 'Not Received', 'Not Applicable', 'Not Required Now'];
+  static const receivedStatusOptions = <String>['Received', 'Not Received', 'Not Applicable'];
   String? _installment1Status;
   String? _installment2Status;
   String? _installment3Status;
@@ -1164,7 +1272,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     final lakh = (n % 10000000) ~/ 100000;
     final thousand = (n % 100000) ~/ 1000;
     final hundred = n % 1000;
-    if (crore > 0) parts.add('${_twoDigits(crore)} crore');
+    // Use three-digits for crores to support values >= 100 crores safely
+    if (crore > 0) parts.add('${crore < 100 ? _twoDigits(crore) : _threeDigits(crore)} crore');
     if (lakh > 0) parts.add('${_twoDigits(lakh)} lakh');
     if (thousand > 0) parts.add('${_twoDigits(thousand)} thousand');
     if (hundred > 0) parts.add(_threeDigits(hundred));
@@ -1185,7 +1294,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
 
   // Icon color by content-type
   (IconData, Color) _iconForContentType(String ct, BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+  final cs = Theme.of(context).colorScheme;
     if (ct.startsWith('image/')) return (Icons.image, cs.primary);
     if (ct == 'application/pdf') return (Icons.picture_as_pdf, Colors.redAccent);
     if (ct.contains('sheet') || ct.contains('excel') || ct == 'text/csv') return (Icons.table_chart, Colors.green);
@@ -1287,7 +1396,16 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   }
 
   // Common amount field with optional required validation and helper words
-  Widget _amountField(TextEditingController controller, String label, {bool required = false, FocusNode? focusNode}) {
+  // Supports extraValidator for cross-field rules (e.g., sum of installments ≤ approved amount)
+  Widget _amountField(
+    TextEditingController controller,
+    String label, {
+    bool required = false,
+    FocusNode? focusNode,
+    String? Function(String?)? extraValidator,
+  }) {
+    // Max allowed amount: 50 crores (₹50,00,00,000)
+    const maxRupees = 500000000; // 50 * 1 crore (10,000,000)
     final words = _amountToWordsString(controller.text);
     final decoration = required
         ? _req(label, prefixIcon: const Icon(Icons.currency_rupee))
@@ -1296,9 +1414,11 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: focusNode,
           controller: controller,
           decoration: decoration,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
           keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[0-9,\.]")),
@@ -1310,7 +1430,13 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             if (required && t.isEmpty) return 'Required';
             if (t.isEmpty) return null;
             final norm = t.replaceAll(',', '');
-            if (double.tryParse(norm) == null) return 'Enter valid amount';
+            final parsed = double.tryParse(norm);
+            if (parsed == null) return 'Enter valid amount';
+            if (parsed > maxRupees) return 'Max ₹50,00,00,000 (50 crores)';
+            if (extraValidator != null) {
+              final er = extraValidator(v);
+              if (er != null) return er;
+            }
             return null;
           },
         ),
@@ -1341,7 +1467,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     }
     switch (step) {
       case 0:
-  focus(_fnGramPanchayat);
+  focus(_fnSarpanchMobile);
         break;
       case 1:
         focus(_fnSanctionDept);
@@ -1376,10 +1502,20 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         return;
       }
   final pos = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
-      setState(() {
-        _lat = pos.latitude;
-        _lng = pos.longitude;
-      });
+  // Enforce location within Chhattisgarh bounds (approx): lat 17.78..24.10, lng 80.22..84.40
+  const cgMinLat = 17.78, cgMaxLat = 24.10, cgMinLng = 80.22, cgMaxLng = 84.40;
+  final lat = pos.latitude, lng = pos.longitude;
+  final inCG = lat >= cgMinLat && lat <= cgMaxLat && lng >= cgMinLng && lng <= cgMaxLng;
+  if (!inCG) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please capture a location within Chhattisgarh.')));
+    }
+  } else {
+    setState(() {
+      _lat = lat;
+      _lng = lng;
+    });
+  }
       // Recenter map view when coordinates update
       try {
         if (_lat != null && _lng != null) {
@@ -1752,28 +1888,16 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   }
 
   Widget _buildPreliminarySection() {
-    return Column(children: [
-      const SizedBox(height: 8),
-      // Reordered by common entry flow: Gram Panchayat first, then people (each with name+mobile pair)
-      _singleOrEmpty(
+  final basicValid = (_selectedBlockId?.isNotEmpty ?? false) &&
+    (_gramPanchayatCtrl.text.trim().isNotEmpty) &&
+    (_selectedVillageName?.isNotEmpty ?? false);
+  final content = Column(children: [
+    const SizedBox(height: 8),
+    _pair(
         TextFormField(
-          focusNode: _fnGramPanchayat,
-          controller: _gramPanchayatCtrl,
-          textCapitalization: TextCapitalization.words,
-          decoration: _req('Gram Panchayat (ग्राम पंचायत)', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\(\)\u0900-\u097F]")),
-            LengthLimitingTextInputFormatter(60),
-          ],
-          onChanged: (_) => _saveDraftLocally(),
-          validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
-        ),
-      ),
-      const SizedBox(height: 8),
-      _pair(
-        TextFormField(
-          focusNode: _fnSarpanchName,
+          textAlignVertical: TextAlignVertical.center,
           controller: _sarpanchNameCtrl,
+      enabled: false,
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
@@ -1783,6 +1907,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
         ),
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSarpanchMobile,
           controller: _sarpanchMobileCtrl,
           decoration: _req('Sarpanch Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 '),
@@ -1794,8 +1919,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       const SizedBox(height: 8),
       _pair(
         TextFormField(
-          focusNode: _fnSecretaryName,
+          textAlignVertical: TextAlignVertical.center,
           controller: _secretaryNameCtrl,
+      enabled: false,
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
@@ -1805,6 +1931,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
         ),
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSecretaryMobile,
           controller: _secretaryMobileCtrl,
           decoration: _req('Secretary Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 '),
@@ -1816,6 +1943,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       const SizedBox(height: 8),
       _pair(
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSubEngineerName,
           controller: _subEngineerNameCtrl,
           textCapitalization: TextCapitalization.words,
@@ -1827,6 +1955,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
         ),
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSubEngineerMobile,
           controller: _subEngineerMobileCtrl,
           decoration: _req('Sub Engineer Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 '),
@@ -1835,7 +1964,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           validator: (v){ final s=(v??'').trim(); if(s.length!=10) return '10 digits'; return null; },
         ),
       ),
-    ]);
+  ]);
+  return AbsorbPointer(absorbing: !basicValid, child: Opacity(opacity: basicValid ? 1 : 0.5, child: content));
   }
 
   Widget _buildSanctionSection() {
@@ -1843,6 +1973,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       const SizedBox(height: 8),
       _pair(
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSanctionDept,
           controller: _sanctioningDepartmentCtrl,
           decoration: _req('Sanctioning Department (स्वीकृत विभाग)', prefixIcon: const Icon(CupertinoIcons.checkmark_seal)),
@@ -1893,6 +2024,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       const SizedBox(height: 8),
       _pair(
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnItem,
           controller: _itemCtrl,
           decoration: _req('Sanctioned Work Name - entry', prefixIcon: const Icon(CupertinoIcons.doc_text)),
@@ -1905,6 +2037,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Work Name' : null,
         ),
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnPlanHead,
           controller: _planHeadCtrl,
           decoration: _req('Plan Head (योगना शीर्ष)', prefixIcon: const Icon(CupertinoIcons.list_bullet)),
@@ -1920,6 +2053,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       const SizedBox(height: 8),
       _pair(
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnTechApprovalNo,
           controller: _technicalApprovalNoCtrl,
           decoration: _req('Technical Approval No. (तकनीकी स्वीकृति नंबर)', prefixIcon: const Icon(CupertinoIcons.number)),
@@ -1930,6 +2064,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         DateFormField(
           controller: _technicalApprovalDateCtrl,
           label: 'Technical Approval Date (YYYY-MM-DD)',
+          required: true,
           validator: (v){
             final s = (v ?? '').trim();
             if (s.isEmpty) return 'Required';
@@ -1943,6 +2078,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       const SizedBox(height: 8),
       _pair(
         TextFormField(
+          textAlignVertical: TextAlignVertical.center,
           focusNode: _fnAdminApprovalNo,
           controller: _adminApprovalNoCtrl,
           decoration: _req('Admin Approval No. (प्रशासनिक स्वीकृति नंबर)', prefixIcon: const Icon(CupertinoIcons.checkmark_shield)),
@@ -1953,6 +2089,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         DateFormField(
           controller: _adminApprovalDateCtrl,
           label: 'Admin Approval Date (YYYY-MM-DD)',
+          required: true,
           validator: (v){
             final s = (v ?? '').trim();
             if (s.isEmpty) return 'Required';
@@ -1963,11 +2100,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           },
         ),
       ),
-      const SizedBox(height: 8),
-      _singleOrEmpty(
-  _amountField(_approvedAmountCtrl, 'Approved Amount (स्वीकृत राशि) * (required)', required: true, focusNode: _fnApprovedAmount),
-      ),
-      const SizedBox(height: 12),
+  const SizedBox(height: 12),
       Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -2033,64 +2166,154 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   }
 
   Widget _buildAllotmentSection() {
+    DateTime? _parse(String s) { final t=s.trim(); if(t.isEmpty) return null; try{ return DateTime.parse(t);}catch(_){return null;} }
+    String? sumErrorFor(String? _) {
+      num parseNum(String s){ final t=s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t) ?? 0; }
+      final approved = parseNum(_approvedAmountCtrl.text);
+      final a1 = parseNum(_installment1AmountCtrl.text);
+      final a2 = _showInstallment2 ? parseNum(_installment2AmountCtrl.text) : 0;
+      final a3 = _showInstallment3 ? parseNum(_installment3AmountCtrl.text) : 0;
+      if (approved <= 0) return null; // defer error to required validator
+      if ((a1 + a2 + a3) > approved) {
+        return 'Sum of installments exceeds Approved Amount / Total Project Cost';
+      }
+      return null;
+    }
     return Column(children: [
       const SizedBox(height: 8),
+      _singleOrEmpty(
+        _amountField(
+          _approvedAmountCtrl,
+          'Approved Amount / Total Project Cost (स्वीकृत राशि / कुल परियोजना लागत) *',
+          required: true,
+          extraValidator: sumErrorFor,
+        ),
+      ),
+      const SizedBox(height: 8),
       _pair(
-        _amountField(_installment1AmountCtrl, 'Installment 1 Amount'),
-        DateFormField(controller: _installment1DateCtrl, label: 'Installment 1 Date (YYYY-MM-DD)'),
+        _amountField(
+          _installment1AmountCtrl,
+          'Installment 1 Amount * (required)',
+          required: true,
+          extraValidator: sumErrorFor,
+        ),
+        DateFormField(
+          controller: _installment1DateCtrl,
+          label: 'Installment 1 Date (YYYY-MM-DD)',
+          required: true,
+        ),
       ),
       const SizedBox(height: 8),
       DropdownButtonFormField<String>(
-        initialValue: _installment1Status,
-        items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+        value: _installment1Status ?? 'Not Received',
+        items: const ['Received','Not Received']
+            .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+            .toList(),
         decoration: const InputDecoration(labelText: 'Installment 1 Received Status'),
         onChanged: (v) => setState(() => _installment1Status = v),
       ),
       const SizedBox(height: 8),
-      if (_installment1Status == 'Received' || _installment1Status == null)
+      if (_installment1Status == 'Received')
         _pair(
           _amountField(_installment1ReceivedAmountCtrl, 'Installment 1 Received Amount'),
           DateFormField(controller: _installment1ReceivedDateCtrl, label: 'Installment 1 Received Date (YYYY-MM-DD)'),
         )
-      else Align(alignment: Alignment.centerLeft, child: Text('Skipped: ${_installment1Status!}', style: Theme.of(context).textTheme.bodySmall)),
+      else Align(alignment: Alignment.centerLeft, child: Text('Skipped: ${_installment1Status ?? 'Not Received'}', style: Theme.of(context).textTheme.bodySmall)),
       const SizedBox(height: 12),
-      _pair(
-        _amountField(_installment2AmountCtrl, 'Installment 2 Amount'),
-        DateFormField(controller: _installment2DateCtrl, label: 'Installment 2 Date (YYYY-MM-DD)'),
-      ),
-      const SizedBox(height: 8),
-      DropdownButtonFormField<String>(
-        initialValue: _installment2Status,
-        items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-        decoration: const InputDecoration(labelText: 'Installment 2 Received Status'),
-        onChanged: (v) => setState(() => _installment2Status = v),
-      ),
-      const SizedBox(height: 8),
-      if (_installment2Status == 'Received' || _installment2Status == null)
+    if (!_showInstallment2)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(onPressed: () => setState(() => _showInstallment2 = true), icon: const Icon(CupertinoIcons.plus_circle), label: const Text('Add Installment 2')),
+        ),
+      if (_showInstallment2) ...[
         _pair(
-          _amountField(_installment2ReceivedAmountCtrl, 'Installment 2 Received Amount'),
-          DateFormField(controller: _installment2ReceivedDateCtrl, label: 'Installment 2 Received Date (YYYY-MM-DD)'),
-        )
-      else Align(alignment: Alignment.centerLeft, child: Text('Skipped: ${_installment2Status!}', style: Theme.of(context).textTheme.bodySmall)),
-      const SizedBox(height: 12),
-      _pair(
-        _amountField(_installment3AmountCtrl, 'Installment 3 Amount'),
-        DateFormField(controller: _installment3DateCtrl, label: 'Installment 3 Date (YYYY-MM-DD)'),
-      ),
-      const SizedBox(height: 8),
-      DropdownButtonFormField<String>(
-        initialValue: _installment3Status,
-        items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-        decoration: const InputDecoration(labelText: 'Installment 3 Received Status'),
-        onChanged: (v) => setState(() => _installment3Status = v),
-      ),
-      const SizedBox(height: 8),
-      if (_installment3Status == 'Received' || _installment3Status == null)
+      _amountField(_installment2AmountCtrl, 'Installment 2 Amount', extraValidator: sumErrorFor),
+          DateFormField(
+            controller: _installment2DateCtrl,
+            label: 'Installment 2 Date (YYYY-MM-DD)',
+            firstDate: _parse(_installment1DateCtrl.text),
+          ),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: _installment2Status,
+          items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+          decoration: const InputDecoration(labelText: 'Installment 2 Received Status'),
+          onChanged: (v) => setState(() => _installment2Status = v),
+        ),
+        const SizedBox(height: 8),
+        if (_installment2Status == 'Received')
+          _pair(
+            _amountField(_installment2ReceivedAmountCtrl, 'Installment 2 Received Amount'),
+            DateFormField(controller: _installment2ReceivedDateCtrl, label: 'Installment 2 Received Date (YYYY-MM-DD)'),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () {
+              setState(() {
+                _showInstallment2 = false;
+                _installment2AmountCtrl.clear();
+                _installment2DateCtrl.clear();
+                _installment2ReceivedAmountCtrl.clear();
+                _installment2ReceivedDateCtrl.clear();
+                _installment2Status = null;
+              });
+              _saveDraftLocally();
+            },
+            icon: const Icon(CupertinoIcons.minus_circle),
+            label: const Text('Remove Installment 2'),
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+    if (!_showInstallment3)
+        Align(
+          alignment: Alignment.centerLeft,
+      child: TextButton.icon(onPressed: () => setState(() { if (!_showInstallment2) _showInstallment2 = true; _showInstallment3 = true; }), icon: const Icon(CupertinoIcons.plus_circle), label: const Text('Add Installment 3')),
+        ),
+      if (_showInstallment3) ...[
         _pair(
-          _amountField(_installment3ReceivedAmountCtrl, 'Installment 3 Received Amount'),
-          DateFormField(controller: _installment3ReceivedDateCtrl, label: 'Installment 3 Received Date (YYYY-MM-DD)'),
-        )
-      else Align(alignment: Alignment.centerLeft, child: Text('Skipped: ${_installment3Status!}', style: Theme.of(context).textTheme.bodySmall)),
+      _amountField(_installment3AmountCtrl, 'Installment 3 Amount', extraValidator: sumErrorFor),
+          DateFormField(
+            controller: _installment3DateCtrl,
+            label: 'Installment 3 Date (YYYY-MM-DD)',
+            firstDate: _parse(_installment2DateCtrl.text) ?? _parse(_installment1DateCtrl.text),
+          ),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: _installment3Status,
+          items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+          decoration: const InputDecoration(labelText: 'Installment 3 Received Status'),
+          onChanged: (v) => setState(() => _installment3Status = v),
+        ),
+        const SizedBox(height: 8),
+        if (_installment3Status == 'Received')
+          _pair(
+            _amountField(_installment3ReceivedAmountCtrl, 'Installment 3 Received Amount'),
+            DateFormField(controller: _installment3ReceivedDateCtrl, label: 'Installment 3 Received Date (YYYY-MM-DD)'),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () {
+              setState(() {
+                _showInstallment3 = false;
+                _installment3AmountCtrl.clear();
+                _installment3DateCtrl.clear();
+                _installment3ReceivedAmountCtrl.clear();
+                _installment3ReceivedDateCtrl.clear();
+                _installment3Status = null;
+              });
+              _saveDraftLocally();
+            },
+            icon: const Icon(CupertinoIcons.minus_circle),
+            label: const Text('Remove Installment 3'),
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
       const SizedBox(height: 16),
       Align(alignment: Alignment.centerLeft, child: Text('Bank Details', style: Theme.of(context).textTheme.titleSmall)),
       const SizedBox(height: 8),
@@ -2098,7 +2321,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         TextFormField(
           focusNode: _fnBankName,
           controller: _bankNameCtrl,
-          decoration: const InputDecoration(labelText: 'Bank Name', prefixIcon: Icon(CupertinoIcons.building_2_fill)),
+          decoration: _req('Bank Name', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
@@ -2110,7 +2333,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         TextFormField(
           focusNode: _fnAccountNumber,
           controller: _accountNumberCtrl,
-          decoration: const InputDecoration(labelText: 'Account Number', prefixIcon: Icon(CupertinoIcons.number)),
+          decoration: _req('Account Number', prefixIcon: const Icon(CupertinoIcons.number)),
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(18)],
           validator: (v){ final s=(v??'').trim(); if(s.isEmpty) return 'Enter Account Number'; if(s.length<6) return 'Too short'; return null; },
@@ -2121,7 +2344,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         TextFormField(
           focusNode: _fnBranch,
           controller: _branchCtrl,
-          decoration: const InputDecoration(labelText: 'Branch', prefixIcon: Icon(CupertinoIcons.building_2_fill)),
+          decoration: _req('Branch', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\s\-\u0900-\u097F]")),
@@ -2132,7 +2355,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         TextFormField(
           focusNode: _fnIFSC,
           controller: _ifscCtrl,
-          decoration: const InputDecoration(labelText: 'IFSC Code', prefixIcon: Icon(CupertinoIcons.qrcode)),
+          decoration: _req('IFSC Code', prefixIcon: const Icon(CupertinoIcons.qrcode)),
           inputFormatters: [FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')), LengthLimitingTextInputFormatter(11)],
           onChanged: (_) { final t = _ifscCtrl.text.toUpperCase(); if (_ifscCtrl.text != t) { final sel = _ifscCtrl.selection; _ifscCtrl.value = TextEditingValue(text: t, selection: sel); } },
           validator: (v){ final s=(v??'').trim(); if(s.isEmpty) return 'Enter IFSC'; if(s.length!=11) return '11 characters'; return null; },
@@ -2148,44 +2371,95 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Helpers for cross-field validation
+            // Parse YYYY-MM-DD into DateTime (local) or null
+            // Keep lightweight and resilient to empty/invalid inputs
+            
             DateFormField(
               focusNode: _fnStartDate,
               controller: _startDateCtrl,
               label: 'Work Start Date (YYYY-MM-DD)',
+              lastDate: (() {
+                try {
+                  final s = _endDateCtrl.text.trim();
+                  if (s.isEmpty) return null;
+                  return DateTime.parse(s);
+                } catch (_) { return null; }
+              })(),
               validator: (v){
                 final s = (v ?? '').trim();
-                if (s.isEmpty) return null;
+                if (s.isEmpty) return 'Required';
                 final re = RegExp(r'^\d{4}-\d{2}-\d{2}$');
                 if (!re.hasMatch(s)) return 'Use YYYY-MM-DD';
-                try { DateTime.parse(s); } catch (_){ return 'Invalid date'; }
+                DateTime d;
+                try { d = DateTime.parse(s); } catch (_){ return 'Invalid date'; }
+                // Cross-field: start <= end (when end provided)
+                final se = _endDateCtrl.text.trim();
+                if (se.isNotEmpty) {
+                  try {
+                    final e = DateTime.parse(se);
+                    if (d.isAfter(e)) return 'Start must be on or before End';
+                  } catch (_) {}
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 8),
+            DateFormField(
+              controller: _endDateCtrl,
+              label: 'Work End Date (YYYY-MM-DD)',
+              firstDate: (() {
+                try {
+                  final s = _startDateCtrl.text.trim();
+                  if (s.isEmpty) return null;
+                  return DateTime.parse(s);
+                } catch (_) { return null; }
+              })(),
+              validator: (v){
+                final s = (v ?? '').trim();
+                if (s.isEmpty) return 'Required';
+                final re = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+                if (!re.hasMatch(s)) return 'Use YYYY-MM-DD';
+                DateTime e;
+                try { e = DateTime.parse(s); } catch (_){ return 'Invalid date'; }
+                // Cross-field: end >= start (when start provided)
+                final ss = _startDateCtrl.text.trim();
+                if (ss.isNotEmpty) {
+                  try {
+                    final d = DateTime.parse(ss);
+                    if (e.isBefore(d)) return 'End must be on or after Start';
+                  } catch (_) {}
+                }
                 return null;
               },
             ),
             const SizedBox(height: 8),
             DateFormField(
               controller: _deadlineCtrl,
-              label: 'Project Deadline (YYYY-MM-DD)',
+              label: 'Project Deadline (YYYY-MM-DD) – max End Date',
+              lastDate: (() {
+                try {
+                  final s = _endDateCtrl.text.trim();
+                  if (s.isEmpty) return null;
+                  return DateTime.parse(s);
+                } catch (_) { return null; }
+              })(),
             ),
           ],
         ),
         DropdownButtonFormField<WorkStage>(
-          decoration: const InputDecoration(labelText: 'Stage', prefixIcon: Icon(CupertinoIcons.chart_bar)),
+          decoration: const InputDecoration(labelText: 'Current stage', prefixIcon: Icon(CupertinoIcons.chart_bar)),
           isExpanded: true,
           initialValue: _selectedWorkStage,
-          items: WorkStage.values.map((e) => DropdownMenuItem(value: e, child: Text(e.name))).toList(),
+          items: WorkStage.values.map((e) => DropdownMenuItem(
+            value: e,
+            child: Row(children: [Icon(_stageIcon(e), size: 18), const SizedBox(width: 8), Flexible(child: Text(e.name))]),
+          )).toList(),
           onChanged: (v) { setState(() => _selectedWorkStage = v); _saveDraftLocally(); },
         ),
       ),
       const SizedBox(height: 8),
-      _singleOrEmpty(
-        DropdownButtonFormField<ApramStatus>(
-          decoration: const InputDecoration(labelText: 'Apram Status', prefixIcon: Icon(CupertinoIcons.checkmark_seal)),
-          isExpanded: true,
-          initialValue: _selectedApramStatus,
-          items: ApramStatus.values.map((e) => DropdownMenuItem(value: e, child: Text(e.name))).toList(),
-          onChanged: (v) { setState(() => _selectedApramStatus = v); _saveDraftLocally(); },
-        ),
-      ),
+      // APRAM field removed per spec
       const SizedBox(height: 16),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(
@@ -2323,6 +2597,13 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   }
 
   Widget _buildBasicDetailsSection() {
+  final gpAsync = ref.watch(gpdata.gramPanchayatDataProvider);
+  final gpItems = gpAsync.maybeWhen(data: (v) => v, orElse: () => const <gpdata.GPRecord>[]);
+  final gpLoading = gpAsync.isLoading;
+  final gpError = gpAsync.hasError;
+    final gpNames = gpItems.map((e) => e.name).toList();
+    final selectedGP = gpItems.where((e) => e.name == _selectedGramPanchayatName).cast<gpdata.GPRecord?>().firstWhere((e) => true, orElse: () => null);
+    final villageOptions = (selectedGP?.grams ?? const <String>[]);
     return Card(
       elevation: 0,
       child: Padding(
@@ -2368,32 +2649,94 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
               DropdownButtonFormField<String>(
                 isExpanded: true,
                 decoration: _req('Block (ब्लॉक)', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
-                  initialValue: _selectedBlockId,
-                  items: _staticBlocks.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                  onChanged: (val) {
-                    setState(() {
-                      _selectedBlockId = val;
-                      _selectedBlockName = val;
-                      // Reset dependent selections when block changes
-                      _villageCtrl.clear();
-                      _selectedGramPanchayatName = null;
-                      _selectedVillageName = null;
-                    });
-                    _saveDraftLocally();
-                  },
-                  validator: (v) => (v == null || v.isEmpty) ? 'Select Block' : null,
+                initialValue: _selectedBlockId,
+                items: _staticBlocks.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                onChanged: (val) {
+                  setState(() {
+                    _selectedBlockId = val;
+                    _selectedBlockName = val;
+                    // Reset dependent selections when block changes
+                    _selectedGramPanchayatName = null;
+                    _gramPanchayatCtrl.clear();
+                    _selectedVillageName = null;
+                    _villageCtrl.clear();
+                    _sarpanchNameCtrl.clear();
+                    _secretaryNameCtrl.clear();
+                  });
+                  _saveDraftLocally();
+                },
+                validator: (v) => (v == null || v.isEmpty) ? 'Select Block' : null,
+              ),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                decoration: _req('Gram Panchayat (ग्राम पंचायत)', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
+                value: (_selectedGramPanchayatName?.isNotEmpty ?? false) ? _selectedGramPanchayatName : null,
+                items: gpNames.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                onChanged: (_selectedBlockId == null || gpLoading || gpItems.isEmpty)
+                    ? null
+                    : (val) {
+                        setState(() {
+                          _selectedGramPanchayatName = val;
+                          _gramPanchayatCtrl.text = val ?? '';
+                          // Auto-fill officials
+                          final rec = gpItems.firstWhere((e) => e.name == val, orElse: () => gpdata.GPRecord(name: '', grams: const [], sarpanch: '', secretary: ''));
+                          _sarpanchNameCtrl.text = rec.sarpanch;
+                          _secretaryNameCtrl.text = rec.secretary;
+                          // Reset village
+                          _selectedVillageName = null;
+                          _villageCtrl.clear();
+                          if (rec.grams.length == 1) {
+                            _selectedVillageName = rec.grams.first;
+                            _villageCtrl.text = rec.grams.first;
+                          }
+                        });
+                        _saveDraftLocally();
+                      },
+                validator: (v) => (v == null || v.isEmpty) ? 'Select Gram Panchayat' : null,
+              ),
+            ),
+            if (gpLoading)
+              Padding(
+                padding: const EdgeInsets.only(top: 6.0),
+                child: Row(
+                  children: const [
+                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                    SizedBox(width: 8),
+                    Text('Loading local Gram Panchayat list…'),
+                  ],
                 ),
-              TextFormField(
-                focusNode: _fnVillage,
-                controller: _villageCtrl,
-                decoration: _req('Village (ग्राम)', prefixIcon: const Icon(CupertinoIcons.home)),
-                textCapitalization: TextCapitalization.words,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
-                  LengthLimitingTextInputFormatter(60),
-                ],
-                onChanged: (_) { _selectedVillageName = _villageCtrl.text.trim(); _saveDraftLocally(); },
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Village' : null,
+              ),
+            if (gpError)
+              Padding(
+                padding: const EdgeInsets.only(top: 6.0),
+                child: Text(
+                  'Couldn\'t load local dataset (local_data.json). Please refresh or contact admin.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            if (!gpLoading && !gpError && gpItems.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6.0),
+                child: Text(
+                  'Local Gram Panchayat list is empty. Please ensure local_data.json is bundled.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).hintColor),
+                ),
+              ),
+            const SizedBox(height: 12),
+            _singleOrEmpty(
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                decoration: _req('Village / Gram (ग्राम)', prefixIcon: const Icon(CupertinoIcons.home)),
+                value: (_selectedVillageName?.isNotEmpty ?? false) ? _selectedVillageName : null,
+                items: villageOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                onChanged: (v) {
+                  setState(() {
+                    _selectedVillageName = v;
+                    _villageCtrl.text = v ?? '';
+                  });
+                  _saveDraftLocally();
+                },
+                validator: (v) => (v == null || v.isEmpty) ? 'Select Village' : null,
               ),
             ),
             const SizedBox(height: 12),
@@ -2410,7 +2753,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                         FilledButton.icon(
                           onPressed: _locating ? null : _getLocation,
                           icon: const Icon(CupertinoIcons.location),
-                          label: Text(_locating ? 'Locating...' : 'Use current location (वर्तमान स्थान)'),
+                          label: Text(_locating ? 'Locating...' : 'Use current location (वर्तमान स्थान)', textAlign: TextAlign.center,),
                         ),
                         if (_lat != null && _lng != null)
                           Text('Lat: ${_lat!.toStringAsFixed(5)}  Lng: ${_lng!.toStringAsFixed(5)}'),
@@ -2435,8 +2778,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                             ),
                             children: [
                               TileLayer(
-                                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                userAgentPackageName: 'com.example.app',
+                                urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+                                subdomains: const ['a','b','c','d'],
+                                userAgentPackageName: 'com.example.nirmadapp',
                               ),
                               if (_lat != null && _lng != null)
                                 MarkerLayer(markers: [
@@ -2449,6 +2793,13 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   )
                                 ]),
                               if (!kIsWeb) const CurrentLocationLayer(),
+                              RichAttributionWidget(
+                                alignment: AttributionAlignment.bottomRight,
+                                attributions: const [
+                                  TextSourceAttribution('© OpenStreetMap contributors'),
+                                  TextSourceAttribution('© CARTO'),
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -2472,7 +2823,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   bool prelimDone = _sarpanchNameCtrl.text.trim().isNotEmpty && _secretaryNameCtrl.text.trim().isNotEmpty;
   bool sanctionDone = _sanctioningDepartmentCtrl.text.trim().isNotEmpty && (_selectedSchemeName?.isNotEmpty == true || _schemeCtrl.text.trim().isNotEmpty);
   bool allotmentDone = _installment1AmountCtrl.text.trim().isNotEmpty && _bankNameCtrl.text.trim().isNotEmpty;
-  bool workDone = _nameCtrl.text.trim().isNotEmpty && _addressCtrl.text.trim().isNotEmpty && _lat != null && _lng != null;
+  bool workDone = _nameCtrl.text.trim().isNotEmpty && _addressCtrl.text.trim().isNotEmpty && _lat != null && _lng != null && _startDateCtrl.text.trim().isNotEmpty && _endDateCtrl.text.trim().isNotEmpty;
   int stepsCompleted = [prelimDone, sanctionDone, allotmentDone, workDone].where((e) => e).length;
     final pct = (stepsCompleted / 4).clamp(0, 1).toDouble();
     return Scaffold(
@@ -2484,17 +2835,20 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 280,
-                      child: Row(children: [
-                        Expanded(child: LinearProgressIndicator(value: pct, minHeight: 8, borderRadius: BorderRadius.circular(8))),
-                        const SizedBox(width: 8),
-                        Text('${(pct * 100).toStringAsFixed(0)}%'),
-                      ]),
-                    ),
-                  ],
+                Padding(
+                  padding: const EdgeInsets.only(left: 8.0),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 220,
+                        child: Row(children: [
+                          Expanded(child: LinearProgressIndicator(value: pct, minHeight: 6, borderRadius: BorderRadius.circular(6))),
+                          const SizedBox(width: 8),
+                          Text('${(pct * 100).toStringAsFixed(0)}%', style: Theme.of(context).textTheme.bodySmall),
+                        ]),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 8),
                 if (_didRestoreDraft || (_drafts?.hasDraft() ?? false))
@@ -2504,6 +2858,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     child: Padding(
                       padding: const EdgeInsets.all(12.0),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           const Icon(CupertinoIcons.pencil, size: 18),
                           const SizedBox(width: 8),
@@ -2525,7 +2880,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                               setState(() { _didRestoreDraft = false; });
                               toastification.show(
                                 context: context,
-                                title: const Text('Draft cleared'),
+                                title: const Text('Draft cleared', textAlign: TextAlign.center,),
                                 type: ToastificationType.success,
                                 style: ToastificationStyle.fillColored,
                                 autoCloseDuration: const Duration(seconds: 2),
@@ -2534,7 +2889,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                               );
                             },
                             icon: const Icon(CupertinoIcons.delete),
-                            label: const Text('Clear draft'),
+                            label: const Text('Clear draft', textAlign: TextAlign.center,),
                           ),
                         ],
                       ),
@@ -2590,13 +2945,14 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                         // Run a focused validation for the current step's key fields
                         switch (_currentStep) {
                           case 0:
-                            return (_sarpanchNameCtrl.text.trim().isNotEmpty &&
-                                    _sarpanchMobileCtrl.text.trim().length == 10 &&
-                                    _secretaryNameCtrl.text.trim().isNotEmpty &&
-                                    _secretaryMobileCtrl.text.trim().length == 10 &&
-                                    _subEngineerNameCtrl.text.trim().isNotEmpty &&
-                                    _subEngineerMobileCtrl.text.trim().length == 10 &&
-                                    _gramPanchayatCtrl.text.trim().isNotEmpty);
+          return (_gramPanchayatCtrl.text.trim().isNotEmpty &&
+            (_selectedVillageName?.trim().isNotEmpty ?? false) &&
+            _sarpanchNameCtrl.text.trim().isNotEmpty &&
+            _sarpanchMobileCtrl.text.trim().length == 10 &&
+            _secretaryNameCtrl.text.trim().isNotEmpty &&
+            _secretaryMobileCtrl.text.trim().length == 10 &&
+            _subEngineerNameCtrl.text.trim().isNotEmpty &&
+            _subEngineerMobileCtrl.text.trim().length == 10);
                           case 1:
           return (_sanctioningDepartmentCtrl.text.trim().isNotEmpty &&
             (((_selectedSchemeName?.isNotEmpty) ?? false) || _schemeCtrl.text.trim().isNotEmpty) &&
@@ -2615,7 +2971,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                           case 3:
                             return (_nameCtrl.text.trim().isNotEmpty &&
                                     _addressCtrl.text.trim().isNotEmpty &&
-                                    _lat != null && _lng != null);
+                                    _lat != null && _lng != null &&
+                                    _startDateCtrl.text.trim().isNotEmpty &&
+                                    _endDateCtrl.text.trim().isNotEmpty);
                           default:
                             return true;
                         }
@@ -2735,16 +3093,19 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     _adminApprovalNoCtrl,
                     _adminApprovalDateCtrl,
                     _approvedAmountCtrl,
+                    _startDateCtrl,
+                    _endDateCtrl,
                   ];
                   final textsOk = requiredCtrls.every((c) => c.text.trim().isNotEmpty);
                   final mobilesOk = _sarpanchMobileCtrl.text.trim().length == 10 &&
                       _secretaryMobileCtrl.text.trim().length == 10 &&
                       _subEngineerMobileCtrl.text.trim().length == 10;
                   final blockOk = (_selectedBlockId ?? '').isNotEmpty;
-                  final villageOk = _villageCtrl.text.trim().isNotEmpty;
+                  final gpOk = _gramPanchayatCtrl.text.trim().isNotEmpty;
+                  final villageOk = (_selectedVillageName?.isNotEmpty ?? false);
                   final gpsOk = _lat != null && _lng != null;
                   final adminOk = adminDocCnt > 0;
-                  final canCreate = textsOk && mobilesOk && blockOk && villageOk && gpsOk && techOk && adminOk && !_saving;
+                  final canCreate = textsOk && mobilesOk && blockOk && gpOk && villageOk && gpsOk && techOk && adminOk && !_saving;
                   final resetBtn = OutlinedButton.icon(
                     onPressed: _saving ? null : () async {
                         final confirmed = await showDialog<bool>(
@@ -2776,13 +3137,110 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     icon: const Icon(CupertinoIcons.refresh),
                     label: const Text('Reset form'),
                   );
+                  Future<bool> _confirmCreateDisclaimer() async {
+                    final auth = await ref.read(authRepositoryProvider).currentUser();
+                    if (auth == null) return false;
+                    if (auth.role == UserRole.devAdmin) return true;
+                    return await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Confirm and proceed'),
+                            content: const Text(
+                              'I confirm the project details are accurate to the best of my knowledge. '
+                              'Submitting false or misleading data may lead to rejection or action. '
+                              'This creates a new project and an audit trail will be recorded.',
+                            ),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+                              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('I understand')),
+                            ],
+                          ),
+                        ) ==
+                        true;
+                  }
                   final saveBtn = FilledButton.icon(
                     onPressed: canCreate
                         ? () async {
+                              // Non-admin confirmation disclaimer
+                              final ok = await _confirmCreateDisclaimer();
+                              if (!ok) return;
                               // Using toastification for feedback
                               // Optional safety
                               if (!mounted) return;
                               if (!_formKey.currentState!.validate()) return;
+                              // Allotment validation rules
+                              num _numParse(String s){ final t=s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t) ?? 0; }
+                              DateTime? _date(String s){ final t=s.trim(); if(t.isEmpty) return null; try{return DateTime.parse(t);}catch(_){return null;} }
+                              final approved = _numParse(_approvedAmountCtrl.text);
+                              final a1 = _numParse(_installment1AmountCtrl.text);
+                              final a2 = _showInstallment2 ? _numParse(_installment2AmountCtrl.text) : 0;
+                              final a3 = _showInstallment3 ? _numParse(_installment3AmountCtrl.text) : 0;
+                              if (a1 <= 0) {
+                                toastification.show(context: context, title: const Text('Enter Installment 1 amount'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                return;
+                              }
+                              if (approved > 0 && (a1 + a2 + a3) > approved) {
+                                toastification.show(context: context, title: const Text('Installments exceed Approved Amount'), description: const Text('Sum must be ≤ Approved Amount'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                return;
+                              }
+                              final d1 = _date(_installment1DateCtrl.text);
+                              final d2 = _date(_installment2DateCtrl.text);
+                              final d3 = _date(_installment3DateCtrl.text);
+                              if (d1 == null) {
+                                toastification.show(context: context, title: const Text('Enter Installment 1 date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                return;
+                              }
+                              if (d2 != null && d2.isBefore(d1)) {
+                                toastification.show(context: context, title: const Text('I2 date must be on/after I1'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                return;
+                              }
+                              if (d3 != null) {
+                                if (d2 == null) {
+                                  toastification.show(context: context, title: const Text('Enter I2 before I3'), type: ToastificationType.info, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.info));
+                                  return;
+                                }
+                                if (d3.isBefore(d2)) {
+                                  toastification.show(context: context, title: const Text('I3 date must be on/after I2'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                  return;
+                                }
+                              }
+                              // Received gating
+                              if ((_installment1Status ?? 'Not Received') == 'Received') {
+                                final rAmt = _numParse(_installment1ReceivedAmountCtrl.text);
+                                final rDate = _date(_installment1ReceivedDateCtrl.text);
+                                if (rAmt <= 0 || rDate == null) {
+                                  toastification.show(context: context, title: const Text('Fill I1 received amount and date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                  return;
+                                }
+                                if (a1 > 0 && rAmt > a1) {
+                                  toastification.show(context: context, title: const Text('I1 received > planned'), type: ToastificationType.info, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.info));
+                                  return;
+                                }
+                              }
+                              if (_showInstallment2 && _installment2Status == 'Received') {
+                                final rAmt = _numParse(_installment2ReceivedAmountCtrl.text);
+                                final rDate = _date(_installment2ReceivedDateCtrl.text);
+                                if (rAmt <= 0 || rDate == null) {
+                                  toastification.show(context: context, title: const Text('Fill I2 received amount and date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                  return;
+                                }
+                                if (a2 > 0 && rAmt > a2) {
+                                  toastification.show(context: context, title: const Text('I2 received > planned'), type: ToastificationType.info, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.info));
+                                  return;
+                                }
+                              }
+                              if (_showInstallment3 && _installment3Status == 'Received') {
+                                final rAmt = _numParse(_installment3ReceivedAmountCtrl.text);
+                                final rDate = _date(_installment3ReceivedDateCtrl.text);
+                                if (rAmt <= 0 || rDate == null) {
+                                  toastification.show(context: context, title: const Text('Fill I3 received amount and date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
+                                  return;
+                                }
+                                if (a3 > 0 && rAmt > a3) {
+                                  toastification.show(context: context, title: const Text('I3 received > planned'), type: ToastificationType.info, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.info));
+                                  return;
+                                }
+                              }
                               // Removed mandatory photo requirement to align with new stepper
                               if (_lat == null || _lng == null) {
                                 toastification.show(
@@ -2808,10 +3266,10 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 );
                                 return;
                               }
-                              if (_villageCtrl.text.trim().isEmpty) {
+                if ((_selectedVillageName?.isNotEmpty ?? false) == false) {
                                 toastification.show(
                                   context: context,
-                                  title: const Text('Please enter Village'),
+                  title: const Text('Please select Village / Gram'),
                                   type: ToastificationType.info,
                                   style: ToastificationStyle.fillColored,
                                   autoCloseDuration: const Duration(seconds: 3),
@@ -2881,6 +3339,14 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                         const Text('Please confirm all details are correct. This action cannot be undone.'),
                                         const SizedBox(height: 8),
                                         Text('Attachments: $workPhotoCnt photos, $workDocCnt docs, $certCnt2 certificates'),
+                                            if (_startDateCtrl.text.trim().isNotEmpty) ...[
+                                              const SizedBox(height: 4),
+                                              Text('Start: ${_startDateCtrl.text.trim()}'),
+                                            ],
+                                            if (_endDateCtrl.text.trim().isNotEmpty) ...[
+                                              const SizedBox(height: 4),
+                                              Text('End: ${_endDateCtrl.text.trim()}'),
+                                            ],
                                             if (_deadlineCtrl.text.trim().isNotEmpty) ...[
                                               const SizedBox(height: 4),
                                               Text('Deadline: ${_deadlineCtrl.text.trim()}'),
@@ -2933,7 +3399,15 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 }
                                 // Helpers
                                 DateTime? parseDate(String s) { final t = s.trim(); if (t.isEmpty) return null; try { return DateTime.parse(t); } catch (_) { return null; } }
-                                num? parseNum(String s) { final t = s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t); }
+                                num? parseNum(String s) {
+                                  const maxRupees = 500000000; // 50 crores
+                                  final t = s.trim().replaceAll(',', '');
+                                  final v = int.tryParse(t) ?? double.tryParse(t);
+                                  if (v == null) return null;
+                                  if (v > maxRupees) return maxRupees;
+                                  if (v < 0) return 0;
+                                  return v;
+                                }
                                 // draft
                                 // capture finance inputs
                                 final budgetStr = _budgetCtrl.text.trim().replaceAll(',', '');
@@ -3011,18 +3485,24 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 );
                                 final work = WorkDescription(
                                   startDate: parseDate(_startDateCtrl.text),
+                                  endDate: parseDate(_endDateCtrl.text),
                                   stage: _selectedWorkStage,
                                   apramStatus: _selectedApramStatus,
                                 );
+                                // Compute Financial Phase based on received installments
+                                int finPhase = 0;
+                                if ((i1.receivedAmount ?? 0) > 0) finPhase = 1;
+                                if ((i2.receivedAmount ?? 0) > 0) finPhase = 2;
+                                if ((i3.receivedAmount ?? 0) > 0) finPhase = 3;
                                 final draft = Project(
                                   id: 'new',
                                   name: _nameCtrl.text.trim(),
                                   description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
                                   ownerId: auth.uid,
-                                  blockId: _selectedBlockId ?? (auth.blocks.isNotEmpty ? auth.blocks.first : ''),
+                                  blockId: _selectedBlockId ?? (auth.blockId ?? ''),
                                   villageId: (auth.assignedVillage ?? ''),
                                   status: ProjectStatus.in_progress,
-                                  phase: 1,
+                                  phase: finPhase,
                                   location: GeoPoint(_lat!, _lng!),
                                   address: _addressCtrl.text.trim(),
                                   geohash: encodeGeohash(_lat!, _lng!, precision: 10),
@@ -3372,8 +3852,23 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   ),
                                 );
                                 // Create document now that uploads have succeeded
+                                // Prepare ownerDetails snapshot for quick access
+                                Map<String, dynamic> ownerDetails = {};
+                                try {
+                                  final snap = await FirebaseFirestore.instance.collection('users').doc(finalProject.ownerId).get();
+                                  final d = snap.data() ?? const <String, dynamic>{};
+                                  ownerDetails = {
+                                    'displayName': d['displayName'],
+                                    'email': d['email'],
+                                    'phone': d['phone'],
+                                    'whatsapp': d['whatsapp'],
+                                    'address': d['address'],
+                                    'aadhar': d['aadhar'],
+                                  }..removeWhere((k, v) => v == null || (v is String && v.trim().isEmpty));
+                                } catch (_) {}
                                 await repo.createAt(projectId, finalProject, extra: {
                                   if (projectCode != null) 'projectCode': projectCode,
+                                  if (ownerDetails.isNotEmpty) 'ownerDetails': ownerDetails,
                                 });
                                 // Fire updates feed entries (owner + nodals)
                                 try {
@@ -3464,8 +3959,16 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
               }
             : null,
           icon: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.plus_circle_fill),
-          label: const Text('Create Project'),
-          style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14)),
+          label: const Text('Create Project', textAlign: TextAlign.center,),
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            alignment: Alignment.center,
+            textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+              height: 1.0,
+              leadingDistribution: TextLeadingDistribution.even,
+              textBaseline: TextBaseline.alphabetic,
+            ),
+          ),
                   );
                   if (!narrow) {
                     return Row(
@@ -3522,7 +4025,7 @@ class _ProjectCard extends StatelessWidget {
             gradient: gradient,
           ),
           child: Padding(
-            padding: const EdgeInsets.all(12.0),
+            padding: const EdgeInsets.all(10.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -3533,21 +4036,21 @@ class _ProjectCard extends StatelessWidget {
                   project.name,
                   style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
                   overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 6),
                 Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70), overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 6),
                 Builder(builder: (context) {
-                  final statusLabel = project.status == ProjectStatus.draft ? 'in_progress' : project.status.name;
+                  final statusLabel = project.status.name;
                   Color statusColor; IconData statusIcon;
-                  switch (project.status == ProjectStatus.draft ? ProjectStatus.in_progress : project.status) {
+                  switch (project.status) {
                     case ProjectStatus.completed:
                       statusColor = Colors.green; statusIcon = CupertinoIcons.check_mark_circled_solid; break;
                     case ProjectStatus.cancelled:
                       statusColor = Colors.grey; statusIcon = CupertinoIcons.xmark_circle_fill; break;
                     case ProjectStatus.in_progress:
-                    case ProjectStatus.draft:
                       statusColor = Colors.amber; statusIcon = CupertinoIcons.clock_solid; break;
                   }
                   final deadlineVal = project.financials['deadline'];
@@ -3558,7 +4061,7 @@ class _ProjectCard extends StatelessWidget {
                     runSpacing: 6,
                     children: [
                       _StatusChip(label: statusLabel, inverted: true, color: statusColor, icon: statusIcon),
-                      if (project.phase > 0) _StatusChip(label: 'Phase ${project.phase}', inverted: true, color: Colors.white70, icon: CupertinoIcons.number),
+                      if (project.phase > 0) _StatusChip(label: 'Financial Phase ${project.phase}', inverted: true, color: Colors.white70, icon: CupertinoIcons.number),
                       if (deadlineVal != null)
                         _StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', inverted: true, color: isLate ? Colors.redAccent : Colors.white70, icon: CupertinoIcons.calendar),
                     ],
@@ -3600,7 +4103,20 @@ class _StatusChip extends StatelessWidget {
             Icon(icon, size: 14, color: fg),
             const SizedBox(width: 4),
           ],
-          Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: fg)),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: fg,
+                  height: 1.0,
+                  leadingDistribution: TextLeadingDistribution.even,
+                  textBaseline: TextBaseline.alphabetic,
+                ),
+            textHeightBehavior: const TextHeightBehavior(
+              applyHeightToFirstAscent: true,
+              applyHeightToLastDescent: true,
+              leadingDistribution: TextLeadingDistribution.even,
+            ),
+          ),
         ],
       ),
     );
@@ -3632,16 +4148,24 @@ String _fmtDeadline(dynamic v) {
 
 bool _isLate(dynamic v) {
   try {
-    if (v == null) return false;
+    if (v == null) {
+      return false;
+    }
     DateTime? d;
-    if (v is Timestamp) d = v.toDate();
-    else if (v is DateTime) d = v;
-    else if (v is String) d = DateTime.tryParse(v);
+    if (v is Timestamp) {
+      d = v.toDate();
+    } else if (v is DateTime) {
+      d = v;
+    } else if (v is String) {
+      d = DateTime.tryParse(v);
+    }
     else if (v is Map && v['seconds'] != null) {
       final secs = (v['seconds'] as num).toInt();
       d = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
     }
-    if (d == null) return false;
+    if (d == null) {
+      return false;
+    }
     final today = DateTime.now();
     final startOfToday = DateTime(today.year, today.month, today.day);
     return d.isBefore(startOfToday);
@@ -3659,15 +4183,14 @@ class _ProjectListTile extends StatelessWidget {
     final block = (ld['blockName'] ?? '') as String?;
     final village = (ld['villageName'] ?? '') as String?;
     final location = [block, village].where((e) => (e ?? '').toString().trim().isNotEmpty).join(' • ');
-  final statusLabel = project.status == ProjectStatus.draft ? 'in_progress' : project.status.name;
+  final statusLabel = project.status.name;
     Color statusColor; IconData statusIcon;
-    switch (project.status == ProjectStatus.draft ? ProjectStatus.in_progress : project.status) {
+    switch (project.status) {
       case ProjectStatus.completed:
         statusColor = Colors.green; statusIcon = CupertinoIcons.check_mark_circled_solid; break;
       case ProjectStatus.cancelled:
         statusColor = Colors.grey; statusIcon = CupertinoIcons.xmark_circle_fill; break;
       case ProjectStatus.in_progress:
-      case ProjectStatus.draft:
         statusColor = Colors.amber; statusIcon = CupertinoIcons.clock_solid; break;
     }
   final deadlineVal = project.financials['deadline'];
@@ -3700,7 +4223,7 @@ class _ProjectListTile extends StatelessWidget {
             const SizedBox(height: 6),
             Wrap(spacing: 6, runSpacing: 6, children: [
               _StatusChip(label: statusLabel, color: statusColor, icon: statusIcon),
-              if (project.phase > 0) _StatusChip(label: 'Phase ${project.phase}', color: Theme.of(context).colorScheme.primary, icon: CupertinoIcons.number),
+              if (project.phase > 0) _StatusChip(label: 'Financial Phase ${project.phase}', color: Theme.of(context).colorScheme.primary, icon: CupertinoIcons.number),
               if (deadlineVal != null) _StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', color: isLate ? Colors.redAccent : Theme.of(context).colorScheme.secondary, icon: CupertinoIcons.calendar),
             ]),
           ]),
@@ -3732,7 +4255,7 @@ class _ProjectsSearchBarState extends State<_ProjectsSearchBar> {
         onChanged: widget.onChanged,
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          hintText: 'Search by id, name, block, village…',
+          hintText: 'Search Projects',
           prefixIcon: const Icon(CupertinoIcons.search, size: 18),
           isDense: true,
           contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -3757,24 +4280,16 @@ class _PageScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 44,
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(CupertinoIcons.bars),
           onPressed: onMenu,
+          tooltip: 'Sidebar',
         ),
-        title: LayoutBuilder(
-          builder: (context, c) {
-            final showText = c.maxWidth > 140;
-            return Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (showText) Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
-              ],
-            );
-          },
-        ),
-        actions: const [],
+        title: const SizedBox.shrink(),
+        centerTitle: false,
       ),
       body: child,
     );

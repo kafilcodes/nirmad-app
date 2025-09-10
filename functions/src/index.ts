@@ -1,11 +1,9 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue, QueryDocumentSnapshot } from 'firebase-admin/firestore';
-import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
 import * as functions from 'firebase-functions';
 import archiver from 'archiver';
-import tmp from 'tmp';
 
 initializeApp();
 const auth = getAuth();
@@ -25,7 +23,7 @@ const runtimeBucket = (() => {
   if (fromEnv && fromEnv.length > 0) return fromEnv;
   return storage.bucket().name; // default project bucket
 })();
-const fcm = getMessaging();
+// No FCM: notifications are handled via Firestore updates only
 
 const WHITELISTED_UIDS = new Set<string>([
   'IckVUW6Mg4Ue1XNcVWsxTidSiBY2',
@@ -45,7 +43,7 @@ function isSuperCaller(user: import('firebase-admin/auth').UserRecord): boolean 
 }
 
 export const setUserClaims = functions.https.onCall(async (
-  data: { email?: string; role?: string; blocks?: string[] },
+  data: { email?: string; role?: string; blockId?: string },
   context: functions.https.CallableContext,
 ) => {
   if (!context.auth) {
@@ -57,15 +55,17 @@ export const setUserClaims = functions.https.onCall(async (
   }
   const email: string | undefined = data.email;
   const role: string | undefined = data.role;
-  const blocks: string[] | undefined = data.blocks;
+  const blockId: string | undefined = (data.blockId || '').trim() || undefined;
   if (!email || !role) {
     throw new functions.https.HttpsError('invalid-argument', 'email and role are required');
   }
   const user = await auth.getUserByEmail(email);
   const claims: Record<string, unknown> = { role };
-  if (blocks) claims['blocks'] = blocks;
+  if (blockId) {
+    claims['blockId'] = blockId;
+  }
   await auth.setCustomUserClaims(user.uid, claims);
-  await db.collection('users').doc(user.uid).set({ email, role, blocks: blocks ?? [] }, { merge: true });
+  await db.collection('users').doc(user.uid).set({ email, role, blockId: blockId ?? null }, { merge: true });
   return { ok: true };
 });
 
@@ -95,8 +95,8 @@ export const exportProjectZip = functions.https.onCall(async (
     throw new functions.https.HttpsError('permission-denied', 'Not your project');
   }
   if (role === 'sub_nodal') {
-    const blocks: string[] = claims.blocks || [];
-    if (!blocks.includes(project.blockId)) {
+    const claimBlockId: string | undefined = (claims.blockId as string | undefined) || undefined;
+    if (!claimBlockId || claimBlockId !== project.blockId) {
       throw new functions.https.HttpsError('permission-denied', 'Block mismatch');
     }
   }
@@ -155,20 +155,24 @@ export const seedTestUsers = functions.https.onCall(async (
   const domain = data.domain || 'example.com';
   const blockIds = data.blockIds || ['block-a', 'block-b'];
 
-  const creds: { email: string; password: string; role: string; blocks?: string[] }[] = [];
+  const creds: { email: string; password: string; role: string; blockId?: string }[] = [];
   for (let i = 1; i <= owners; i++) {
-    creds.push({ email: `owner${i}@${domain}`, password: 'Passw0rd!', role: 'project_owner' });
+    const b = blockIds[ i % blockIds.length ];
+    creds.push({ email: `owner${i}@${domain}`, password: 'Passw0rd!', role: 'project_owner', blockId: b });
   }
   for (let i = 1; i <= nodals; i++) {
-    creds.push({ email: `nodal${i}@${domain}`, password: 'Passw0rd!', role: 'sub_nodal', blocks: blockIds });
+    const b = blockIds[ i % blockIds.length ];
+    creds.push({ email: `nodal${i}@${domain}`, password: 'Passw0rd!', role: 'sub_nodal', blockId: b });
   }
 
   const results: any[] = [];
   for (const c of creds) {
     try {
-  const created = await auth.createUser({ email: c.email, password: c.password, emailVerified: false, displayName: c.email.split('@')[0] });
-  await auth.setCustomUserClaims(created.uid, { role: c.role, blocks: c.blocks ?? [] });
-  await db.collection('users').doc(created.uid).set({ email: c.email, role: c.role, blocks: c.blocks ?? [] }, { merge: true });
+      const created = await auth.createUser({ email: c.email, password: c.password, emailVerified: false, displayName: c.email.split('@')[0] });
+  const claims: any = { role: c.role };
+  if (c.blockId) { claims.blockId = c.blockId; }
+  await auth.setCustomUserClaims(created.uid, claims);
+  await db.collection('users').doc(created.uid).set({ email: c.email, role: c.role, blockId: c.blockId ?? null }, { merge: true });
       results.push({ email: c.email, password: c.password, ok: true });
     } catch (e: any) {
       results.push({ email: c.email, error: e?.message || String(e) });
@@ -204,14 +208,14 @@ export const bootstrapDevAdmin = functions.https.onCall(async (
     }
   }
   await auth.setCustomUserClaims(userRecord.uid, { role: 'dev_admin' });
-  await db.collection('users').doc(userRecord.uid).set({ email, role: 'dev_admin', blocks: [] }, { merge: true });
+  await db.collection('users').doc(userRecord.uid).set({ email, role: 'dev_admin' }, { merge: true });
   await cfgRef.set({ used: true, at: FieldValue.serverTimestamp(), adminEmail: email }, { merge: true });
   return { ok: true, email };
 });
 
 // Creates a single Firebase Auth user, sets claims and writes Firestore user doc
 export const adminCreateUser = functions.https.onCall(async (
-  data: { email?: string; password?: string; role?: string; displayName?: string },
+  data: { email?: string; password?: string; role?: string; displayName?: string; blockId?: string },
   context: functions.https.CallableContext,
 ) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Auth required');
@@ -221,6 +225,7 @@ export const adminCreateUser = functions.https.onCall(async (
   const email = data.email?.trim();
   const password = data.password;
   const role = (data.role || 'project_owner').trim();
+  const blockId = (data.blockId || '').trim();
   const displayName = data.displayName?.trim();
   if (!email || !password) throw new functions.https.HttpsError('invalid-argument', 'email and password required');
 
@@ -234,14 +239,16 @@ export const adminCreateUser = functions.https.onCall(async (
       throw new functions.https.HttpsError('internal', e?.message || String(e));
     }
   }
-  await auth.setCustomUserClaims(userRecord.uid, { role });
-  await db.collection('users').doc(userRecord.uid).set({ email, role, ...(displayName ? { displayName } : {}), createdAt: FieldValue.serverTimestamp() }, { merge: true });
-  return { uid: userRecord.uid, email, role, displayName };
+  const claims: any = { role };
+  if (blockId) { claims.blockId = blockId; }
+  await auth.setCustomUserClaims(userRecord.uid, claims);
+  await db.collection('users').doc(userRecord.uid).set({ email, role, blockId: blockId || null, ...(displayName ? { displayName } : {}), createdAt: FieldValue.serverTimestamp() }, { merge: true });
+  return { uid: userRecord.uid, email, role, displayName, blockId };
 });
 
 // Bulk create many users
 export const adminBulkCreateUsers = functions.https.onCall(async (
-  data: { users?: { email?: string; password?: string; role?: string; displayName?: string }[] },
+  data: { users?: { email?: string; password?: string; role?: string; displayName?: string; blockId?: string }[] },
   context: functions.https.CallableContext,
 ) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Auth required');
@@ -254,6 +261,7 @@ export const adminBulkCreateUsers = functions.https.onCall(async (
     const password = u.password;
     const role = (u.role || 'project_owner').trim();
     const displayName = u.displayName?.trim();
+    const blockId = (u.blockId || '').trim();
     if (!email || !password) {
       results.push({ email: email || '', ok: false, error: 'missing email/password' });
       continue;
@@ -268,9 +276,11 @@ export const adminBulkCreateUsers = functions.https.onCall(async (
         } else {
           throw e;
         }
-      }
-      await auth.setCustomUserClaims(userRecord.uid, { role });
-      await db.collection('users').doc(userRecord.uid).set({ email, role, ...(displayName ? { displayName } : {}), createdAt: FieldValue.serverTimestamp() }, { merge: true });
+  }
+  const claims: any = { role };
+  if (blockId) { claims.blockId = blockId; }
+  await auth.setCustomUserClaims(userRecord.uid, claims);
+  await db.collection('users').doc(userRecord.uid).set({ email, role, blockId: blockId || null, ...(displayName ? { displayName } : {}), createdAt: FieldValue.serverTimestamp() }, { merge: true });
       results.push({ email, uid: userRecord.uid, ok: true });
     } catch (e: any) {
       results.push({ email, ok: false, error: e?.message || String(e) });
@@ -352,109 +362,52 @@ export const ensureDevAdminForWhitelisted = functions.https.onCall(async (
   const whitelisted = WHITELISTED_UIDS.has(me.uid) || (email != null && WHITELISTED_EMAILS.has(email));
   if (!whitelisted) throw new functions.https.HttpsError('permission-denied', 'Not whitelisted');
   await auth.setCustomUserClaims(me.uid, { role: 'dev_admin' });
-  await db.collection('users').doc(me.uid).set({ email: me.email, role: 'dev_admin', blocks: [] }, { merge: true });
+  await db.collection('users').doc(me.uid).set({ email: me.email, role: 'dev_admin' }, { merge: true });
   return { ok: true };
 });
 
-// --- Notifications helpers ---
-type AppUser = { email?: string; role?: string; blocks?: string[] };
-
-async function getUsersByRole(role: string, blocks?: string[]): Promise<Array<{ id: string; data: AppUser }>> {
-  let q = db.collection('users').where('role', '==', role) as FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
-  if (blocks && blocks.length > 0 && role === 'sub_nodal') {
-    // sub_nodal must include at least one of the blocks
-    q = q.where('blocks', 'array-contains-any', blocks.slice(0, 10));
+// Migrate legacy project.status 'draft' -> 'in_progress'
+export const migrateDraftStatus = functions.https.onCall(async (
+  _data: Record<string, unknown>,
+  context: functions.https.CallableContext,
+) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Auth required');
+  const me = await auth.getUser(context.auth.uid);
+  if (!isSuperCaller(me)) throw new functions.https.HttpsError('permission-denied', 'Dev admin only');
+  const col = db.collection('projects');
+  const snap = await col.where('status', '==', 'draft').get();
+  if (snap.empty) return { updated: 0 };
+  let updated = 0;
+  let batch = db.batch();
+  let ops = 0;
+  for (const doc of snap.docs) {
+    batch.update(doc.ref, { status: 'in_progress' });
+    updated++;
+    ops++;
+    if (ops >= 400) { // keep under 500 writes per batch
+      await batch.commit();
+      batch = db.batch();
+      ops = 0;
+    }
   }
-  const snap = await q.get();
-  return snap.docs.map(d => ({ id: d.id, data: d.data() as AppUser }));
-}
+  if (ops > 0) await batch.commit();
+  return { updated };
+});
 
-async function createNotificationDoc(toUserId: string, payload: { title: string; body: string; data?: Record<string, string> }) {
-  await db.collection('notifications').add({
-    userId: toUserId,
-    title: payload.title,
-    body: payload.body,
-    data: payload.data || {},
-    createdAt: FieldValue.serverTimestamp(),
-    readAt: null,
-  });
-}
-
-async function sendToUserTokens(userId: string, payload: { title: string; body: string; data?: Record<string, string> }) {
-  const tokensSnap = await db.collection('users').doc(userId).collection('fcmTokens').get();
-  if (tokensSnap.empty) return;
-  const tokens = tokensSnap.docs.map(d => d.id);
-  const message = {
-    notification: { title: payload.title, body: payload.body },
-    webpush: { headers: { Urgency: 'normal' } },
-    data: payload.data || {},
-    tokens,
-  } as any;
-  const resp = await fcm.sendEachForMulticast(message);
-  // Clean up invalid tokens
-  const invalidIdx = resp.responses.map((r, i) => (!r.success ? i : -1)).filter(i => i >= 0);
-  const toDelete = invalidIdx.map(i => tokens[i]);
-  if (toDelete.length > 0) {
-    const batch = db.batch();
-    toDelete.forEach(t => batch.delete(db.collection('users').doc(userId).collection('fcmTokens').doc(t)));
-    await batch.commit();
+// Revoke refresh tokens for a user to force re-auth on all devices. If no uid provided,
+// revokes tokens for the caller. Only dev_admin may revoke tokens for others.
+export const revokeUserTokens = functions.https.onCall(async (
+  data: { uid?: string },
+  context: functions.https.CallableContext,
+) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Auth required');
+  const caller = await auth.getUser(context.auth.uid);
+  const targetUid = (data?.uid || context.auth.uid).trim();
+  if (!targetUid) throw new functions.https.HttpsError('invalid-argument', 'uid missing');
+  if (targetUid !== context.auth.uid && !isSuperCaller(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Not allowed');
   }
-}
+  await auth.revokeRefreshTokens(targetUid);
+  return { ok: true };
+});
 
-async function notifyUsers(userIds: string[], payload: { title: string; body: string; data?: Record<string, string> }) {
-  await Promise.all(userIds.map(async (uid) => {
-    await createNotificationDoc(uid, payload);
-    await sendToUserTokens(uid, payload).catch((e) => functions.logger.warn('FCM send error', uid, e));
-  }));
-}
-
-// Trigger notifications on project create/update
-export const onProjectWrite = functions.region('us-central1').firestore
-  .document('projects/{projectId}')
-  .onWrite(async (change, context) => {
-    const projectId = context.params.projectId as string;
-    const after = change.after.exists ? change.after.data() as any : null;
-    const before = change.before.exists ? change.before.data() as any : null;
-
-    if (!after && before) {
-      // Deleted: notify super_nodal
-      const supers = await getUsersByRole('super_nodal');
-      const msg = { title: 'Project deleted', body: `Project ${projectId} was deleted`, data: { projectId } };
-      await notifyUsers(supers.map(u => u.id), msg);
-      return;
-    }
-    if (!after) return;
-
-    const name = after.name || projectId;
-    const blockId = after.blockId as string | undefined;
-    const ownerId = after.ownerId as string | undefined;
-    const status = after.status as string | undefined;
-
-    // Determine action
-    const created = !before;
-    const statusChanged = before && after && before.status !== after.status;
-
-    const targets: Set<string> = new Set();
-    // Super nodals always get notified
-    const supers = await getUsersByRole('super_nodal');
-    supers.forEach(u => targets.add(u.id));
-    // Sub nodals in same block get notified
-    if (blockId) {
-      const subs = await getUsersByRole('sub_nodal', [blockId]);
-      subs.forEach(u => targets.add(u.id));
-    }
-    // Owner gets notified too
-    if (ownerId) targets.add(ownerId);
-
-    let title = 'Project updated';
-    let body = `${name} updated`;
-    if (created) {
-      title = 'New project created';
-      body = `${name} created`;
-    } else if (statusChanged) {
-      title = 'Project status changed';
-      body = `${name} is now ${status}`;
-    }
-    const data: Record<string, string> = { projectId, ...(status ? { status: String(status) } : {}) };
-    await notifyUsers(Array.from(targets), { title, body, data });
-  });
