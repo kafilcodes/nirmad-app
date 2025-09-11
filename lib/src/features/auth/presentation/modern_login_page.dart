@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gap/gap.dart';
+import '../../../shared/widgets/scroll_safe_dialog.dart';
 import 'package:go_router/go_router.dart';
 
 import '../data/auth_repository.dart';
@@ -72,6 +73,8 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
   }
 
   Future<void> _signIn() async {
+  // Dismiss keyboard to prevent layout jump & ensure validators run unobstructed on small screens.
+  FocusScope.of(context).unfocus();
     final ok = _formKey.currentState?.validate() ?? false;
     if (!ok) return;
     setState(() => _loading = true);
@@ -114,46 +117,58 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
       // Detect our single-device guard error and offer takeover
       final conflict = err.contains('already active on another device');
       if (mounted && conflict) {
-        final confirmedPassword = await showDialog<String?>(
+        final confirmedPassword = await showScrollSafeDialog<String?>(
           context: context,
           builder: (ctx) {
             final confirmCtrl = TextEditingController();
             final formKey = GlobalKey<FormState>();
-            return AlertDialog(
-              title: const Text('Active session detected'),
-              content: Form(
-                key: formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('This account is signed in on another device. To continue here, confirm your password. The other device will be logged out immediately.'),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: confirmCtrl,
-                      obscureText: true,
-                      decoration: const InputDecoration(labelText: 'Password'),
-                      validator: (v) => (v == null || v.length < 6) ? 'Enter your password' : null,
-                    ),
-                  ],
-                ),
+            return Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('You’re signed in elsewhere', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 12),
+                  const Text('This account is active on another device. To continue here and sign out the other device, confirm your password.'),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: confirmCtrl,
+                    obscureText: true,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'Confirm password'),
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (_) {
+                      if (formKey.currentState?.validate() ?? false) {
+                        Navigator.pop(ctx, confirmCtrl.text);
+                      }
+                    },
+                    validator: (v) => (v == null || v.length < 6) ? 'Enter your password' : null,
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('Cancel')),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: () {
+                          if (formKey.currentState?.validate() ?? false) {
+                            Navigator.pop(ctx, confirmCtrl.text);
+                          }
+                        },
+                        child: const Text('Logout other device and continue'),
+                      ),
+                    ],
+                  )
+                ],
               ),
-              actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('Cancel')),
-                FilledButton(
-                  onPressed: () {
-                    if (formKey.currentState?.validate() ?? false) {
-          Navigator.pop(ctx, confirmCtrl.text);
-                    }
-                  },
-                  child: const Text('Continue here'),
-                ),
-              ],
             );
           },
         );
     if (confirmedPassword != null) {
           try {
+            FocusScope.of(context).unfocus();
             await ref.read(authRepositoryProvider).forceSignInTakeover(
                   _emailCtrl.text.trim(),
       confirmedPassword,

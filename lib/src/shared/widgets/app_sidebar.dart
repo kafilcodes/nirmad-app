@@ -366,7 +366,7 @@ class _SidebarFooter extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4),
           child: SizedBox(
-            height: 130,
+            height: 50,
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 220, maxHeight: 96),

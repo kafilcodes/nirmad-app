@@ -18,11 +18,14 @@ import '../state/projects_snapshot_provider.dart';
 final nodalStatusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
 // Overdue-days filter (e.g., 30 or 60). Null means no overdue filter.
 final nodalOverdueDaysFilterProvider = StateProvider<int?>((_) => null);
+// Stage filter (derived from workDescription.stage, coerced to lowercase). Null => all stages.
+final nodalStageFilterProvider = StateProvider<String?>((_) => null);
 // Client-side paging: how many items are visible. Avoids resubscribing streams.
 final _visibleCountProvider = StateProvider<int>((_) => 25);
 final _accumulatedProvider = StateProvider<List<Project>>((_) => const []);
 final _viewGridProvider = StateProvider<bool>((_) => true);
-final _searchProvider = StateProvider<String>((_) => '');
+// Make search autoDispose so it resets when leaving the dashboard route entirely.
+final _searchProvider = StateProvider.autoDispose<String>((_) => '');
 // Exposed (not private) so dashboard shell can reset this on tab changes.
 final blockFilterProvider = StateProvider<String?>((_) => null);
 enum _SortBy { updatedDesc, updatedAsc, nameAsc, nameDesc, status }
@@ -40,7 +43,7 @@ class NodalDashboardListPage extends ConsumerWidget {
   final isGrid = ref.watch(_viewGridProvider);
   final search = ref.watch(_searchProvider);
   final blockFilter = ref.watch(blockFilterProvider);
-    return Scaffold(
+  return Scaffold(
       appBar: AppBar(
         toolbarHeight: 52,
         titleSpacing: 8,
@@ -108,7 +111,8 @@ class NodalDashboardListPage extends ConsumerWidget {
           const SizedBox(width: 4),
         ],
       ),
-      body: Column(
+      body: SafeArea(
+        child: Column(
         children: [
           // No extra controls here; kept compact via AppBar actions
           Expanded(
@@ -152,8 +156,13 @@ class NodalDashboardListPage extends ConsumerWidget {
                       final visible = ref.watch(_visibleCountProvider);
                       final toShow = shown.take(visible).toList();
                       if (toShow.isEmpty) {
-                        if (diskFirst.isNotEmpty) return _buildList(context, ref, diskFirst, isGrid, search);
-                        return const NoData(message: 'No projects', asset: 'assets/no_projects.svg');
+                        // Scoped empty-state: show within list area only, preserving toolbar & filters header.
+                        return _ListContainer(
+                          child: _NoResultsScoped(
+                            hasAny: items.isNotEmpty,
+                            isSearching: search.trim().isNotEmpty,
+                          ),
+                        );
                       }
                       return _buildList(context, ref, toShow, isGrid, search);
                     },
@@ -167,7 +176,7 @@ class NodalDashboardListPage extends ConsumerWidget {
                       final placeholder = ref.watch(_accumulatedProvider);
                       final list = placeholder.isNotEmpty ? placeholder : (diskFirst.isNotEmpty ? diskFirst : const <Project>[]);
                       if (list.isNotEmpty) return _buildList(context, ref, list, isGrid, search);
-                      return const NoData(message: 'Failed to load projects', asset: 'assets/server_error.svg');
+                      return const _ListContainer(child: Center(child: NoData(message: 'Failed to load projects', asset: 'assets/server_error.svg')));
                     },
                   );
                 },
@@ -175,6 +184,7 @@ class NodalDashboardListPage extends ConsumerWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -210,6 +220,16 @@ class NodalDashboardListPage extends ConsumerWidget {
     if (days != null) {
       filtered = filtered.where((p) => _isOverdueByDays(p, days)).toList();
     }
+    // Apply stage filter (workDescription.stage coerced to lowercase; completed projects stage coerced to 'completed').
+    final stageFilter = ref.read(nodalStageFilterProvider);
+    if (stageFilter != null && stageFilter.isNotEmpty) {
+      filtered = filtered.where((p) {
+        final wd = (p.workDescription as Map<String, dynamic>? ) ?? const {};
+        var stage = (wd['stage'] as String?)?.trim().toLowerCase() ?? 'unknown';
+        if (p.status == ProjectStatus.completed) stage = 'completed';
+        return stage == stageFilter;
+      }).toList();
+    }
     // Apply client-side sort when user changed preference
     switch (ref.read(_sortProvider)) {
       case _SortBy.updatedDesc:
@@ -228,30 +248,48 @@ class NodalDashboardListPage extends ConsumerWidget {
         filtered.sort((a, b) => a.status.name.compareTo(b.status.name));
         break;
     }
+    final list = isGrid ? _buildGrid(filtered) : _buildListView(filtered, ref, context);
+    return _ListContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _ActiveFiltersBar(onClearAll: () {
+            ref.read(nodalStatusFilterProvider.notifier).state = null;
+            ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+            ref.read(blockFilterProvider.notifier).state = null;
+            ref.read(nodalStageFilterProvider.notifier).state = null;
+          }),
+          Expanded(child: list),
+        ],
+      ),
+    );
+  }
 
-    if (isGrid) {
-      return LayoutBuilder(
-        builder: (context, c) {
-          final maxW = c.maxWidth;
-          final itemMin = 360.0; // card target width
-          final columns = (maxW / itemMin).floor().clamp(1, 4);
-          return GridView.builder(
-            padding: const EdgeInsets.all(12),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
-              childAspectRatio: 1.35,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-            ),
-            itemCount: filtered.length,
-            itemBuilder: (context, i) {
-              final p = filtered[i];
-              return ProjectCard(project: p, onOpen: () => _openDetails(context, p, tabbed: true));
-            },
-          );
-        },
-      );
-    }
+  Widget _buildGrid(List<Project> filtered) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final maxW = c.maxWidth;
+        final itemMin = 360.0; // card target width
+        final columns = (maxW / itemMin).floor().clamp(1, 4);
+        return GridView.builder(
+          padding: const EdgeInsets.all(12),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            childAspectRatio: 1.35,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
+          itemCount: filtered.length,
+          itemBuilder: (context, i) {
+            final p = filtered[i];
+            return ProjectCard(project: p, onOpen: () => _openDetails(context, p, tabbed: true));
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildListView(List<Project> filtered, WidgetRef ref, BuildContext context) {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       itemCount: filtered.length,
@@ -352,6 +390,15 @@ class NodalDashboardListPage extends ConsumerWidget {
     final days = ref.read(nodalOverdueDaysFilterProvider);
     if (days != null) {
       filtered = filtered.where((p) => _isOverdueByDays(p, days)).toList();
+    }
+    final stageFilter = ref.read(nodalStageFilterProvider);
+    if (stageFilter != null && stageFilter.isNotEmpty) {
+      filtered = filtered.where((p) {
+        final wd = (p.workDescription as Map<String, dynamic>? ) ?? const {};
+        var stage = (wd['stage'] as String?)?.trim().toLowerCase() ?? 'unknown';
+        if (p.status == ProjectStatus.completed) stage = 'completed';
+        return stage == stageFilter;
+      }).toList();
     }
     switch (ref.read(_sortProvider)) {
       case _SortBy.updatedDesc:
@@ -548,6 +595,76 @@ class NodalDashboardListPage extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Container used to provide consistent padding around list & empty states.
+class _ListContainer extends StatelessWidget {
+  final Widget child;
+  const _ListContainer({required this.child});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+      child: child,
+    );
+  }
+}
+
+class _NoResultsScoped extends StatelessWidget {
+  final bool hasAny;
+  final bool isSearching;
+  const _NoResultsScoped({required this.hasAny, required this.isSearching});
+  @override
+  Widget build(BuildContext context) {
+    if (!hasAny) {
+      return const Center(child: NoData(message: 'No projects yet', asset: 'assets/no_projects.svg'));
+    }
+    if (isSearching) {
+      return const Center(child: NoData(message: 'No matching projects', asset: 'assets/search_projects.svg'));
+    }
+    return const Center(child: NoData(message: 'No projects', asset: 'assets/no_projects.svg'));
+  }
+}
+
+class _ActiveFiltersBar extends ConsumerWidget {
+  final VoidCallback onClearAll;
+  const _ActiveFiltersBar({required this.onClearAll});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(nodalStatusFilterProvider);
+    final overdue = ref.watch(nodalOverdueDaysFilterProvider);
+    final block = ref.watch(blockFilterProvider);
+    final stage = ref.watch(nodalStageFilterProvider);
+    final chips = <Widget>[];
+    void add(String label, VoidCallback onRemove) {
+      chips.add(Padding(
+        padding: const EdgeInsets.only(right: 4, bottom: 4),
+        child: InputChip(label: Text(label), onDeleted: onRemove),
+      ));
+    }
+    if (status != null) {
+      add('Status: ${status.name}', () => ref.read(nodalStatusFilterProvider.notifier).state = null);
+    }
+    if (overdue != null) {
+      add('Overdue: $overdue d', () => ref.read(nodalOverdueDaysFilterProvider.notifier).state = null);
+    }
+    if (block != null && block.isNotEmpty) {
+      add('Block: $block', () => ref.read(blockFilterProvider.notifier).state = null);
+    }
+    if (stage != null && stage.isNotEmpty) {
+      add('Stage: $stage', () => ref.read(nodalStageFilterProvider.notifier).state = null);
+    }
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Wrap(
+        children: [
+          ...chips,
+          TextButton(onPressed: onClearAll, child: const Text('Clear all')),
+        ],
+      ),
     );
   }
 }

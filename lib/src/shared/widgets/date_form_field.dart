@@ -72,19 +72,17 @@ class _DateFormFieldState extends State<DateFormField> {
 
   @override
   Widget build(BuildContext context) {
-    final labelWidget = Row(mainAxisSize: MainAxisSize.min, children: [
-      Flexible(child: Text(widget.label)),
-      const Text(' *', style: TextStyle(color: Colors.red)),
-      const SizedBox(width: 4),
-      Text('(required)', style: Theme.of(context).textTheme.labelSmall),
-    ]);
+    final labelRich = RichText(text: TextSpan(children: [
+      TextSpan(text: widget.label, style: DefaultTextStyle.of(context).style.copyWith(color: Theme.of(context).textTheme.bodyMedium?.color)),
+      if (widget.required) const TextSpan(text: ' *', style: TextStyle(color: Colors.red)),
+    ]));
     return TextFormField(
   focusNode: widget.focusNode,
   enabled: widget.enabled,
       controller: widget.controller,
       textAlignVertical: TextAlignVertical.center,
       decoration: InputDecoration(
-        label: widget.required ? labelWidget : null,
+        label: widget.required ? labelRich : null,
         labelText: widget.required ? null : widget.label,
         suffixIcon: IconButton(
           icon: const Icon(CupertinoIcons.calendar),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nirmadapp/src/shared/widgets/required_label.dart';
 import 'package:flutter/cupertino.dart';
 // SidebarX removed; using cupertino_sidebar via AppSidebar
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,6 +35,7 @@ import '../../../shared/widgets/notifications_list.dart';
 import '../../../shared/widgets/no_data.dart';
 import '../../../shared/widgets/illustrated_background.dart';
 import '../../../shared/widgets/date_form_field.dart';
+import '../../../shared/widgets/scroll_safe_dialog.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../../utils/geohash.dart';
@@ -54,7 +56,7 @@ class _SchemeItem {
 }
 
 // Owner Projects search query (simple client-side filter)
-final projectsSearchQueryProvider = StateProvider<String>((ref) => '');
+final projectsSearchQueryProvider = StateProvider.autoDispose<String>((ref) => '');
 final projectsGridViewProvider = StateProvider<bool>((ref) {
   try {
     final prefs = ref.read(sharedPrefsProvider);
@@ -314,18 +316,37 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
               bottom: 0,
               width: (screenW * 0.85).clamp(260, 320).toDouble(),
               child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Material(
-                    elevation: 0,
-                    borderRadius: BorderRadius.circular(16),
-                    clipBehavior: Clip.antiAlias,
-                    child: AppSidebar(
-                      selectedIndex: _index,
-                      onSelect: (i) => setState(() {
-                        _index = i;
-                        _sidebarOpen = false; // auto close on selection on small screens
-                      }),
+                child: Shortcuts(
+                  shortcuts: <LogicalKeySet, Intent>{
+                    LogicalKeySet(LogicalKeyboardKey.escape): DismissIntent(),
+                  },
+                  child: Actions(
+                    actions: {
+                      DismissIntent: CallbackAction<DismissIntent>(
+                        onInvoke: (intent) {
+                          if (_sidebarOpen) setState(() => _sidebarOpen = false);
+                          return null;
+                        },
+                      ),
+                    },
+                    child: FocusScope(
+                      canRequestFocus: true,
+                      autofocus: true,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Material(
+                          elevation: 0,
+                          borderRadius: BorderRadius.circular(16),
+                          clipBehavior: Clip.antiAlias,
+                          child: AppSidebar(
+                            selectedIndex: _index,
+                            onSelect: (i) => setState(() {
+                              _index = i;
+                              _sidebarOpen = false; // auto close on selection on small screens
+                            }),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -360,7 +381,8 @@ class _ProjectsPage extends ConsumerWidget {
   final projectsAsync = ref.watch(ownerProjectsProvider);
   final query = ref.watch(projectsSearchQueryProvider);
   return Scaffold(
-  body: cached.when(
+    body: SafeArea(
+      child: cached.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, st) {
           // Log Firestore index URL (if present) to console for copy-paste and hide from UI
@@ -397,10 +419,12 @@ class _ProjectsPage extends ConsumerWidget {
             }).toList();
           }
           if (!hadAny) {
-            return const NoData(
-              title: 'No projects yet',
-              message: 'Create your first project to get started.',
-              asset: 'assets/no_projects.svg',
+            return const Center(
+              child: NoData(
+                title: 'No projects yet',
+                message: 'Create your first project to get started.',
+                asset: 'assets/no_projects.svg',
+              ),
             );
           }
           final total = projects.length;
@@ -564,6 +588,17 @@ class _ProjectsPage extends ConsumerWidget {
                       ),
                     ),
                   ),
+                if (q.isEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: NoData(
+                        title: 'No projects',
+                        message: 'Projects will appear here once created.',
+                        asset: 'assets/no_projects.svg',
+                      ),
+                    ),
+                  ),
                 if (lateProjects.isNotEmpty)
                   SliverToBoxAdapter(
                     child: Padding(
@@ -650,7 +685,8 @@ class _ProjectsPage extends ConsumerWidget {
           });
         },
       ),
-    );
+    ),
+  );
   }
 
 }
@@ -1230,12 +1266,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
 
   // Render a label with required indicator
   InputDecoration _req(String label, {Widget? prefixIcon}) => InputDecoration(
-        label: Row(mainAxisSize: MainAxisSize.min, children: [
-          Flexible(child: Text(label)),
-          const Text(' *', style: TextStyle(color: Colors.red)),
-          const SizedBox(width: 4),
-          Text('(required)', style: Theme.of(context).textTheme.labelSmall),
-        ]),
+        label: RequiredLabel(label),
         prefixIcon: prefixIcon,
       );
 
@@ -2193,7 +2224,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       _pair(
         _amountField(
           _installment1AmountCtrl,
-          'Installment 1 Amount * (required)',
+          'Installment 1 Amount *',
           required: true,
           extraValidator: sumErrorFor,
         ),
@@ -3106,19 +3137,28 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                   final gpsOk = _lat != null && _lng != null;
                   final adminOk = adminDocCnt > 0;
                   final canCreate = textsOk && mobilesOk && blockOk && gpOk && villageOk && gpsOk && techOk && adminOk && !_saving;
+                  Future<T?> _showScrollSafeDialog<T>(Widget Function(BuildContext) builder) => showScrollSafeDialog<T>(context: context, builder: builder);
+
                   final resetBtn = OutlinedButton.icon(
                     onPressed: _saving ? null : () async {
-                        final confirmed = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Reset form?'),
-                            content: const Text('This will clear all fields and the saved local draft.'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-                              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Reset')),
-                            ],
-                          ),
-                        );
+                        final confirmed = await _showScrollSafeDialog<bool>((ctx) => Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Reset form?', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 12),
+                            const Text('This will clear all fields and the saved local draft.'),
+                            const SizedBox(height: 20),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+                                const SizedBox(width: 8),
+                                FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Reset')),
+                              ],
+                            )
+                          ],
+                        ));
                         if (confirmed == true) {
                           await _resetForm();
                           if (mounted) {
@@ -3141,22 +3181,29 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     final auth = await ref.read(authRepositoryProvider).currentUser();
                     if (auth == null) return false;
                     if (auth.role == UserRole.devAdmin) return true;
-                    return await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Confirm and proceed'),
-                            content: const Text(
-                              'I confirm the project details are accurate to the best of my knowledge. '
-                              'Submitting false or misleading data may lead to rejection or action. '
-                              'This creates a new project and an audit trail will be recorded.',
-                            ),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-                              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('I understand')),
-                            ],
-                          ),
-                        ) ==
-                        true;
+                    final ok = await _showScrollSafeDialog<bool>((ctx) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Confirm and proceed', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'I confirm the project details are accurate to the best of my knowledge.\n\n'
+                          'Submitting false or misleading data may lead to rejection or action.\n\n'
+                          'This creates a new project and an audit trail will be recorded.',
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+                            const SizedBox(width: 8),
+                            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('I understand')),
+                          ],
+                        )
+                      ],
+                    ));
+                    return ok == true;
                   }
                   final saveBtn = FilledButton.icon(
                     onPressed: canCreate
@@ -3324,42 +3371,90 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 return;
                               }
                               // Final confirmation before creating (irreversible)
-                              final confirm = await showDialog<bool>(
-                                context: context,
-                                builder: (ctx) {
-                                  final workPhotoCnt = _mediaStore?.list(category: 'work_photo').length ?? 0;
-                                  final workDocCnt = _mediaStore?.list(category: 'work_doc').length ?? 0;
-                                  final certCnt2 = _mediaStore?.list(category: 'work_cert').length ?? 0;
-                                  return AlertDialog(
-                                    title: const Text('Create project?'),
-                                    content: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        const Text('Please confirm all details are correct. This action cannot be undone.'),
-                                        const SizedBox(height: 8),
-                                        Text('Attachments: $workPhotoCnt photos, $workDocCnt docs, $certCnt2 certificates'),
-                                            if (_startDateCtrl.text.trim().isNotEmpty) ...[
-                                              const SizedBox(height: 4),
-                                              Text('Start: ${_startDateCtrl.text.trim()}'),
-                                            ],
-                                            if (_endDateCtrl.text.trim().isNotEmpty) ...[
-                                              const SizedBox(height: 4),
-                                              Text('End: ${_endDateCtrl.text.trim()}'),
-                                            ],
-                                            if (_deadlineCtrl.text.trim().isNotEmpty) ...[
-                                              const SizedBox(height: 4),
-                                              Text('Deadline: ${_deadlineCtrl.text.trim()}'),
-                                            ],
-                                      ],
-                                    ),
-                                    actions: [
-                                      TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('No')),
-                                      FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Yes, create')),
+                              final confirm = await _showScrollSafeDialog<bool>((ctx) {
+                                final cs = Theme.of(ctx).colorScheme;
+                                final workPhotoCnt = _mediaStore?.list(category: 'work_photo').length ?? 0;
+                                final workDocCnt = _mediaStore?.list(category: 'work_doc').length ?? 0;
+                                final certCnt2 = _mediaStore?.list(category: 'work_cert').length ?? 0;
+                                final techDocCnt2 = _mediaStore?.list(category: 'sanction_tech_doc').length ?? 0;
+                                final techPhotoCnt2 = _mediaStore?.list(category: 'sanction_tech_photo').length ?? 0;
+                                final adminDocCnt2 = _mediaStore?.list(category: 'sanction_admin_doc').length ?? 0;
+                                final techOk2 = techDocCnt2 > 0 || (techPhotoCnt2 > 0 && techPhotoCnt2 <= 3);
+                                Widget bullet(String label, String value, {bool ok = true}) => Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(ok ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.xmark_octagon_fill, size: 16, color: ok ? cs.primary : cs.error),
+                                      const SizedBox(width: 6),
+                                      Expanded(child: RichText(text: TextSpan(style: Theme.of(ctx).textTheme.bodySmall, children: [
+                                        TextSpan(text: '$label: ', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                        TextSpan(text: value),
+                                      ]))),
                                     ],
-                                  );
-                                },
-                              );
+                                  ),
+                                );
+                                return Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Create project?', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                                    const SizedBox(height: 12),
+                                    Text('Review & confirm. After creation, editing requires proper permissions.', style: Theme.of(ctx).textTheme.bodySmall),
+                                    const SizedBox(height: 12),
+                                    Text('Section Summary', style: Theme.of(ctx).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 6),
+                                    bullet('Preliminary', prelimDone ? 'Complete' : 'Incomplete', ok: prelimDone),
+                                    bullet('Sanction & Compliance', sanctionDone ? 'Complete' : 'Incomplete', ok: sanctionDone),
+                                    bullet('Allotment Details', allotmentDone ? 'Complete' : 'Incomplete', ok: allotmentDone),
+                                    bullet('Work Description', workDone ? 'Complete' : 'Incomplete', ok: workDone),
+                                    const SizedBox(height: 12),
+                                    Text('Gating Checks', style: Theme.of(ctx).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 6),
+                                    bullet('Technical Approval', techOk2 ? (techDocCnt2 > 0 ? '$techDocCnt2 doc(s)' : '$techPhotoCnt2 photo(s)') : 'Missing', ok: techOk2),
+                                    bullet('Admin Approval Docs', adminDocCnt2 > 0 ? '$adminDocCnt2 doc(s)' : 'Missing', ok: adminDocCnt2 > 0),
+                                    bullet('GPS Location', (_lat != null && _lng != null) ? 'Captured' : 'Missing', ok: _lat != null && _lng != null),
+                                    bullet('Certificates (if completed)', _selectedWorkStage == WorkStage.completed ? (certCnt2 > 0 ? '$certCnt2 doc(s)' : 'Missing') : 'Not required', ok: _selectedWorkStage != WorkStage.completed || certCnt2 > 0),
+                                    const SizedBox(height: 12),
+                                    Text('Media Overview', style: Theme.of(ctx).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 6),
+                                    Text('Work Photos: $workPhotoCnt • Work Docs: $workDocCnt • Certificates: $certCnt2', style: Theme.of(ctx).textTheme.bodySmall),
+                                    if (_startDateCtrl.text.trim().isNotEmpty || _endDateCtrl.text.trim().isNotEmpty) ...[
+                                      const SizedBox(height: 12),
+                                      Text('Schedule', style: Theme.of(ctx).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                                      const SizedBox(height: 4),
+                                      if (_startDateCtrl.text.trim().isNotEmpty) Text('Start: ${_startDateCtrl.text.trim()}', style: Theme.of(ctx).textTheme.bodySmall),
+                                      if (_endDateCtrl.text.trim().isNotEmpty) Text('End: ${_endDateCtrl.text.trim()}', style: Theme.of(ctx).textTheme.bodySmall),
+                                      if (_deadlineCtrl.text.trim().isNotEmpty) Text('Deadline: ${_deadlineCtrl.text.trim()}', style: Theme.of(ctx).textTheme.bodySmall),
+                                    ],
+                                    const SizedBox(height: 18),
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: cs.errorContainer.withValues(alpha: 0.5),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Icon(CupertinoIcons.exclamationmark_triangle_fill, size: 18, color: cs.error),
+                                          const SizedBox(width: 8),
+                                          Expanded(child: Text('Submitting creates an immutable project record. Ensure accuracy before proceeding.', style: Theme.of(ctx).textTheme.bodySmall)),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 18),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.end,
+                                      children: [
+                                        TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+                                        const SizedBox(width: 8),
+                                        FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Create Project')),
+                                      ],
+                                    )
+                                  ],
+                                );
+                              });
                               if (confirm != true) return;
                               // Save a lightweight draft now (after dialog) before heavy operations
                               await _saveDraftLocally();
@@ -4280,15 +4375,35 @@ class _PageScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 44,
+        toolbarHeight: 48,
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(CupertinoIcons.bars),
-          onPressed: onMenu,
-          tooltip: 'Sidebar',
+        titleSpacing: 0,
+        leadingWidth: 48 + (Theme.of(context).platform == TargetPlatform.android ? 4 : 0),
+        leading: Row(
+          children: [
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(CupertinoIcons.bars),
+              onPressed: onMenu,
+              tooltip: 'Sidebar',
+            ),
+            if (Theme.of(context).platform == TargetPlatform.android)
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+          ],
         ),
-        title: const SizedBox.shrink(),
+        automaticallyImplyLeading: false,
+        title: Theme.of(context).platform == TargetPlatform.android ? const SizedBox.shrink() : Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         centerTitle: false,
       ),
       body: child,

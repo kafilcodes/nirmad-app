@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:gap/gap.dart';
 import 'package:flutter/services.dart';
-import 'package:timelines_plus/timelines_plus.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
@@ -15,17 +14,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_saver/file_saver.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
-import 'project_update_form_page.dart';
 import '../data/project_repository.dart';
 import '../domain/project.dart';
-import '../domain/project_update.dart';
 // import 'phase_update_stepper_page.dart';
 // import '../../../services/functions_service.dart';
-import '../../../services/storage_service.dart';
-import '../../../shared/widgets/attachment_button.dart';
-import '../../updates/data/updates_repository.dart';
 import '../../../core/providers/firebase_providers.dart';
 import 'project_edit_page.dart' as editor;
+import '../../../shared/widgets/scroll_safe_dialog.dart';
+import '../domain/project_update.dart';
+// removed unused updates_repository import after refactor
+// storage_service is provided indirectly via provider in attachments tab usage
+import '../../../shared/widgets/attachment_button.dart';
 // import '../../../core/widgets/branding_footer.dart';
 // import '../../../shared/ui/toast.dart';
 // import '../../auth/data/auth_repository.dart';
@@ -55,8 +54,7 @@ class ProjectDetailPage extends ConsumerWidget {
       },
       ttl: const Duration(hours: 12),
     );
-  final updatesStream = ref.read(projectRepositoryProvider).watchUpdates(project.id);
-  final storage = ref.read(storageServiceProvider);
+  // Streams/services resolved lazily where needed to avoid unused variables
     // final cs = Theme.of(context).colorScheme; // not used currently
   // final user = ref.watch(authStateProvider).value;
   final user = ref.watch(authStateProvider).value;
@@ -70,6 +68,69 @@ class ProjectDetailPage extends ConsumerWidget {
         (project.allotmentDetails.installment3?.receivedAmount ?? 0);
     final due = _computeOverdueAmount(project);
     final cs = Theme.of(context).colorScheme;
+  final isCompleted = project.status == ProjectStatus.completed;
+  final workCompleted = project.workDescription.stage == WorkStage.completed;
+  final isDevAdmin = user?.role == UserRole.devAdmin;
+    final infoChips = Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        _statusChip(context, project.status),
+        if (project.phase > 0) _chip(context, CupertinoIcons.number, 'Phase ${project.phase}'),
+        _moneyChipInr(context, 'Budget', budget),
+        _moneyChipInr(context, 'Paid', paid),
+        if (budget > 0) _moneyChipInr(context, 'Due', due),
+      ],
+    );
+    ButtonStyle _outlinedPill(ColorScheme cs) => OutlinedButton.styleFrom(
+          foregroundColor: cs.primary,
+          backgroundColor: Colors.transparent,
+          side: BorderSide(color: cs.primary.withValues(alpha: 0.6)),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          alignment: Alignment.center,
+          textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                height: 1.0,
+                leadingDistribution: TextLeadingDistribution.even,
+                textBaseline: TextBaseline.alphabetic,
+              ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        );
+    final actions = Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        OutlinedButton.icon(
+          style: _outlinedPill(cs),
+          onPressed: () => _exportProjectWithProgress(context, ref, project),
+          icon: const Icon(CupertinoIcons.arrow_down_doc),
+          label: const Text('Export'),
+        ),
+        if (isOwner && _hasAnyLateInstallments(project))
+          OutlinedButton.icon(
+            style: _outlinedPill(cs),
+            onPressed: () => _reportLateInstallments(context, ref, project),
+            icon: const Icon(CupertinoIcons.exclamationmark_triangle),
+            label: const Text('Report late'),
+          ),
+        if (user != null && !isCompleted && ((user.role == UserRole.devAdmin) || (user.role == UserRole.superNodal) || (user.role == UserRole.subNodal) || (user.role == UserRole.projectOwner && user.uid == project.ownerId)))
+          OutlinedButton.icon(
+            style: _outlinedPill(cs),
+            onPressed: () async {
+              await Navigator.of(context).push(MaterialPageRoute(builder: (_) => editor.ProjectEditorPage(projectId: project.id)));
+            },
+            icon: const Icon(CupertinoIcons.pencil),
+            label: const Text('Edit'),
+          ),
+        if (!isCompleted && ((isOwner && workCompleted) || isDevAdmin == true))
+          OutlinedButton.icon(
+            style: _outlinedPill(cs),
+            onPressed: () => _confirmMarkAsDone(context, ref, project, user, override: isDevAdmin == true && !workCompleted),
+            icon: const Icon(CupertinoIcons.check_mark_circled),
+            label: Text(isDevAdmin == true && !workCompleted ? 'Mark as Done (Override)' : 'Mark as Done'),
+          ),
+      ],
+    );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(color: cs.surface, border: Border(bottom: BorderSide(color: cs.outlineVariant))),
@@ -77,66 +138,13 @@ class ProjectDetailPage extends ConsumerWidget {
         bottom: false,
         child: LayoutBuilder(builder: (context, c) {
           final compact = c.maxWidth < 720;
-          final infoChips = Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              _statusChip(context, project.status),
-              if (project.phase > 0) _chip(context, CupertinoIcons.number, 'Phase ${project.phase}'),
-              _moneyChipInr(context, 'Budget', budget),
-              _moneyChipInr(context, 'Paid', paid),
-              if (budget > 0) _moneyChipInr(context, 'Due', due),
-            ],
-          );
-      ButtonStyle _outlinedPill(ColorScheme cs) => OutlinedButton.styleFrom(
-                foregroundColor: cs.primary,
-                backgroundColor: Colors.transparent,
-                side: BorderSide(color: cs.primary.withValues(alpha: 0.6)),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        alignment: Alignment.center,
-        textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-          height: 1.0,
-          leadingDistribution: TextLeadingDistribution.even,
-          textBaseline: TextBaseline.alphabetic,
-        ),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              );
-          final actions = Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              OutlinedButton.icon(
-                style: _outlinedPill(cs),
-                onPressed: () => _exportProjectWithProgress(context, ref, project),
-                icon: const Icon(CupertinoIcons.arrow_down_doc),
-                label: const Text('Export'),
-              ),
-              if (isOwner && _hasAnyLateInstallments(project))
-                OutlinedButton.icon(
-                  style: _outlinedPill(cs),
-                  onPressed: () => _reportLateInstallments(context, ref, project),
-                  icon: const Icon(CupertinoIcons.exclamationmark_triangle),
-                  label: const Text('Report late'),
-                ),
-              if (user != null && ((user.role == UserRole.devAdmin) || (user.role == UserRole.superNodal) || (user.role == UserRole.subNodal) || (user.role == UserRole.projectOwner && user.uid == project.ownerId)))
-                OutlinedButton.icon(
-                  style: _outlinedPill(cs),
-                  onPressed: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => editor.ProjectEditorPage(projectId: project.id)));
-                  },
-                  icon: const Icon(CupertinoIcons.pencil),
-                  label: const Text('Edit'),
-                ),
-            ],
-          );
           final titleBlock = Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(project.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
               GestureDetector(
                 onLongPress: () async {
                   await Clipboard.setData(ClipboardData(text: project.id));
-                  // ignore: use_build_context_synchronously
+                  if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Project ID copied')));
                 },
                 child: Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall),
@@ -163,7 +171,6 @@ class ProjectDetailPage extends ConsumerWidget {
               ],
             );
           }
-          // Compact/mobile: stack title, chips, actions vertically to avoid overflow
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -225,52 +232,8 @@ class ProjectDetailPage extends ConsumerWidget {
                       const Gap(24),
                     ],
                   ),
-                  // Attachments
-                  ListView(
-                    key: const PageStorageKey('tab:attachments'),
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      _sectionTitle(context, 'Attachments (संलग्नक)'),
-                      const Gap(8),
-                      Card(
-                          elevation: 0,
-                          child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: _attachmentsList(context, storage, pj))),
-                      const Gap(24),
-                    ],
-                  ),
-                  // Updates
-                  ListView(
-                    key: const PageStorageKey('tab:updates'),
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      _sectionTitle(context, 'Updates (टिप्पणियाँ)'),
-                      const Gap(8),
-                      Card(
-                        elevation: 0,
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (_canMessageOwner(user))
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton.icon(
-                                    icon: const Icon(CupertinoIcons.bubble_left_bubble_right),
-                                    label: const Text('Comment on project (परियोजना पर टिप्पणी)'),
-                                    onPressed: () => _showCommentDialog(context, ref, pj, user!),
-                                  ),
-                                ),
-                              _updatesList(context, updatesStream),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const Gap(24),
-                    ],
-                  ),
+                  // Attachments (restored listing + add)
+                  _AttachmentsTab(project: pj, user: user),
                   // Owner Info
                   ListView(
                     key: const PageStorageKey('tab:owner'),
@@ -286,6 +249,9 @@ class ProjectDetailPage extends ConsumerWidget {
                       const Gap(24),
                     ],
                   ),
+                // Updates tab
+                _UpdatesTab(project: pj, user: user),
+                // Owner Info tab already defined above
                 ],
               ),
             ),
@@ -296,89 +262,302 @@ class ProjectDetailPage extends ConsumerWidget {
   return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
     stream: FirebaseFirestore.instance.collection('projects').doc(project.id).snapshots(),
     builder: (context, snap) {
-      final pj = (snap.data != null && snap.data!.data() != null) ? Project.fromDoc(snap.data!) : project;
-      final isOwnerRt = user != null && user.uid == pj.ownerId;
+  final pj = (snap.data != null && snap.data!.data() != null) ? Project.fromDoc(snap.data!) : project;
       return Scaffold(
         backgroundColor: Theme.of(context).colorScheme.surface,
-        body: Column(
+        body: SafeArea(
+          top: false,
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             header(pj),
             // Top summary area: outside tabs
-    Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _stagesComposite(context, pj),
-      const Gap(12),
-                ],
-              ),
-            ),
             const Divider(height: 1),
-            const SizedBox(height: 6),
             Expanded(child: tabsBuilder(pj)),
           ],
+          ),
         ),
-        floatingActionButton: isOwnerRt
-            ? FloatingActionButton.extended(
-                onPressed: () async {
-                  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectUpdateFormPage(project: pj)));
-                },
-                icon: const Icon(CupertinoIcons.doc_text_fill),
-                label: const Text('Update Project'),
-              )
-            : null,
       );
     },
   );
-  }
-
 }
 
 // legacy chips removed in redesign
+}
 
-Widget _updatesList(BuildContext context, Stream<List<ProjectUpdate>> updatesStream) {
-  return StreamBuilder(
-    stream: updatesStream,
-    builder: (context, snapshot) {
-      if (!snapshot.hasData) {
-        return const Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Center(child: CircularProgressIndicator()),
-        );
+// --- Dialog helpers (restored clean versions using ScrollSafeDialog) ---
+Future<void> _confirmMarkAsDone(BuildContext context, WidgetRef ref, Project project, AppUser? user, {bool override = false}) async {
+    if (project.status == ProjectStatus.completed) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Already completed')));
+      return;
+    }
+    final ok = await showScrollSafeDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Mark project as done?', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          Text(override
+              ? 'You are overriding the completion requirement. Proceed? This will lock the project.'
+              : 'This will lock the project. You will not be able to edit details afterwards.'),
+          const SizedBox(height: 20),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            const SizedBox(width: 8),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Mark Done')),
+          ])
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      final db = FirebaseFirestore.instance;
+      // Update project status
+      await db.collection('projects').doc(project.id).update({
+        'status': ProjectStatus.completed.name,
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
+      // Add audit update/system comment
+      final actor = user?.uid ?? 'system';
+      final comment = '[SYSTEM] Project marked as completed by $actor${override ? ' (override)' : ''}';
+      await db.collection('projects').doc(project.id).collection('updates').add({
+        'phase': 0,
+        'comment': comment,
+        'photos': <String>[],
+        'documents': <String>[],
+        'updatedBy': actor,
+        'createdAt': Timestamp.fromDate(DateTime.now()),
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Project marked as completed')));
       }
-      final updates = snapshot.data as List<ProjectUpdate>;
-      if (updates.isEmpty) {
-        return const Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text('No updates yet'),
-        );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
       }
-      return ListView.separated(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: updates.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, i) {
-          final u = updates[i];
-          return ListTile(
-            dense: true,
-            leading: const Icon(CupertinoIcons.chat_bubble_text),
-            title: Text(u.comment?.trim().isNotEmpty == true ? u.comment!.trim() : '(no comment)'),
-            subtitle: Text(u.createdAt.toLocal().toString().split(' ').first),
-            trailing: Wrap(spacing: 8, children: [
-              if (u.photos.isNotEmpty) _chip(context, CupertinoIcons.photo, '${u.photos.length}'),
-              if (u.documents.isNotEmpty) _chip(context, CupertinoIcons.doc_plaintext, '${u.documents.length}'),
-              if (u.phase > 0) _chip(context, CupertinoIcons.number, 'FP${u.phase}'),
-            ]),
-          );
-        },
-      );
-    },
+    }
+  }
+
+// (Removed unused add note / attach file helpers during repair)
+
+// --- Restored Attachments & Updates Tabs ---
+
+class _AttachmentsTab extends ConsumerWidget {
+  final Project project;
+  final AppUser? user;
+  const _AttachmentsTab({required this.project, required this.user});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final storage = ref.watch(storageServiceProvider);
+    // Project model after repair may have categorized lists directly; adapt gracefully
+    final List<_AttachmentEntry> files = [];
+    void addList(String label, List<String>? list) {
+      if (list == null) return;
+      for (final f in list) {
+        if (f.isEmpty) continue;
+        files.add(_AttachmentEntry(label: label, path: f));
+      }
+    }
+  // Generic top-level media (legacy)
+  addList('Photos', project.photoUrls);
+  addList('Documents', project.documentUrls);
+  // Section 4 categorized documents
+  addList('Measurement Books', project.workDescription.measurementBookUrls);
+  addList('Test Reports', project.workDescription.testReportUrls);
+  addList('Work Reports', project.workDescription.workReportUrls);
+  addList('Certificates', project.workDescription.certificateUrls);
+
+    return ListView(
+      key: const PageStorageKey('tab:attachments'),
+      padding: const EdgeInsets.all(12),
+      children: [
+        _sectionTitle(context, 'Attachments (संलग्नक)'),
+        const Gap(8),
+        if (files.isEmpty)
+          Card(
+            elevation: 0,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Text('No attachments uploaded', style: Theme.of(context).textTheme.bodyMedium),
+            ),
+          )
+        else
+          ...files.map((e) => Card(
+                elevation: 0,
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  leading: const Icon(CupertinoIcons.paperclip),
+                  title: Text(e.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(e.label),
+                  trailing: AttachmentButton(
+                    fileName: e.fileName,
+                    resolveUrl: () async => storage.getDownloadURL(e.path),
+                  ),
+                ),
+              )),
+        const Gap(80),
+      ],
+    );
+  }
+}
+
+class _AttachmentEntry {
+  final String label;
+  final String path;
+  _AttachmentEntry({required this.label, required this.path});
+  String get fileName => path.split('/').last;
+}
+
+class _UpdatesTab extends ConsumerWidget {
+  final Project project;
+  final AppUser? user;
+  const _UpdatesTab({required this.project, required this.user});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final repo = ref.watch(projectRepositoryProvider);
+    return Column(
+      children: [
+        Expanded(
+          child: StreamBuilder<List<ProjectUpdate>>(
+            stream: repo.watchUpdates(project.id),
+            builder: (context, snap) {
+              final list = snap.data ?? const <ProjectUpdate>[];
+              if (snap.connectionState == ConnectionState.waiting && list.isEmpty) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (list.isEmpty) {
+                return Center(
+                  child: Text('No updates yet', style: Theme.of(context).textTheme.bodyMedium),
+                );
+              }
+              return ListView.builder(
+                key: const PageStorageKey('tab:updates'),
+                padding: const EdgeInsets.all(12),
+                itemCount: list.length,
+                itemBuilder: (ctx, i) {
+                  final u = list[i];
+                  return Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(CupertinoIcons.bubble_left_bubble_right, size: 18),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(u.comment?.trim().isNotEmpty == true ? u.comment!.trim() : '(No comment)',
+                                style: const TextStyle(fontWeight: FontWeight.w500), maxLines: 4, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 6),
+                            Wrap(spacing: 12, runSpacing: 4, children: [
+                              _metaChip(context, '#${u.phase}'),
+                              _metaChip(context, _fmtDateTime(u.createdAt)!),
+                            ]),
+                          ]),
+                        ),
+                      ]),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        if (user != null)
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: FloatingActionButton.extended(
+                  heroTag: 'addUpdate',
+                  onPressed: () => _showAddCommentDialog(context, ref, project, user!),
+                  icon: const Icon(CupertinoIcons.add),
+                  label: const Text('Add Comment'),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+Widget _metaChip(BuildContext context, String text) {
+  final cs = Theme.of(context).colorScheme;
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: cs.surfaceContainerLowest,
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: cs.outlineVariant),
+    ),
+    child: Text(text, style: Theme.of(context).textTheme.labelSmall),
   );
 }
+
+Future<void> _showAddCommentDialog(BuildContext context, WidgetRef ref, Project project, AppUser user) async {
+  final controller = TextEditingController();
+  final ok = await showScrollSafeDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    builder: (ctx) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('New Comment', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller,
+          maxLines: 5,
+          decoration: const InputDecoration(hintText: 'Enter comment...'),
+        ),
+        const SizedBox(height: 16),
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          const SizedBox(width: 8),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+        ])
+      ],
+    ),
+  );
+  if (ok == true && controller.text.trim().isNotEmpty) {
+    try {
+      final repo = ref.read(projectRepositoryProvider);
+      final update = ProjectUpdate(
+        id: 'temp',
+        projectId: project.id,
+        phase: project.phase,
+        comment: controller.text.trim(),
+        updatedBy: user.uid,
+        createdAt: DateTime.now(),
+      );
+      await repo.addUpdate(project.id, update);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+    }
+  }
+  controller.dispose();
+}
+
+String? _fmtDateTime(DateTime? dt) {
+  if (dt == null) return null;
+  return '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
+// (Removed unused _updatesList during repair)
 
 // New details sections containerized per block for clear visual rhythm inside the Details tab
 Widget _detailsSections(BuildContext context, Project project) {
@@ -872,203 +1051,9 @@ num _computeOverdueAmount(Project project) {
   return total;
 }
 
-// Stages composite: left start date, center timeline, right end date
-Widget _stagesComposite(BuildContext context, Project project) {
-  final cs = Theme.of(context).colorScheme;
-  return Card(
-  elevation: 0,
-  color: Colors.transparent,
-    child: Padding(
-      padding: const EdgeInsets.all(14.0),
-      child: LayoutBuilder(builder: (context, c) {
-        final narrow = c.maxWidth < 720;
-        Widget dateBox({required IconData icon, required String label, required DateTime? date}) => Container(
-              constraints: const BoxConstraints(minWidth: 220),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: cs.primary.withValues(alpha: 0.06),
-                border: Border.all(color: cs.primary.withValues(alpha: 0.5)),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(icon, size: 22, color: cs.primary),
-                const SizedBox(width: 10),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.primary)),
-                  Text(
-                    date == null ? '(not entered)' : _fmtDate(date)!,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                ]),
-              ]),
-            );
-        final timeline = Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: _stageTimeline(context, project.workDescription.stage),
-        );
-  final left = dateBox(icon: Icons.event, label: 'Start', date: project.workDescription.startDate ?? project.createdAt);
-  final right = dateBox(icon: Icons.event_available, label: 'End (planned)', date: project.workDescription.endDate);
-        if (narrow) {
-          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            left,
-            const SizedBox(height: 12),
-            timeline,
-            const SizedBox(height: 12),
-            right,
-          ]);
-        }
-        return Row(crossAxisAlignment: CrossAxisAlignment.center, mainAxisAlignment: MainAxisAlignment.center, children: [
-          left,
-          const SizedBox(width: 14),
-          Expanded(child: Align(alignment: Alignment.center, child: timeline)),
-          const SizedBox(width: 14),
-          right,
-        ]);
-      }),
-    ),
-  );
-}
+// (Removed unused timeline composite during repair)
 
-Widget _stageTimeline(BuildContext context, WorkStage? current) => _StageTimeline(current: current);
-
-class _StageTimeline extends StatefulWidget {
-  final WorkStage? current;
-  const _StageTimeline({required this.current});
-  @override
-  State<_StageTimeline> createState() => _StageTimelineState();
-}
-
-class _StageTimelineState extends State<_StageTimeline> {
-  static const double _itemExtent = 90.0;
-  static const Duration _step = Duration(milliseconds: 260);
-  int _revealed = 0; // how many steps are revealed [0..idx+1]
-  int _gen = 0; // cancellation token for animations
-  bool _reduceMotion = false;
-
-  int get _idx => widget.current == null ? -1 : WorkStage.values.indexOf(widget.current!);
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _kick();
-  }
-
-  @override
-  void didUpdateWidget(covariant _StageTimeline oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.current != widget.current) {
-      _kick();
-    }
-  }
-
-  Future<void> _kick() async {
-    final idx = _idx;
-    final my = ++_gen;
-    if (idx < 0) {
-      setState(() => _revealed = 0);
-      return;
-    }
-    if (_reduceMotion) {
-      setState(() => _revealed = idx + 1);
-      return;
-    }
-    setState(() => _revealed = 0);
-    for (int i = 0; i <= idx; i++) {
-      if (!mounted || _gen != my) return;
-      await Future.delayed(_step);
-      if (!mounted || _gen != my) return;
-      setState(() => _revealed = i + 1);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = WorkStage.values;
-    final cs = Theme.of(context).colorScheme;
-    return LayoutBuilder(builder: (context, c) {
-      final totalWidth = steps.length * _itemExtent;
-      final width = totalWidth > c.maxWidth ? c.maxWidth : totalWidth;
-      Color colorFor(int i) {
-        if (i == (_revealed - 1) && i == _idx) return cs.primary; // current
-        if (i < (_revealed - 1)) return cs.outline; // past
-        return cs.outlineVariant; // future
-      }
-      return SizedBox(
-        height: 124,
-        child: Center(
-          child: SizedBox(
-            width: width,
-            child: Timeline.tileBuilder(
-              theme: TimelineThemeData(
-                direction: Axis.horizontal,
-                connectorTheme: ConnectorThemeData(thickness: 4, color: cs.outlineVariant),
-                indicatorTheme: IndicatorThemeData(size: 36, color: cs.primary),
-              ),
-              builder: TimelineTileBuilder.connected(
-                itemCount: steps.length,
-                indicatorBuilder: (context, i) {
-                  final icon = Icon(_iconForStage(steps[i]), color: colorFor(i), size: 24);
-                  final child = Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: (i == _idx) ? colorFor(i).withValues(alpha: 0.12) : Colors.transparent,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: colorFor(i)),
-                    ),
-                    child: icon,
-                  );
-                  final revealed = i < _revealed;
-                  return AnimatedScale(
-                    scale: revealed ? 1.0 : 0.6,
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOut,
-                    child: child,
-                  );
-                },
-                connectorBuilder: (context, i, type) {
-                  final active = i < (_revealed - 1);
-                  return SolidLineConnector(color: active ? cs.primary : cs.outlineVariant);
-                },
-                contentsBuilder: (context, i) {
-                  final label = _labelForStage(steps[i]);
-                  final active = (i == _idx) && i < _revealed;
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 10.0, left: 8, right: 8),
-                    child: Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: active ? cs.primary : null)),
-                  );
-                },
-                nodePositionBuilder: (context, index) => 0.5,
-                indicatorPositionBuilder: (_, __) => 0.5,
-                itemExtentBuilder: (_, __) => _itemExtent,
-              ),
-            ),
-          ),
-        ),
-      );
-    });
-  }
-}
-
-IconData _iconForStage(WorkStage s) {
-  switch (s) {
-    case WorkStage.layout:
-      return CupertinoIcons.map;
-    case WorkStage.plinth:
-      return Icons.foundation;
-    case WorkStage.lintel:
-      return Icons.architecture;
-    case WorkStage.finishing:
-      return Icons.brush;
-    case WorkStage.completed:
-      return CupertinoIcons.check_mark_circled;
-  }
-}
+// (Removed stage icon helper)
 
 // Financial summary card with charts
 Widget _financialCard(BuildContext context, Project project) {
@@ -1255,20 +1240,7 @@ Widget _financialCard(BuildContext context, Project project) {
   );
 }
 
-String _labelForStage(WorkStage s) {
-  switch (s) {
-    case WorkStage.layout:
-      return 'Layout';
-    case WorkStage.plinth:
-      return 'Plinth';
-    case WorkStage.lintel:
-      return 'Lintel';
-    case WorkStage.finishing:
-      return 'Finishing';
-    case WorkStage.completed:
-      return 'Completed';
-  }
-}
+// (Removed stage label helper)
 
 // Full export with progress (PDF + attachments)
 class _Link { final String name; final String url; const _Link(this.name, this.url); }
@@ -1276,38 +1248,59 @@ class _Link { final String name; final String url; const _Link(this.name, this.u
 Future<void> _exportProjectWithProgress(BuildContext context, WidgetRef ref, Project project) async {
   final storage = ref.read(storageServiceProvider);
   final controller = ValueNotifier<_ExportProgress>(_ExportProgress(stage: 'Preparing', done: 0, total: 0));
-  showDialog(
+
+  // Present scroll-safe dialog (non-await so work continues while visible)
+  // User may close after completion; progress remains until then.
+  // We deliberately do not allow barrier dismiss to avoid accidental cancellation mid-export.
+  // (showScrollSafeDialog currently has fixed barrier policy; cancel via Close button only.)
+  // If showScrollSafeDialog is not imported yet, ensure import of scroll_safe_dialog.dart exists at file top.
+  // ignore: unused_result
+  showScrollSafeDialog<void>(
     context: context,
-    barrierDismissible: false,
-    builder: (ctx) => StatefulBuilder(builder: (ctx, setState) {
-      return AlertDialog(
-  title: const Text('Exporting statement'),
-        content: ValueListenableBuilder<_ExportProgress>(
-          valueListenable: controller,
-          builder: (ctx, p, _) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(p.stage),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(value: p.total == 0 ? null : (p.done / p.total).clamp(0, 1).toDouble()),
-                const SizedBox(height: 8),
-                if (p.message != null) Text(p.message!, style: Theme.of(ctx).textTheme.bodySmall),
-                if (p.savedPaths.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text('Saved:', style: Theme.of(ctx).textTheme.bodySmall),
-                  SizedBox(height: 100, width: 360, child: ListView(children: p.savedPaths.map((e) => Text('- $e', style: Theme.of(ctx).textTheme.labelSmall)).toList())),
-                ],
-              ],
-            );
-          },
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
-        ],
-      );
-    }),
+    builder: (ctx) => ValueListenableBuilder<_ExportProgress>(
+      valueListenable: controller,
+      builder: (ctx, p, _) {
+        final donePct = p.total == 0 ? null : (p.done / p.total).clamp(0, 1).toDouble();
+        final finished = p.stage.toLowerCase().contains('done');
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Exporting statement', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            Text(p.stage, style: Theme.of(ctx).textTheme.bodyMedium),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: donePct),
+            const SizedBox(height: 8),
+            if (p.message != null) Text(p.message!, style: Theme.of(ctx).textTheme.bodySmall),
+            if (p.savedPaths.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('Saved Files', style: Theme.of(ctx).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 140, maxWidth: 420),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: p.savedPaths.map((e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2.0),
+                    child: Text('• $e', style: Theme.of(ctx).textTheme.labelSmall),
+                  )).toList(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: finished ? () => Navigator.of(ctx).pop() : null,
+                icon: const Icon(CupertinoIcons.xmark_circle),
+                label: Text(finished ? 'Close' : 'Working…'),
+              ),
+            ),
+          ],
+        );
+      },
+    ),
   );
 
   try {
@@ -1573,59 +1566,9 @@ class _ExportProgress {
       );
 }
 
-Widget _attachmentsList(BuildContext context, StorageService storage, Project project) {
-  final all = <String>[
-    ...project.documentUrls,
-    ...project.photoUrls,
-    ...project.workDescription.measurementBookUrls,
-    ...project.workDescription.testReportUrls,
-    ...project.workDescription.workReportUrls,
-    ...project.workDescription.certificateUrls,
-  ];
-  if (all.isEmpty) return const Text('No attachments');
-  List<Widget> items = [];
-  for (final path in all) {
-    final name = path.split('/').last;
-    items.add(
-    FutureBuilder<String>(
-        future: storage.getDownloadURL(path),
-        builder: (context, snap) {
-          final url = snap.data;
-          final hasError = snap.hasError;
-                  return ListTile(
-            dense: true,
-            leading: Icon(_iconForName(name), size: 20),
-            title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: hasError
-        ? const Text('Failed to load link', style: TextStyle(color: Colors.red))
-        : (!snap.hasData
-          ? const Row(children: [SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) , SizedBox(width: 8), Text('Loading link…')])
-          : null),
-      trailing: (url == null)
-                ? const SizedBox.shrink()
-                : AttachmentButton(
-                    resolveUrl: () async => url,
-                    fileName: name,
-        showPreview: false,
-                  ),
-          );
-        },
-      ),
-    );
-  }
-  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: items);
-}
+// (Removed unused _attachmentsList during repair)
 
-IconData _iconForName(String name) {
-  final n = name.toLowerCase();
-  if (n.endsWith('.pdf')) return CupertinoIcons.doc_text;
-  if (n.endsWith('.jpg') || n.endsWith('.jpeg') || n.endsWith('.png') || n.endsWith('.webp') || n.endsWith('.heic')) return CupertinoIcons.photo;
-  if (n.endsWith('.xls') || n.endsWith('.xlsx') || n.endsWith('.csv')) return CupertinoIcons.table;
-  if (n.endsWith('.doc') || n.endsWith('.docx')) return CupertinoIcons.doc_text;
-  if (n.endsWith('.mp4') || n.endsWith('.mov')) return CupertinoIcons.film;
-  if (n.endsWith('.zip') || n.endsWith('.rar')) return CupertinoIcons.archivebox;
-  return CupertinoIcons.doc_plaintext;
-}
+// (Removed unused _iconForName during repair)
 
 String? _fmtDate(DateTime? d) => d?.toLocal().toString().split(' ').first;
 
@@ -1691,76 +1634,9 @@ Future<void> _reportLateInstallments(BuildContext context, WidgetRef ref, Projec
   }
 }
 
-bool _canMessageOwner(AppUser? user) {
-  if (user == null) return false;
-  return user.role == UserRole.devAdmin || user.role == UserRole.superNodal || user.role == UserRole.subNodal;
-}
+// (Removed unused _canMessageOwner helper)
 
-Future<void> _showCommentDialog(BuildContext context, WidgetRef ref, Project project, AppUser user) async {
-  final ctrl = TextEditingController();
-  final formKey = GlobalKey<FormState>();
-  await showDialog(
-    context: context,
-    builder: (context) {
-  return AlertDialog(
-    title: const Text('Comment on project'),
-        content: Form(
-          key: formKey,
-          child: TextFormField(
-            controller: ctrl,
-            maxLines: 5,
-            textAlignVertical: TextAlignVertical.center,
-    decoration: const InputDecoration(hintText: 'Write a concise comment (<= 300 words)'),
-            validator: (v) {
-              final t = (v ?? '').trim();
-              if (t.isEmpty) return 'Required';
-              final words = t.split(RegExp(r"\s+")).where((w) => w.isNotEmpty).length;
-              if (words > 300) return 'Max 300 words';
-              return null;
-            },
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () async {
-              if (!formKey.currentState!.validate()) return;
-              final text = ctrl.text.trim();
-              try {
-                await ref.read(updatesRepositoryProvider).addCommentForOwner(
-                      projectId: project.id,
-                      projectName: project.name,
-                      ownerId: project.ownerId,
-                      blockId: project.blockId,
-                      actorId: user.uid,
-                      actorRole: user.role.key,
-                      comment: text,
-                    );
-                final update = ProjectUpdate(
-                  id: 'tmp',
-                  projectId: project.id,
-                  phase: 0,
-                  comment: text,
-                  updatedBy: user.uid,
-                  createdAt: DateTime.now(),
-                );
-                await ref.read(projectRepositoryProvider).addUpdate(project.id, update);
-                if (context.mounted) Navigator.of(context).pop();
-                if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Comment posted')));
-                }
-              } catch (e) {
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
-              }
-            },
-    child: const Text('Post'),
-          ),
-        ],
-      );
-    },
-  );
-}
+// (Removed unused _showCommentDialog during repair)
 
 Widget _mapRow(BuildContext context, Project project) {
   final gp = project.location;

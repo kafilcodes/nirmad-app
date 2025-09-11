@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:nirmadapp/src/shared/widgets/required_label.dart';
+import '../../../shared/widgets/scroll_safe_dialog.dart';
+import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
  import 'package:file_picker/file_picker.dart';
@@ -142,18 +145,25 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
   }
 
   Future<bool> _confirmDisclaimer() async {
-    final res = await showDialog<bool>(
+    final res = await showScrollSafeDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Confirm and proceed'),
-        content: const Text(
-          'I confirm the information provided is accurate to the best of my knowledge. '
-          'Submitting false or misleading data may lead to rejection or action. '
-          'Your changes will be recorded with timestamp.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('I understand')),
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Confirm and proceed', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          const Text(
+            'I confirm the information provided is accurate to the best of my knowledge.\n\n'
+            'Submitting false or misleading data may lead to rejection or action.\n\n'
+            'Your changes will be recorded with timestamp.',
+          ),
+          const SizedBox(height: 20),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            const SizedBox(width: 8),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('I understand')),
+          ])
         ],
       ),
     );
@@ -327,14 +337,22 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
 
   Future<bool> _onWillPop() async {
     if (!_dirty || _saving) return true;
-    final res = await showDialog<bool>(
+    final res = await showScrollSafeDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(children:[const Icon(CupertinoIcons.exclamationmark_triangle, color: Colors.amber), const SizedBox(width: 8), const Text('Discard changes?')]),
-        content: const Text('You have unsaved edits. This action cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Keep editing')),
-          FilledButton.icon(onPressed: () => Navigator.of(ctx).pop(true), icon: const Icon(CupertinoIcons.trash), label: const Text('Discard')),
+      barrierDismissible: false,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children:[const Icon(CupertinoIcons.exclamationmark_triangle, color: Colors.amber), const SizedBox(width: 8), Text('Discard changes?', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600))]),
+          const SizedBox(height: 12),
+          const Text('You have unsaved edits. This action cannot be undone.'),
+          const SizedBox(height: 20),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Keep editing')),
+            const SizedBox(width: 8),
+            FilledButton.icon(onPressed: () => Navigator.of(ctx).pop(true), icon: const Icon(CupertinoIcons.trash), label: const Text('Discard')),
+          ])
         ],
       ),
     );
@@ -584,7 +602,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                   context: context,
                   builder: (ctx) => AlertDialog(
                     title: const Text('Reset changes?'),
-                    content: const Text('Reload last saved data and discard your edits?'),
+                    content: _scrollWrap(ctx, const Text('Reload last saved data and discard your edits?')),
                     actions: [
                       TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
                       FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Reset')),
@@ -1897,6 +1915,17 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
   }
 }
 
+  Widget _scrollWrap(BuildContext context, Widget child, {double maxWidth = 420, double maxHeightFactor = 0.65}) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final w = math.min(constraints.maxWidth, maxWidth);
+      final h = MediaQuery.of(context).size.height * maxHeightFactor;
+      return ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: w, maxHeight: h),
+        child: SingleChildScrollView(child: child),
+      );
+    });
+  }
+
 Widget _sectionTitle(BuildContext context, String title) => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 6.0),
       child: Text(
@@ -2127,7 +2156,7 @@ class _UploadButton extends StatelessWidget {
 
 // Helper to build required-field labels
 InputDecoration _reqDecoration(String label, Icon prefix) => InputDecoration(
-      label: RichText(text: TextSpan(text: label, style: const TextStyle(color: Colors.grey), children: const [TextSpan(text: ' *', style: TextStyle(color: Colors.red))])),
+      label: RequiredLabel(label, style: const TextStyle(color: Colors.grey)),
       prefixIcon: prefix,
     );
 

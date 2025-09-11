@@ -245,7 +245,8 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SingleChildScrollView(
+      body: SafeArea(
+        child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Center(
           child: ConstrainedBox(
@@ -649,7 +650,8 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
         ),
-      ),
+  ),
+  ),
     );
   }
 

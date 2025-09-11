@@ -23,7 +23,7 @@ class _NotifDoc {
 }
 
 final _notifSortNewestFirstProvider = StateProvider<bool>((ref) => true);
-final _notifSearchProvider = StateProvider<String>((ref) => '');
+final _notifSearchProvider = StateProvider.autoDispose<String>((ref) => '');
 // Per-notification toggle to show/hide long comments (default hidden)
 final _commentExpandedProvider = StateProvider.family<bool, String>((ref, id) => false);
 
@@ -86,9 +86,13 @@ class NotificationsList extends ConsumerWidget {
     }
 
   Widget _buildList(List<_NotifDoc> docs) {
+      final hadAnyBeforeSearch = docs.isNotEmpty || ref.watch(_notifSearchProvider).trim().isEmpty;
       if (docs.isEmpty) {
-        // Use an existing asset for empty state
-  return const NoData(message: 'No updates', asset: 'assets/no_updates.svg');
+        final searching = ref.watch(_notifSearchProvider).trim().isNotEmpty;
+        if (searching && hadAnyBeforeSearch) {
+          return const NoData(message: 'No matching updates', asset: 'assets/search_projects.svg');
+        }
+        return const NoData(message: 'No updates', asset: 'assets/no_updates.svg');
       }
   final updatesRepo = ref.read(updatesRepositoryProvider);
         final brightness = Theme.of(context).brightness;

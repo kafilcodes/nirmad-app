@@ -23,6 +23,7 @@ import '../../../services/functions_service.dart';
 import '../../projects/presentation/project_edit_page.dart' as editor;
 // Admin pages use the global app theme; removed custom AdminTheme for consistency
 import '../../../shared/widgets/no_data.dart';
+import '../../../shared/widgets/scroll_safe_dialog.dart';
 
 class ProdAdminDashboardPage extends ConsumerStatefulWidget {
   const ProdAdminDashboardPage({super.key});
@@ -360,14 +361,24 @@ class _UsersTabContentState extends State<_UsersTabContent> {
           },
           onBulkDelete: selected.isEmpty ? null : () async {
             final ids = selected.toList();
-            final confirm = await showDialog<bool>(
+            final confirm = await showScrollSafeDialog<bool>(
               context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text('Delete selected users?'),
-                content: const Text('This will remove users from Firebase Auth and Firestore.'),
-                actions: [
-                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-                  FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.delete), label: const Text('Delete')),
+              builder: (ctx) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Delete selected users?', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 12),
+                  const Text('This will remove users from Firebase Auth and Firestore.'),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.delete), label: const Text('Delete')),
+                    ],
+                  )
                 ],
               ),
             );
@@ -482,33 +493,34 @@ class _UsersTabContentState extends State<_UsersTabContent> {
   }
 
   Future<void> _showBulkInfo(BuildContext context) async {
-    final proceed = await showDialog<bool>(
+    final proceed = await showScrollSafeDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Bulk Create Users'),
-        content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Text('Prepare a CSV or Excel file with the following columns:'),
-              SizedBox(height: 8),
-              _Bullet(text: 'email (required)'),
-              _Bullet(text: 'role (optional: project_owner, super_nodal, sub_nodal; defaults to project_owner)'),
-              _Bullet(text: 'block (required for project_owner and sub_nodal; one of: dhamtari, kurud, magarload, nagri)'),
-              SizedBox(height: 12),
-              Text('Notes:'),
-              SizedBox(height: 6),
-              _Bullet(text: 'Passwords are auto-generated and added back to your file in a generated_password column.'),
-              _Bullet(text: 'Each row will get status and message columns indicating success or any error.'),
-              _Bullet(text: 'Rows missing required block for project_owner or sub_nodal are skipped.'),
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Bulk Create Users', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          const Text('Prepare a CSV or Excel file with the following columns:'),
+          const SizedBox(height: 8),
+          const _Bullet(text: 'email *'),
+          const _Bullet(text: 'role (optional: project_owner, super_nodal, sub_nodal; defaults to project_owner)'),
+          const _Bullet(text: 'block (required for project_owner and sub_nodal; one of: dhamtari, kurud, magarload, nagri)'),
+          const SizedBox(height: 12),
+          const Text('Notes:'),
+          const SizedBox(height: 6),
+          const _Bullet(text: 'Passwords are auto-generated and added back to your file in a generated_password column.'),
+          const _Bullet(text: 'Each row will get status and message columns indicating success or any error.'),
+          const _Bullet(text: 'Rows missing required block for project_owner or sub_nodal are skipped.'),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              const SizedBox(width: 8),
+              FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.square_stack_3d_up), label: const Text('Pick file')),
             ],
           ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(CupertinoIcons.square_stack_3d_up), label: const Text('Pick file')),
         ],
       ),
     );
@@ -531,193 +543,188 @@ class _UsersTabContentState extends State<_UsersTabContent> {
   Future<void> _createSingleUser(BuildContext context) async {
     final emailCtrl = TextEditingController();
     final nameCtrl = TextEditingController();
-  String roleCategory = 'project_owner'; // 'project_owner' | 'nodal_officer'
-  String nodalType = 'super_nodal'; // when nodal_officer
-  const blockOptions = ['dhamtari', 'kurud', 'magarload', 'nagri'];
-  String? selectedBlock;
-  String? genPass;
-  bool createdOk = false;
+    String roleCategory = 'project_owner';
+    String nodalType = 'super_nodal';
+    const blockOptions = ['dhamtari', 'kurud', 'magarload', 'nagri'];
+    String? selectedBlock;
+    String? genPass;
+    bool createdOk = false;
     bool creating = false;
-    await showDialog(
+
+    await showScrollSafeDialog(
       context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Create User'),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (creating) const LinearProgressIndicator(minHeight: 3),
-                if (creating) const SizedBox(height: 12),
-                TextField(controller: emailCtrl, textAlignVertical: TextAlignVertical.center, decoration: const InputDecoration(labelText: 'Email')),
-                const SizedBox(height: 12),
-                TextField(controller: nameCtrl, textAlignVertical: TextAlignVertical.center, decoration: const InputDecoration(labelText: 'Name')),
-                const SizedBox(height: 12),
-                Align(alignment: Alignment.centerLeft, child: Text('Role', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          Widget fieldSpacing() => const SizedBox(height: 12);
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Create User', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+              fieldSpacing(),
+              if (creating) const LinearProgressIndicator(minHeight: 3),
+              if (creating) const SizedBox(height: 12),
+              TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email')),
+              fieldSpacing(),
+              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
+              fieldSpacing(),
+              Align(alignment: Alignment.centerLeft, child: Text('Role', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                initialValue: roleCategory,
+                decoration: const InputDecoration(labelText: 'User type'),
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(value: 'project_owner', child: Text('Project Owner')),
+                  DropdownMenuItem(value: 'nodal_officer', child: Text('Nodal Officer')),
+                ],
+                onChanged: (v) => setLocal(() => roleCategory = v ?? 'project_owner'),
+              ),
+              if (roleCategory == 'nodal_officer') ...[
+                fieldSpacing(),
+                Align(alignment: Alignment.centerLeft, child: Text('Nodal type', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
                 const SizedBox(height: 6),
                 DropdownButtonFormField<String>(
-                  initialValue: roleCategory,
-                  decoration: const InputDecoration(labelText: 'User type'),
+                  initialValue: nodalType,
+                  decoration: const InputDecoration(labelText: 'Nodal type'),
                   isExpanded: true,
                   items: const [
-                    DropdownMenuItem(value: 'project_owner', child: Text('Project Owner')),
-                    DropdownMenuItem(value: 'nodal_officer', child: Text('Nodal Officer')),
+                    DropdownMenuItem(value: 'super_nodal', child: Text('Super Nodal')),
+                    DropdownMenuItem(value: 'sub_nodal', child: Text('Sub Nodal')),
                   ],
-                  onChanged: (v) => setLocal(() { roleCategory = v ?? 'project_owner'; }),
+                  onChanged: (v) => setLocal(() => nodalType = v ?? 'super_nodal'),
                 ),
-                if (roleCategory == 'nodal_officer') ...[
-                  const SizedBox(height: 12),
-                  Align(alignment: Alignment.centerLeft, child: Text('Nodal type', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
-                  const SizedBox(height: 6),
-                  DropdownButtonFormField<String>(
-                    initialValue: nodalType,
-                    decoration: const InputDecoration(labelText: 'Nodal type'),
-                    isExpanded: true,
-                    items: const [
-                      DropdownMenuItem(value: 'super_nodal', child: Text('Super Nodal')),
-                      DropdownMenuItem(value: 'sub_nodal', child: Text('Sub Nodal')),
-                    ],
-                    onChanged: (v) => setLocal(() { nodalType = v ?? 'super_nodal'; }),
-                  ),
-                ],
-                if (roleCategory == 'project_owner' || (roleCategory == 'nodal_officer' && nodalType == 'sub_nodal')) ...[
-                  const SizedBox(height: 12),
-                  Align(alignment: Alignment.centerLeft, child: Text('Block', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
-                  const SizedBox(height: 6),
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedBlock,
-                    decoration: const InputDecoration(labelText: 'Block'),
-                    isExpanded: true,
-                    items: [
-                      ...blockOptions.map((b) => DropdownMenuItem(value: b, child: Text(b[0].toUpperCase() + b.substring(1))))
-                    ],
-                    onChanged: (v) => setLocal(() { selectedBlock = v; }),
-                  ),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Required for Project Owner and Sub Nodal',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)),
-                    ),
-                  ),
-                ],
-                if (createdOk && genPass != null) ...[
-                  const SizedBox(height: 16),
-                  Card(
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Credentials', style: TextStyle(fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 8),
-                          Row(children:[const Icon(CupertinoIcons.envelope, size: 16), const SizedBox(width: 6), Expanded(child: Text(emailCtrl.text.trim(), overflow: TextOverflow.ellipsis))]),
-                          const SizedBox(height: 6),
-                          Row(children:[const Icon(CupertinoIcons.lock, size: 16), const SizedBox(width: 6), Expanded(child: SelectableText(genPass!))]),
-                          const SizedBox(height: 8),
-                          Wrap(spacing: 8, runSpacing: 8, children: [
-                            Chip(label: Text('Role: ${roleCategory == 'nodal_officer' ? nodalType : 'project_owner'}')),
-                            if (selectedBlock != null) Chip(label: Text('Block: ${selectedBlock![0].toUpperCase()}${selectedBlock!.substring(1)}')),
-                          ]),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
               ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
-            TextButton(
-              onPressed: () async {
-                if (creating) return;
-                final email = emailCtrl.text.trim();
-                if (email.isEmpty) return;
-                final displayName = nameCtrl.text.trim();
-                // Resolve final role and validate required block when needed
-                final roleToUse = roleCategory == 'nodal_officer' ? nodalType : 'project_owner';
-                final needsBlock = roleToUse == 'project_owner' || roleToUse == 'sub_nodal';
-                if (needsBlock && (selectedBlock == null || selectedBlock!.isEmpty)) {
-                  if (context.mounted) _showSnack(context, 'Please select a block', icon: CupertinoIcons.exclamationmark_triangle, error: true);
-                  return;
-                }
-                genPass = _genPassword();
-                try {
-                  setLocal(() => creating = true);
-                  // Create Auth user via Cloud Function
-                  final created = await widget.fns.createAuthUser(
-                    email: email,
-                    password: genPass!,
-                    role: roleToUse,
-                    displayName: displayName,
-                    blockId: (selectedBlock != null && selectedBlock!.isNotEmpty) ? selectedBlock! : null,
-                  );
-                  final uid = created['uid'] as String?;
-                  if (uid != null && uid.isNotEmpty) {
-                    // Firestore doc is written server-side by the Cloud Function.
-                    createdOk = true;
-                    // Attach selected block for PO or sub nodal (blockId only)
-                    if (selectedBlock != null && (roleToUse == 'project_owner' || roleToUse == 'sub_nodal')) {
-                      await widget.db.collection('users').doc(uid).set({'blockId': selectedBlock}, SetOptions(merge: true));
-                    }
-                    if (context.mounted) _showSnack(context, 'User created', icon: Icons.check_circle_outline);
-                  }
-                } catch (e) {
-                  if (context.mounted) { _showSnack(context, 'Create failed: $e', icon: Icons.error_outline, error: true); }
-                } finally {
-                  setLocal(() => creating = false);
-                }
-              },
-              child: creating
-                  ? const Row(mainAxisSize: MainAxisSize.min, children: [SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)), SizedBox(width: 8), Text('Creating…')])
-                  : const Text('Create'),
-            ),
-            if (createdOk && genPass != null) ...[
-              TextButton(
-                onPressed: () async {
-                  final email = emailCtrl.text.trim();
-                  await Clipboard.setData(ClipboardData(text: 'Email: $email\nPassword: $genPass'));
-                  if (!ctx.mounted) return;
-                  _showSnack(ctx, 'Copied', icon: Icons.copy_all_outlined);
-                },
-                child: const Text('Copy'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  await _exportCredentials(emailCtrl.text.trim(), genPass!, toPdf: false);
-                  if (!mounted) return; 
-                },
-                child: const Text('Export TXT'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  await _exportCredentials(emailCtrl.text.trim(), genPass!, toPdf: true);
-                  if (!mounted) return; 
-                },
-                child: const Text('Export PDF'),
-              ),
-              FilledButton.tonal(
-                onPressed: () {
-                  setLocal(() {
-                    emailCtrl.clear();
-                    nameCtrl.clear();
-                    roleCategory = 'project_owner';
-                    nodalType = 'super_nodal';
-                    selectedBlock = null;
-                    genPass = null;
-                    createdOk = false;
-                  });
-                },
-                child: const Text('Create another'),
+              if (roleCategory == 'project_owner' || (roleCategory == 'nodal_officer' && nodalType == 'sub_nodal')) ...[
+                fieldSpacing(),
+                Align(alignment: Alignment.centerLeft, child: Text('Block', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedBlock,
+                  decoration: const InputDecoration(labelText: 'Block'),
+                  isExpanded: true,
+                  items: [
+                    ...blockOptions.map((b) => DropdownMenuItem(value: b, child: Text(b[0].toUpperCase() + b.substring(1))))
+                  ],
+                  onChanged: (v) => setLocal(() => selectedBlock = v),
+                ),
+                const SizedBox(height: 6),
+                Align(alignment: Alignment.centerLeft, child: Text('Required for Project Owner and Sub Nodal', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF9A9A9A)))),
+              ],
+              if (createdOk && genPass != null) ...[
+                const SizedBox(height: 16),
+                Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Credentials', style: TextStyle(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        Row(children: [const Icon(CupertinoIcons.envelope, size: 16), const SizedBox(width: 6), Expanded(child: Text(emailCtrl.text.trim(), overflow: TextOverflow.ellipsis))]),
+                        const SizedBox(height: 6),
+                        Row(children: [const Icon(CupertinoIcons.lock, size: 16), const SizedBox(width: 6), Expanded(child: SelectableText(genPass!))]),
+                        const SizedBox(height: 8),
+                        Wrap(spacing: 8, runSpacing: 8, children: [
+                          Chip(label: Text('Role: ${roleCategory == 'nodal_officer' ? nodalType : 'project_owner'}')),
+                          if (selectedBlock != null) Chip(label: Text('Block: ${selectedBlock![0].toUpperCase()}${selectedBlock!.substring(1)}')),
+                        ]),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+                  TextButton(
+                    onPressed: () async {
+                      if (creating) return;
+                      final email = emailCtrl.text.trim();
+                      if (email.isEmpty) return;
+                      final displayName = nameCtrl.text.trim();
+                      final roleToUse = roleCategory == 'nodal_officer' ? nodalType : 'project_owner';
+                      final needsBlock = roleToUse == 'project_owner' || roleToUse == 'sub_nodal';
+                      if (needsBlock && (selectedBlock == null || selectedBlock!.isEmpty)) {
+                        if (context.mounted) _showSnack(context, 'Please select a block', icon: CupertinoIcons.exclamationmark_triangle, error: true);
+                        return;
+                      }
+                      genPass = _genPassword();
+                      try {
+                        setLocal(() => creating = true);
+                        final created = await widget.fns.createAuthUser(
+                          email: email,
+                          password: genPass!,
+                          role: roleToUse,
+                          displayName: displayName,
+                          blockId: (selectedBlock != null && selectedBlock!.isNotEmpty) ? selectedBlock! : null,
+                        );
+                        final uid = created['uid'] as String?;
+                        if (uid != null && uid.isNotEmpty) {
+                          createdOk = true;
+                          if (selectedBlock != null && (roleToUse == 'project_owner' || roleToUse == 'sub_nodal')) {
+                            await widget.db.collection('users').doc(uid).set({'blockId': selectedBlock}, SetOptions(merge: true));
+                          }
+                          if (context.mounted) _showSnack(context, 'User created', icon: Icons.check_circle_outline);
+                        }
+                      } catch (e) {
+                        if (context.mounted) _showSnack(context, 'Create failed: $e', icon: Icons.error_outline, error: true);
+                      } finally {
+                        setLocal(() => creating = false);
+                      }
+                    },
+                    child: creating
+                        ? const Row(mainAxisSize: MainAxisSize.min, children: [SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)), SizedBox(width: 8), Text('Creating…')])
+                        : const Text('Create'),
+                  ),
+                  if (createdOk && genPass != null) ...[
+                    TextButton(
+                      onPressed: () async {
+                        final email = emailCtrl.text.trim();
+                        await Clipboard.setData(ClipboardData(text: 'Email: $email\nPassword: $genPass'));
+                        if (!ctx.mounted) return;
+                        _showSnack(ctx, 'Copied', icon: Icons.copy_all_outlined);
+                      },
+                      child: const Text('Copy'),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        await _exportCredentials(emailCtrl.text.trim(), genPass!, toPdf: false);
+                        if (!mounted) return;
+                      },
+                      child: const Text('Export TXT'),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        await _exportCredentials(emailCtrl.text.trim(), genPass!, toPdf: true);
+                        if (!mounted) return;
+                      },
+                      child: const Text('Export PDF'),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () {
+                        setLocal(() {
+                          emailCtrl.clear();
+                          nameCtrl.clear();
+                          roleCategory = 'project_owner';
+                          nodalType = 'super_nodal';
+                          selectedBlock = null;
+                          genPass = null;
+                          createdOk = false;
+                        });
+                      },
+                      child: const Text('Create another'),
+                    ),
+                  ],
+                ],
               ),
             ],
-          ],
-        ),
+          );
+        },
       ),
     );
   }

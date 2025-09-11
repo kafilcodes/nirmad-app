@@ -135,6 +135,8 @@ class AuthRepository {
     // Clear per-user local drafts and caches
     try { await _prefs.remove('profile_draft'); } catch (_) {}
     try { await _prefs.remove('project_creation_draft'); } catch (_) {}
+  // Riverpod provider invalidations (filters/search) executed via container if available
+  // This repository does not own a ref, so UI layers should listen to authStateProvider null and clear UI state.
   }
 
   /// Force takeover the active session on another device after user confirmation.

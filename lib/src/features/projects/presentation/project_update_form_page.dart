@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:nirmadapp/src/shared/widgets/required_label.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -16,6 +17,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../projects/data/project_repository.dart';
 import '../../projects/domain/project.dart';
 // import '../../../services/storage_service.dart';
+import '../../../shared/widgets/scroll_safe_dialog.dart';
 
 class ProjectUpdateFormPage extends ConsumerStatefulWidget {
   final Project project;
@@ -324,18 +326,29 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
   Future<bool> _confirmDisclaimer({required String roleKey}) async {
     // Skip for dev admin
     if (roleKey == 'dev_admin') return true;
-    final accepted = await showDialog<bool>(
+    final accepted = await showScrollSafeDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Confirm and proceed'),
-        content: const Text(
-          'I confirm the information provided is accurate to the best of my knowledge. '
-          'Submitting false or misleading data may lead to rejection or action. '
-          'Your update will be recorded with timestamp and may include your location.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('I understand')),
+      barrierDismissible: false,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Confirm and proceed', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          const Text(
+            'I confirm the information provided is accurate to the best of my knowledge. '
+            'Submitting false or misleading data may lead to rejection or action. '
+            'Your update will be recorded with timestamp and may include your location.',
+          ),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('I understand')),
+            ],
+          ),
         ],
       ),
     );
@@ -453,14 +466,24 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
   if (!ok) return;
       // Soft prompt if submitting without location
       if (_lat == null || _lng == null) {
-        final proceed = await showDialog<bool>(
+        final proceed = await showScrollSafeDialog<bool>(
           context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Submit without location?'),
-            content: const Text('Including your current location helps nodal officers verify work. You can still proceed without it.'),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Add location')),
-              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Proceed')),
+          builder: (ctx) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Submit without location?', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 12),
+              const Text('Including your current location helps nodal officers verify work. You can still proceed without it.'),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Add location')),
+                  const SizedBox(width: 8),
+                  FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Proceed')),
+                ],
+              ),
             ],
           ),
         );
@@ -606,11 +629,10 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
                         sectionTitle(CupertinoIcons.settings, 'Work Stage'),
                         const SizedBox(height: 8),
                         DropdownButtonFormField<WorkStage>(
-                          decoration: InputDecoration(
-                            labelText: 'Work Stage * (required)',
-                            labelStyle: TextStyle(color: Theme.of(context).colorScheme.error),
-                            prefixIcon: const Icon(CupertinoIcons.cube_box),
-                          ) ,
+                          decoration: const InputDecoration(
+                            label: RequiredLabel('Work Stage'),
+                            prefixIcon: Icon(CupertinoIcons.cube_box),
+                          ),
                           value: _stage,
                           items: WorkStage.values.map((e) => DropdownMenuItem(
                                 value: e,
@@ -621,7 +643,7 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
                                 ]),
                               )).toList(),
                           onChanged: (v) => setState(() => _stage = v),
-                          validator: (v) => v == null ? 'Work Stage is required' : null,
+                          validator: (v) => v == null ? 'This field is required' : null,
                         ),
                       ],
                     ),

@@ -1,26 +1,30 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../projects/domain/project.dart';
+import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider;
 
 // Required charts for dashboard:
 // - Pie (outlined) of project count by block (left/top-left)
 // - Radar chart of project count by stage (right/top-right)
 // - Bar chart of Completed/Cancelled/In-progress with numeric stats on top
-// All charts are responsive; 0 counts are rendered as 1 for visibility.
+// All charts are responsive; 0 counts now show an explicit placeholder (–) in labels.
 
 class ProjectsCharts extends ConsumerWidget {
   final Query<Map<String, dynamic>>? query;
   final bool isWide;
   final List<QueryDocumentSnapshot<Map<String, dynamic>>>? docs;
   final bool isSubNodal; // when true, render sub-nodal specific charts
-  const ProjectsCharts({super.key, this.query, this.isWide = true, this.docs, this.isSubNodal = false});
+  final VoidCallback? onNavigateToProjects;
+  const ProjectsCharts({super.key, this.query, this.isWide = true, this.docs, this.isSubNodal = false, this.onNavigateToProjects});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-  // If docs are provided, avoid building another stream
+    // If docs are provided, avoid building another stream
     if (docs != null) {
-      return _buildCharts(context, docs!);
+      return _buildCharts(context, ref, docs!, onNavigateToProjects);
     }
     final stream = (query ?? FirebaseFirestore.instance.collection('projects').orderBy('updatedAt', descending: true))
         .snapshots();
@@ -31,170 +35,196 @@ class ProjectsCharts extends ConsumerWidget {
           return const Center(child: CircularProgressIndicator());
         }
         final docs = snap.data!.docs;
-        return _buildCharts(context, docs);
+        return _buildCharts(context, ref, docs, onNavigateToProjects);
       },
     );
   }
 
-  Widget _buildCharts(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
-        // Build aggregations
-  int safe(int v) => v == 0 ? 1 : v;
-        int completed = 0, inProgress = 0, cancelled = 0;
-  final byBlock = <String, int>{};
-  final byStage = <String, int>{};
-  final byGram = <String, int>{}; // villageId
-  final byGp = <String, int>{}; // Gram Panchayat from prelim
-        for (final d in docs) {
-          final m = d.data();
-          final st = (m['status'] as String?) ?? 'in_progress';
-          if (st == 'completed') {
-            completed++;
-          } else if (st == 'cancelled') {
-            cancelled++;
-          } else {
-            inProgress++;
-          }
-          final block = (m['blockId'] as String?)?.trim();
-          if (block != null && block.isNotEmpty) {
-            byBlock[block] = (byBlock[block] ?? 0) + 1;
-          }
-          final gram = (m['villageId'] as String?)?.trim();
-          final gramKey = (gram == null || gram.isEmpty) ? 'Unknown' : gram;
-          byGram[gramKey] = (byGram[gramKey] ?? 0) + 1;
-          final prelim = (m['preliminaryDescription'] as Map<String, dynamic>?) ?? const {};
-          final gp = (prelim['gramPanchayat'] as String?)?.trim();
-          final gpKey = (gp == null || gp.isEmpty) ? 'Unknown' : gp;
-          byGp[gpKey] = (byGp[gpKey] ?? 0) + 1;
-          final wd = (m['workDescription'] as Map<String, dynamic>?) ?? const {};
-          var stage = (wd['stage'] as String?) ?? 'unknown';
-          stage = stage.trim().toLowerCase();
-          // If status is completed, coerce stage to completed for accurate charting
-          if (st == 'completed') stage = 'completed';
-          byStage[stage] = (byStage[stage] ?? 0) + 1;
-        }
-        // Sort groups for readability
-        final blockEntries = byBlock.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
-        final topBlocks = blockEntries.take(7).toList();
-        if (topBlocks.isEmpty) topBlocks.add(const MapEntry('No data', 1));
-        final gramEntries = byGram.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
-        final topGrams = gramEntries.take(12).toList();
-        if (topGrams.isEmpty) topGrams.add(const MapEntry('No data', 1));
-        final gpEntries = byGp.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
-        final topGps = gpEntries.take(7).toList();
-        if (topGps.isEmpty) topGps.add(const MapEntry('No data', 1));
-        // Stage list dynamically from observed keys; ensure stable order when present
-        final preferred = <String>['layout','plinth','lintel','finishing','completed','unknown'];
-        // Include any unexpected stages too
-        final observed = byStage.keys.toSet();
-        final order = <String>[
-          ...preferred.where((s) => observed.contains(s)),
-          ...observed.where((s) => !preferred.contains(s)).toList()..sort(),
-        ];
-        final stageEntries = [for (final s in order) MapEntry(s, byStage[s] ?? 0)];
-  // Total numbers (no longer used in UI chips)
-  // final total = docs.isEmpty ? 1 : docs.length;
+  Widget _buildCharts(BuildContext context, WidgetRef ref, List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, VoidCallback? onNavigate) {
+    // Build aggregations
+    int completed = 0, inProgress = 0, cancelled = 0;
+    final byBlock = <String, int>{};
+    final byStage = <String, int>{};
+    final byGram = <String, int>{}; // villageId
+    final byGp = <String, int>{}; // Gram Panchayat from prelim
+    for (final d in docs) {
+      final m = d.data();
+      final st = (m['status'] as String?) ?? 'in_progress';
+      if (st == 'completed') {
+        completed++;
+      } else if (st == 'cancelled') {
+        cancelled++;
+      } else {
+        inProgress++;
+      }
+      final block = (m['blockId'] as String?)?.trim();
+      if (block != null && block.isNotEmpty) {
+        byBlock[block] = (byBlock[block] ?? 0) + 1;
+      }
+      final gram = (m['villageId'] as String?)?.trim();
+      final gramKey = (gram == null || gram.isEmpty) ? 'Unknown' : gram;
+      byGram[gramKey] = (byGram[gramKey] ?? 0) + 1;
+      final prelim = (m['preliminaryDescription'] as Map<String, dynamic>?) ?? const {};
+      final gp = (prelim['gramPanchayat'] as String?)?.trim();
+      final gpKey = (gp == null || gp.isEmpty) ? 'Unknown' : gp;
+      byGp[gpKey] = (byGp[gpKey] ?? 0) + 1;
+      final wd = (m['workDescription'] as Map<String, dynamic>?) ?? const {};
+      var stage = (wd['stage'] as String?) ?? 'unknown';
+      stage = stage.trim().toLowerCase();
+      // If status is completed, coerce stage to completed for accurate charting
+      if (st == 'completed') stage = 'completed';
+      byStage[stage] = (byStage[stage] ?? 0) + 1;
+    }
+    // Sort groups for readability
+    final blockEntries = byBlock.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final topBlocks = blockEntries.take(7).toList();
+    final gpEntries = byGp.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final topGps = gpEntries.take(7).toList();
+    // Stage list dynamically from observed keys; ensure stable order when present
+    final preferred = <String>['layout', 'plinth', 'lintel', 'finishing', 'completed', 'unknown'];
+    // Include any unexpected stages too
+    final observed = byStage.keys.toSet();
+    final order = <String>[
+      ...preferred.where((s) => observed.contains(s)),
+      ...observed.where((s) => !preferred.contains(s)).toList()..sort(),
+    ];
+    final stageEntries = [for (final s in order) MapEntry(s, byStage[s] ?? 0)];
 
-  // Layout: charts only (numeric chips removed; stats are shown in top section)
+  final selectedStage = ref.watch(nodalStageFilterProvider);
+  final selectedBlock = ref.watch(blockFilterProvider);
+  final selectedStatus = ref.watch(nodalStatusFilterProvider);
   return LayoutBuilder(builder: (context, c) {
-          final narrow = c.maxWidth < 720;
-          final veryNarrow = c.maxWidth < 360;
-          final shortBars = c.maxWidth < 420;
-          final half = (c.maxWidth - 12) / (narrow ? 1 : 2);
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+      final narrow = c.maxWidth < 720;
+      final veryNarrow = c.maxWidth < 360;
+      final half = (c.maxWidth - 12) / (narrow ? 1 : 2);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
             children: [
-              // Charts grid
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  if (!isSubNodal) ...[
-                    SizedBox(
-                      width: half,
-                      height: veryNarrow ? 220 : 260,
-                      child: Card(
-                        elevation: 0,
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: _SafeChart(
-                            builder: () => _OutlinedPieByBlock(blocks: topBlocks, small: c.maxWidth < 420),
-                            fallbackLabel: 'Projects by block',
-                          ),
+              if (!isSubNodal) ...[
+                SizedBox(
+                  width: half,
+                  // Increased height to ensure pie + legends never overlap
+                  height: veryNarrow ? 250 : 320,
+                  child: Card(
+                    elevation: 0,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: _SafeChart(
+                        builder: () => _OutlinedPieByBlock(
+                          blocks: topBlocks,
+                          small: c.maxWidth < 420,
+                          selectedBlock: selectedBlock,
+                          onSelect: (label) {
+                            if (label.trim().isEmpty) return;
+                            ref.read(nodalStatusFilterProvider.notifier).state = null;
+                            ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                            ref.read(blockFilterProvider.notifier).state = label;
+                            onNavigate?.call();
+                          },
                         ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: half,
-                      height: veryNarrow ? 220 : 260,
-                      child: Card(
-                        elevation: 0,
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: _SafeChart(
-                            builder: () => _RadarByStage(entries: stageEntries, small: c.maxWidth < 500),
-                            fallbackLabel: 'Projects by stage',
-                          ),
-                        ),
-                      ),
-                    ),
-                  ] else ...[
-                    SizedBox(
-                      width: half,
-                      height: veryNarrow ? 220 : 260,
-                      child: Card(
-                        elevation: 0,
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: _SafeChart(
-                            builder: () => _OutlinedPieByGroup(title: 'Projects by Gram Panchayat', entries: topGps, small: c.maxWidth < 420),
-                            fallbackLabel: 'Projects by Gram Panchayat',
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  SizedBox(
-                    width: c.maxWidth,
-                    height: veryNarrow ? 260 : 300,
-                    child: Card(
-                      elevation: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 6,
-                              children: [
-                                _StatChip(color: Colors.green, label: 'Completed', value: completed),
-                                _StatChip(color: Colors.orange, label: 'In progress', value: inProgress),
-                                _StatChip(color: Colors.redAccent, label: 'Cancelled', value: cancelled),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Expanded(
-                              child: _StatusBars(
-                                completed: safe(completed).toDouble(),
-                                inProgress: safe(inProgress).toDouble(),
-                                cancelled: safe(cancelled).toDouble(),
-                                shortLabels: shortBars,
-                                // Real values for tooltips/labels
-                                realCompleted: completed,
-                                realInProgress: inProgress,
-                                realCancelled: cancelled,
-                              ),
-                            ),
-                          ],
-                        ),
+                        fallbackLabel: 'Projects by block',
                       ),
                     ),
                   ),
-                ],
+                ),
+                SizedBox(
+                  width: half,
+                  // Increased height to ensure radar + chips never overlap
+                  height: veryNarrow ? 250 : 320,
+                  child: Card(
+                    elevation: 0,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: _SafeChart(
+                        builder: () => _RadarByStage(
+                          entries: stageEntries,
+                          small: c.maxWidth < 500,
+                          selectedStage: selectedStage,
+                          onSelectStage: (stage) {
+                            if (stage.trim().isEmpty) return;
+                            ref.read(nodalStageFilterProvider.notifier).state = stage;
+                            ref.read(nodalStatusFilterProvider.notifier).state = null;
+                            ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                            onNavigate?.call();
+                          },
+                        ),
+                        fallbackLabel: 'Projects by stage',
+                      ),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                SizedBox(
+                  width: half,
+                  // Increased height for sub-nodal pie + legends
+                  height: veryNarrow ? 250 : 320,
+                  child: Card(
+                    elevation: 0,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: _SafeChart(
+                        builder: () => _OutlinedPieByGroup(title: 'Projects by Gram Panchayat', entries: topGps, small: c.maxWidth < 420),
+                        fallbackLabel: 'Projects by Gram Panchayat',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              SizedBox(
+                width: c.maxWidth,
+                height: veryNarrow ? 260 : 300,
+                child: Card(
+                  elevation: 0,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 6,
+                          children: [
+                            _StatChip(color: Colors.green, label: 'Completed', value: completed, icon: CupertinoIcons.check_mark_circled, selected: selectedStatus == ProjectStatus.completed),
+                            _StatChip(color: Colors.orange, label: 'In progress', value: inProgress, icon: CupertinoIcons.time, selected: selectedStatus == ProjectStatus.in_progress),
+                            _StatChip(color: Colors.redAccent, label: 'Cancelled', value: cancelled, icon: CupertinoIcons.xmark_octagon, selected: selectedStatus == ProjectStatus.cancelled),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: _StatusBars(
+                            completed: completed.toDouble(),
+                            inProgress: inProgress.toDouble(),
+                            cancelled: cancelled.toDouble(),
+                            realCompleted: completed,
+                            realInProgress: inProgress,
+                            realCancelled: cancelled,
+                            onSelect: (idx) {
+                              if (idx == 0) {
+                                ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.completed;
+                              } else if (idx == 1) {
+                                ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.in_progress;
+                              } else if (idx == 2) {
+                                ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.cancelled;
+                              }
+                              ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                              onNavigate?.call();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ],
-          );
-  });
+          ),
+        ],
+      );
+    });
   }
 }
 
@@ -209,31 +239,41 @@ class _OutlinedPieByGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = entries.fold<int>(0, (p, e) => p + e.value);
-    final safeTotal = total == 0 ? 1 : total;
     final cs = Theme.of(context).colorScheme;
     final colors = [
       Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.cyan, Colors.teal, Colors.indigo
     ];
+    if (entries.isEmpty || total == 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Expanded(child: _ChartFallback(label: title)),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-  const SizedBox(height: 8),
-        Expanded(
+        const SizedBox(height: 8),
+  Expanded(
           child: PieChart(
             PieChartData(
               startDegreeOffset: -90,
               centerSpaceRadius: small ? 44 : 54,
               sectionsSpace: small ? 1 : 2,
               borderData: FlBorderData(show: false),
+              pieTouchData: PieTouchData(enabled: false),
               sections: [
                 for (int i = 0; i < entries.length; i++)
                   PieChartSectionData(
-                    value: (entries[i].value == 0 ? 1 : entries[i].value).toDouble(),
+                    value: entries[i].value.toDouble(),
                     color: colors[i % colors.length],
                     radius: small ? 48 : 56,
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
-                    title: '${((entries[i].value / safeTotal) * 100).toStringAsFixed(0)}%',
+                    title: '${((entries[i].value / total) * 100).toStringAsFixed(0)}%',
                     titleStyle: TextStyle(fontSize: small ? 9 : 11, fontWeight: FontWeight.w600, color: cs.onPrimary),
                   ),
               ],
@@ -241,37 +281,14 @@ class _OutlinedPieByGroup extends StatelessWidget {
             duration: const Duration(milliseconds: 450),
           ),
         ),
-        const SizedBox(height: 8),
-        LayoutBuilder(builder: (context, c) {
-          final wrapWidth = c.maxWidth;
-          return ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: wrapWidth),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (int i = 0; i < entries.length; i++)
-                  _legend(colors[i % colors.length], entries[i].key, entries[i].value),
-              ],
-            ),
-          );
-        })
+  const SizedBox(height: 12), // increased spacing between chart and legends
+        _AdaptiveLegends(
+          entries: entries,
+          colorForIndex: (i) => colors[i % colors.length],
+          maxVisible: 7,
+          labelBuilder: (e) => e.key,
+        ),
       ],
-    );
-  }
-
-  Widget _legend(Color color, String text, int v) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 6),
-        Text('$text ($v)'),
-      ]),
     );
   }
 }
@@ -279,73 +296,72 @@ class _OutlinedPieByGroup extends StatelessWidget {
 class _OutlinedPieByBlock extends StatelessWidget {
   final List<MapEntry<String, int>> blocks;
   final bool small;
-  const _OutlinedPieByBlock({required this.blocks, this.small = false});
+  final void Function(String label)? onSelect;
+  final String? selectedBlock;
+  const _OutlinedPieByBlock({required this.blocks, this.small = false, this.onSelect, this.selectedBlock});
   @override
   Widget build(BuildContext context) {
     final total = blocks.fold<int>(0, (p, e) => p + e.value);
-    final safeTotal = total == 0 ? 1 : total;
-  final cs = Theme.of(context).colorScheme;
+    final cs = Theme.of(context).colorScheme;
     final colors = [
       Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.cyan, Colors.teal, Colors.indigo
     ];
+    if (blocks.isEmpty || total == 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: const [
+          Text('Projects by block', style: TextStyle(fontWeight: FontWeight.w600)),
+          SizedBox(height: 8),
+          Expanded(child: _ChartFallback(label: 'Projects by block')),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text('Projects by block', style: TextStyle(fontWeight: FontWeight.w600)),
-  const SizedBox(height: 8),
-    Expanded(
+        const SizedBox(height: 8),
+  Expanded(
           child: PieChart(
             PieChartData(
               startDegreeOffset: -90,
-      centerSpaceRadius: small ? 44 : 54,
-      sectionsSpace: small ? 1 : 2,
+              centerSpaceRadius: small ? 44 : 54,
+              sectionsSpace: small ? 1 : 2,
               borderData: FlBorderData(show: false),
+              pieTouchData: PieTouchData(
+                enabled: onSelect != null,
+                touchCallback: (event, response) {
+                  final i = response?.touchedSection?.touchedSectionIndex;
+                  if (i != null && i >= 0 && i < blocks.length && event is FlTapUpEvent) {
+                    onSelect?.call(blocks[i].key);
+                  }
+                },
+              ),
               sections: [
                 for (int i = 0; i < blocks.length; i++)
                   PieChartSectionData(
-                    value: (blocks[i].value == 0 ? 1 : blocks[i].value).toDouble(),
+                    value: blocks[i].value.toDouble(),
                     color: colors[i % colors.length],
-        radius: small ? 48 : 56,
+                    radius: small ? 48 : 56,
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
-        title: '${((blocks[i].value / safeTotal) * 100).toStringAsFixed(0)}%',
-        titleStyle: TextStyle(fontSize: small ? 9 : 11, fontWeight: FontWeight.w600, color: cs.onPrimary),
+                    title: '${((blocks[i].value / total) * 100).toStringAsFixed(0)}%',
+                    titleStyle: TextStyle(fontSize: small ? 9 : 11, fontWeight: FontWeight.w600, color: cs.onPrimary),
                   ),
               ],
             ),
             duration: const Duration(milliseconds: 450),
           ),
         ),
-        const SizedBox(height: 8),
-        LayoutBuilder(builder: (context, c) {
-          final wrapWidth = c.maxWidth;
-          return ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: wrapWidth),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (int i = 0; i < blocks.length; i++)
-                  _legend(colors[i % colors.length], blocks[i].key, blocks[i].value),
-              ],
-            ),
-          );
-        })
+  const SizedBox(height: 12), // increased spacing between chart and legends
+        _AdaptiveLegends(
+          entries: blocks,
+          colorForIndex: (i) => colors[i % colors.length],
+          maxVisible: 7,
+          labelBuilder: (e) => e.key,
+          onTap: (e) => onSelect?.call(e.key),
+          isSelected: (e) => selectedBlock != null && selectedBlock == e.key,
+        ),
       ],
-    );
-  }
-
-  Widget _legend(Color color, String text, int v) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-  border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 6),
-        Text('$text ($v)'),
-      ]),
     );
   }
 }
@@ -353,10 +369,13 @@ class _OutlinedPieByBlock extends StatelessWidget {
 class _RadarByStage extends StatelessWidget {
   final List<MapEntry<String, int>> entries;
   final bool small;
-  const _RadarByStage({required this.entries, this.small = false});
+  final void Function(String stage)? onSelectStage;
+  final String? selectedStage;
+  const _RadarByStage({required this.entries, this.small = false, this.onSelectStage, this.selectedStage});
   @override
   Widget build(BuildContext context) {
-    if (entries.isEmpty) {
+    final hasAny = entries.any((e) => e.value > 0);
+    if (entries.isEmpty || !hasAny) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -370,59 +389,68 @@ class _RadarByStage extends StatelessWidget {
         ],
       );
     }
+    final maxVal = entries.fold<int>(0, (p, e) => e.value > p ? e.value : p);
+    // Decide ring count based on max value for readable scale.
+    int ringCount;
+    if (maxVal <= 3) {
+      ringCount = maxVal; // 1..3
+    } else if (maxVal <= 6) {
+      ringCount = 3;
+    } else if (maxVal <= 10) {
+      ringCount = 5;
+    } else {
+      ringCount = 5; // cap for large ranges; avoids clutter
+    }
+    ringCount = ringCount.clamp(1, 6);
+    final step = maxVal == 0 || ringCount == 0 ? 1 : (maxVal / ringCount);
+    final markers = [for (int i = 1; i <= ringCount; i++) (step * i).ceil().clamp(1, maxVal)];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text('Projects by stage', style: TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         Expanded(
-          child: RadarChart(
-            RadarChartData(
-              radarBorderData: const BorderSide(color: Colors.transparent),
-              gridBorderData: const BorderSide(color: Colors.black12),
-              radarBackgroundColor: Colors.transparent,
-              titleTextStyle: TextStyle(fontSize: small ? 9 : 11),
-              dataSets: [
-                RadarDataSet(
-                  borderColor: Theme.of(context).colorScheme.primary,
-                  fillColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
-                  entryRadius: 1.5,
-                  dataEntries: [
-                    for (final e in entries) RadarEntry(value: (e.value == 0 ? 1 : e.value).toDouble()),
-                  ],
+          child: Column(
+            children: [
+              Expanded(
+                child: RadarChart(
+                  RadarChartData(
+                    radarBorderData: const BorderSide(color: Colors.transparent),
+                    gridBorderData: const BorderSide(color: Colors.black12),
+                    radarBackgroundColor: Colors.transparent,
+                    titleTextStyle: TextStyle(fontSize: small ? 9 : 11),
+                    dataSets: [
+                      RadarDataSet(
+                        borderColor: Theme.of(context).colorScheme.primary,
+                        fillColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+                        entryRadius: 1.5,
+                        dataEntries: [
+                          for (final e in entries) RadarEntry(value: e.value.toDouble()),
+                        ],
+                      ),
+                    ],
+                    titlePositionPercentageOffset: small ? 0.22 : 0.18,
+                    getTitle: (index, angle) => RadarChartTitle(text: _fmtStage(entries[index].key)),
+                    radarShape: RadarShape.polygon,
+                    ticksTextStyle: const TextStyle(fontSize: 8, color: Colors.black45),
+                    tickCount: ringCount,
+                  ),
+                  duration: const Duration(milliseconds: 450),
                 ),
-              ],
-              titlePositionPercentageOffset: small ? 0.22 : 0.18,
-              getTitle: (index, angle) => RadarChartTitle(text: _fmtStage(entries[index].key)),
-              radarShape: RadarShape.polygon,
-              ticksTextStyle: const TextStyle(fontSize: 8),
-              tickCount: 3,
-            ),
-            duration: const Duration(milliseconds: 450),
+              ),
+              if (maxVal > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Scale: 0 • ${markers.take(ringCount - 1).join(' • ')}${ringCount > 1 ? ' • ' : ''}$maxVal',
+                    style: const TextStyle(fontSize: 10, color: Colors.black54),
+                  ),
+                ),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
-        LayoutBuilder(builder: (context, c) {
-          final wrapWidth = c.maxWidth;
-          return ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: wrapWidth),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final e in entries)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-                    ),
-                    child: Text('${_fmtStage(e.key)} (${e.value})'),
-                  ),
-              ],
-            ),
-          );
-        })
+        const SizedBox(height: 12),
+        _StageLegends(entries: entries, onTap: onSelectStage, selectedStage: selectedStage),
       ],
     );
   }
@@ -432,81 +460,98 @@ class _StatusBars extends StatelessWidget {
   final double completed;
   final double inProgress;
   final double cancelled;
-  final bool shortLabels;
   final int realCompleted;
   final int realInProgress;
   final int realCancelled;
+  final void Function(int index)? onSelect;
   const _StatusBars({
     required this.completed,
     required this.inProgress,
     required this.cancelled,
-    this.shortLabels = false,
     this.realCompleted = 0,
     this.realInProgress = 0,
     this.realCancelled = 0,
+    this.onSelect,
   });
   @override
   Widget build(BuildContext context) {
     final bars = [
-      ('Completed', completed, Colors.green),
-      ('In progress', inProgress, Colors.orange),
-      ('Cancelled', cancelled, Colors.redAccent),
+      ('Completed', completed, Colors.green, realCompleted),
+      ('In progress', inProgress, Colors.orange, realInProgress),
+      ('Cancelled', cancelled, Colors.redAccent, realCancelled),
     ];
-  double clampBar(double v) => v == 0 ? 1.0 : v; // draw at least 1 when 0
-  return BarChart(
+  final maxValue = [realCompleted, realInProgress, realCancelled].fold<int>(0, (p, n) => n > p ? n : p);
+  final total = realCompleted + realInProgress + realCancelled;
+  // Removed ghost bar; zero values render no bar (only dash in top labels)
+    return BarChart(
       BarChartData(
         barTouchData: BarTouchData(
           enabled: true,
-          touchTooltipData: BarTouchTooltipData(
+            touchTooltipData: BarTouchTooltipData(
             tooltipPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             getTooltipItem: (group, groupIndex, rod, rodIndex) {
-              final labels = ['Completed', 'In progress', 'Cancelled'];
-              final real = [realCompleted, realInProgress, realCancelled];
               final idx = group.x.toInt();
-              final title = idx >= 0 && idx < labels.length ? labels[idx] : '';
-              final value = idx >= 0 && idx < real.length ? real[idx] : 0;
-              return BarTooltipItem('$title: $value', const TextStyle());
+              if (idx < 0 || idx >= bars.length) return null;
+              final title = bars[idx].$1;
+              final value = bars[idx].$4;
+              final pct = (total > 0 && value > 0) ? ' (${(value / total * 100).toStringAsFixed(0)}%)' : '';
+              return BarTooltipItem('$title: $value$pct', const TextStyle(fontWeight: FontWeight.w600));
             },
           ),
+          touchCallback: (event, response) {
+            final i = response?.spot?.touchedBarGroupIndex;
+            if (i != null && event is FlTapUpEvent) {
+              onSelect?.call(i);
+            }
+          },
         ),
         gridData: const FlGridData(show: false),
         borderData: FlBorderData(show: false),
         titlesData: FlTitlesData(
           leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 24,
+              getTitlesWidget: (v, _) {
+                final i = v.toInt();
+                if (i < 0 || i >= bars.length) return const SizedBox.shrink();
+                final real = bars[i].$4;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(real > 0 ? '$real' : '–', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                );
+              },
+            ),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              reservedSize: shortLabels ? 26 : 24,
+              reservedSize: 32,
               getTitlesWidget: (v, _) {
                 final i = v.toInt();
                 if (i < 0 || i >= bars.length) return const SizedBox.shrink();
                 final full = bars[i].$1;
-                final text = shortLabels
-                    ? (full == 'Completed'
-                        ? 'Comp'
-                        : (full == 'In progress' ? 'Prog' : 'Canc'))
-                    : full;
                 return Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(text, style: TextStyle(fontSize: shortLabels ? 10 : 11), overflow: TextOverflow.ellipsis),
+                  child: Text(full, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
                 );
               },
             ),
           ),
         ),
-  barGroups: [
+        maxY: (maxValue > 0 ? maxValue : 1).toDouble(),
+        barGroups: [
           for (int i = 0; i < bars.length; i++)
             BarChartGroupData(
               x: i,
               barRods: [
                 BarChartRodData(
-      toY: clampBar(bars[i].$2),
-                  color: bars[i].$3,
-                  width: 22,
+                  toY: bars[i].$4 > 0 ? bars[i].$2 : 0.0,
+                  color: bars[i].$3.withValues(alpha: bars[i].$4 > 0 ? 1.0 : 0.15), // faint color retained though height zero
+                  width: 24,
                   borderRadius: BorderRadius.circular(8),
-                  rodStackItems: const [],
                 ),
               ],
             ),
@@ -530,8 +575,10 @@ String _fmtStage(String id) {
     case 'completed':
       return 'Completed';
     case 'unknown':
-    default:
       return 'Unknown';
+    default:
+      if (id.isEmpty) return '—';
+      return id[0].toUpperCase() + id.substring(1);
   }
 }
 
@@ -539,21 +586,32 @@ class _StatChip extends StatelessWidget {
   final Color color;
   final String label;
   final int value;
-  const _StatChip({required this.color, required this.label, required this.value});
+  final IconData? icon;
+  final bool selected;
+  const _StatChip({required this.color, required this.label, required this.value, this.icon, this.selected = false});
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 6),
-        Text('$label: $value'),
-      ]),
-    );
+    return Semantics(
+      label: '$label: $value projects',
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: selected ? color : color.withValues(alpha: 0.35), width: selected ? 1.3 : 1),
+          color: selected ? color.withValues(alpha: 0.12) : null,
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (icon != null)
+            Icon(icon, size: 13, color: color)
+          else
+            Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          const SizedBox(width: 4),
+          Text('$value', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: selected ? color : null)),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: selected ? color : null)),
+        ]),
+      ));
   }
 }
 
@@ -599,6 +657,341 @@ class _ChartFallback extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Adaptive legends for pie/group charts with overflow handling.
+class _AdaptiveLegends extends StatelessWidget {
+  final List<MapEntry<String, int>> entries;
+  final Color Function(int index) colorForIndex;
+  final int maxVisible;
+  final String Function(MapEntry<String, int>) labelBuilder;
+  final void Function(MapEntry<String, int>)? onTap;
+  final bool Function(MapEntry<String, int>)? isSelected;
+  const _AdaptiveLegends({
+    required this.entries,
+    required this.colorForIndex,
+    required this.maxVisible,
+    required this.labelBuilder,
+    this.onTap,
+    this.isSelected,
+  });
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) return const SizedBox.shrink();
+    final show = entries.take(maxVisible).toList();
+    final overflow = entries.length - show.length;
+    return LayoutBuilder(builder: (context, c) {
+      final narrow = c.maxWidth < 360;
+      final children = <Widget>[
+        for (int i = 0; i < show.length; i++)
+          _LegendChip(
+            color: colorForIndex(i),
+            label: labelBuilder(show[i]),
+            value: show[i].value,
+            dense: narrow,
+            onTap: onTap == null ? null : () => onTap!(show[i]),
+            selected: isSelected?.call(show[i]) ?? false,
+          ),
+        if (overflow > 0)
+          _OverflowChip(count: overflow, onTap: () {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              builder: (ctx) => _LegendOverflowSheet(
+                entries: entries,
+                colorForIndex: colorForIndex,
+                labelBuilder: labelBuilder,
+                onTap: onTap,
+                isSelected: isSelected,
+              ),
+            );
+          }),
+      ];
+      return ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: c.maxWidth),
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: children,
+        ),
+      );
+    });
+  }
+}
+
+class _LegendChip extends StatefulWidget {
+  final Color color;
+  final String label;
+  final int value;
+  final bool dense;
+  final VoidCallback? onTap;
+  final bool selected;
+  const _LegendChip({required this.color, required this.label, required this.value, this.dense = false, this.onTap, this.selected = false});
+  @override
+  State<_LegendChip> createState() => _LegendChipState();
+}
+
+class _LegendChipState extends State<_LegendChip> with SingleTickerProviderStateMixin {
+  bool _pressed = false;
+  void _set(bool v) {
+    if (_pressed == v) return; setState(() => _pressed = v);
+  }
+  @override
+  Widget build(BuildContext context) {
+    final label = widget.label;
+    final dense = widget.dense;
+    final color = widget.color;
+    final value = widget.value;
+    final selected = widget.selected;
+    final text = label.length > (dense ? 14 : 20) ? label.substring(0, (dense ? 11 : 17)) + '…' : label;
+    return Semantics(
+      label: '$label: $value projects',
+      button: widget.onTap != null,
+      child: Material(
+        color: Colors.transparent,
+        child: GestureDetector(
+          onTapDown: (_) => _set(true),
+          onTapCancel: () => _set(false),
+          onTapUp: (_) => _set(false),
+          onTap: widget.onTap,
+          child: AnimatedScale(
+            scale: _pressed ? 0.94 : 1.0,
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              padding: EdgeInsets.symmetric(horizontal: dense ? 8 : 10, vertical: dense ? 4 : 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: selected ? color : color.withValues(alpha: 0.45), width: selected ? 1.4 : 1),
+                color: selected ? color.withValues(alpha: 0.14) : color.withValues(alpha: 0.06),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                const SizedBox(width: 6),
+                Text('$text ($value)', style: TextStyle(fontSize: dense ? 11 : 12, fontWeight: FontWeight.w600, color: selected ? color : null)),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverflowChip extends StatelessWidget {
+  final int count;
+  final VoidCallback? onTap;
+  const _OverflowChip({required this.count, this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: const Icon(CupertinoIcons.ellipsis, size: 16),
+      label: Text('+$count more'),
+      style: OutlinedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      ),
+    );
+  }
+}
+
+class _StageLegends extends StatelessWidget {
+  final List<MapEntry<String, int>> entries;
+  final void Function(String stage)? onTap;
+  final String? selectedStage;
+  const _StageLegends({required this.entries, this.onTap, this.selectedStage});
+  IconData _iconFor(String key) {
+    switch (key) {
+      case 'layout':
+        return CupertinoIcons.map;
+      case 'plinth':
+        return Icons.foundation;
+      case 'lintel':
+        return Icons.architecture;
+      case 'finishing':
+        return Icons.brush;
+      case 'completed':
+        return CupertinoIcons.check_mark_circled;
+      default:
+        return CupertinoIcons.question_circle;
+    }
+  }
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(builder: (context, c) {
+      final narrow = c.maxWidth < 400;
+      // compute max for shade scaling
+      final maxVal = entries.fold<int>(0, (p, e) => e.value > p ? e.value : p);
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (int i = 0; i < entries.length; i++)
+            _StageLegendChip(
+              stage: entries[i].key,
+              value: entries[i].value,
+              icon: _iconFor(entries[i].key),
+              selected: selectedStage == entries[i].key,
+              narrow: narrow,
+              onTap: onTap,
+              shadeFactor: maxVal == 0 ? 0.3 : (entries[i].value / maxVal),
+            ),
+        ],
+      );
+    });
+  }
+}
+
+class _StageLegendChip extends StatefulWidget {
+  final String stage;
+  final int value;
+  final IconData icon;
+  final bool selected;
+  final bool narrow;
+  final void Function(String stage)? onTap;
+  final double? shadeFactor; // 0..1 influencing color lightness
+  const _StageLegendChip({required this.stage, required this.value, required this.icon, required this.selected, required this.narrow, this.onTap, this.shadeFactor});
+  @override
+  State<_StageLegendChip> createState() => _StageLegendChipState();
+}
+
+class _StageLegendChipState extends State<_StageLegendChip> {
+  bool _pressed = false;
+  void _set(bool v) { if (_pressed == v) return; setState(()=>_pressed=v);}  
+  @override
+  Widget build(BuildContext context) {
+  final label = _fmtStage(widget.stage.contains(':') ? widget.stage.split(':').first : widget.stage);
+  final base = Theme.of(context).colorScheme.primary;
+  final f = (widget.shadeFactor ?? 1).clamp(0.0, 1.0);
+  // lighter for lower values
+  final bgBlend = Color.alphaBlend(base.withValues(alpha: 0.05 + 0.10 * f), Theme.of(context).colorScheme.surface);
+  final borderColor = base.withValues(alpha: widget.selected ? 0.9 : (0.25 + 0.35 * f));
+    return Semantics(
+      label: '$label: ${widget.value} projects',
+      button: widget.onTap != null,
+      child: GestureDetector(
+        onTapDown: (_) => _set(true),
+        onTapCancel: () => _set(false),
+        onTapUp: (_) => _set(false),
+        onTap: widget.onTap == null ? null : () => widget.onTap!(widget.stage),
+        child: AnimatedScale(
+          scale: _pressed ? 0.94 : 1.0,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            padding: EdgeInsets.symmetric(horizontal: widget.narrow ? 8 : 9, vertical: widget.narrow ? 4 : 5),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: widget.selected ? base : borderColor,
+                width: widget.selected ? 1.4 : 1,
+              ),
+              color: widget.selected ? base.withValues(alpha: 0.16) : bgBlend,
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(widget.icon, size: 14, color: widget.selected ? base : base.withValues(alpha: 0.85 * (0.4 + 0.6 * f))),
+              const SizedBox(width: 6),
+              Text(
+                '$label (${widget.value})',
+                style: TextStyle(
+                  fontSize: widget.narrow ? 11 : 12,
+                  fontWeight: FontWeight.w600,
+                  // Consistent text color: primary only when selected, otherwise default (no shaded accent variants)
+                  color: widget.selected ? base : null,
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LegendOverflowSheet extends StatefulWidget {
+  final List<MapEntry<String,int>> entries;  
+  final Color Function(int index) colorForIndex;  
+  final String Function(MapEntry<String,int>) labelBuilder;  
+  final void Function(MapEntry<String,int>)? onTap;  
+  final bool Function(MapEntry<String,int>)? isSelected;
+  const _LegendOverflowSheet({required this.entries, required this.colorForIndex, required this.labelBuilder, this.onTap, this.isSelected});
+  @override
+  State<_LegendOverflowSheet> createState() => _LegendOverflowSheetState();
+}
+
+class _LegendOverflowSheetState extends State<_LegendOverflowSheet> {
+  String _query = '';
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _query.trim().isEmpty
+        ? widget.entries
+        : widget.entries.where((e) => widget.labelBuilder(e).toLowerCase().contains(_query.toLowerCase())).toList();
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Row(
+                children: [
+                  Expanded(child: Text('All categories', style: Theme.of(context).textTheme.titleMedium)),
+                  Text('${widget.entries.length}', style: Theme.of(context).textTheme.labelMedium),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: TextField(
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(CupertinoIcons.search, size: 18),
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  hintText: 'Filter categories',
+                ),
+                onChanged: (v) => setState(() => _query = v),
+              ),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                itemCount: filtered.length,
+                itemBuilder: (ctx, i) {
+                  final e = filtered[i];
+                  final color = widget.colorForIndex(widget.entries.indexOf(e));
+                  final selected = widget.isSelected?.call(e) ?? false;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: _LegendChip(
+                      color: color,
+                      label: widget.labelBuilder(e),
+                      value: e.value,
+                      dense: false,
+                      selected: selected,
+                      onTap: widget.onTap == null
+                          ? null
+                          : () {
+                              Navigator.of(context).pop();
+                              widget.onTap!(e);
+                            },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

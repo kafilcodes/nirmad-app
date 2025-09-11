@@ -16,7 +16,7 @@ import 'package:go_router/go_router.dart';
 import '../state/projects_snapshot_provider.dart';
 import '../../../shared/data/blocks_provider.dart';
 import '../../projects/domain/project.dart';
-import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider;
+import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider;
 
 class NodalDashboardPage extends ConsumerStatefulWidget {
   const NodalDashboardPage({super.key});
@@ -50,6 +50,7 @@ class _NodalDashboardPageState extends ConsumerState<NodalDashboardPage> with Si
             ref.read(nodalStatusFilterProvider.notifier).state = null;
             ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
             ref.read(blockFilterProvider.notifier).state = null;
+            ref.read(nodalStageFilterProvider.notifier).state = null;
           }
         } catch (_) {}
         _lastTabIndex = _tab.index;
@@ -85,7 +86,8 @@ class _NodalDashboardPageState extends ConsumerState<NodalDashboardPage> with Si
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return Scaffold(
-      body: Stack(
+      body: SafeArea(
+        child: Stack(
         children: [
           Row(
             children: [
@@ -185,6 +187,7 @@ class _NodalDashboardPageState extends ConsumerState<NodalDashboardPage> with Si
             ),
           ],
         ],
+      ),
       ),
   // Bottom navigation removed: use sidebar across all sizes
     );
@@ -303,7 +306,19 @@ class _NodalMetricsAndCharts extends ConsumerWidget {
   LayoutBuilder(
             builder: (context, c) {
               final isWide = c.maxWidth > 900;
-  return ProjectsCharts(query: scopedQuery, isWide: isWide, docs: docs, isSubNodal: isSub);
+  return ProjectsCharts(
+              query: scopedQuery,
+              isWide: isWide,
+              docs: docs,
+              isSubNodal: isSub,
+              onNavigateToProjects: () {
+                final state = context.findAncestorStateOfType<_NodalDashboardPageState>();
+                if (state != null) {
+                  state._tab.index = 1;
+                  state._sideIndex = 1;
+                }
+              },
+            );
             },
           ),
           const SizedBox(height: 12),

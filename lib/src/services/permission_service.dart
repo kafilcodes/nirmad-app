@@ -14,10 +14,7 @@ class PermissionService {
     req.add(Permission.locationWhenInUse.request());
     // Camera for in-app capture
     req.add(Permission.camera.request());
-    // Storage (scoped) on Android for exports and file picking
-    if (Platform.isAndroid) {
-      req.add(Permission.storage.request());
-    }
+  // No storage permission on Android; we use SAF/file pickers without runtime permission.
     // iOS: explicit media permissions
     if (Platform.isIOS) {
       req.add(Permission.photos.request());
@@ -36,7 +33,7 @@ class PermissionService {
       Permission.locationWhenInUse.status,
       Permission.camera.status,
     ];
-    if (Platform.isAndroid) checks.add(Permission.storage.status);
+  // Storage not required on Android
     if (Platform.isIOS) {
       checks.add(Permission.photos.status);
       checks.add(Permission.videos.status);
@@ -55,10 +52,7 @@ class PermissionService {
     if (!loc.isGranted) missing.add('Location');
     final cam = await Permission.camera.status;
     if (!cam.isGranted) missing.add('Camera');
-    if (Platform.isAndroid) {
-      final st = await Permission.storage.status;
-      if (!st.isGranted) missing.add('Storage');
-    }
+  // No storage permission on Android
     if (Platform.isIOS) {
       final ph = await Permission.photos.status;
       if (!ph.isGranted) missing.add('Photos');
