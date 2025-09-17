@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../projects/domain/project.dart';
-import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider;
+import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider, gramPanchayatFilterProvider;
 
 // Required charts for dashboard:
 // - Pie (outlined) of project count by block (left/top-left)
@@ -20,6 +20,13 @@ class ProjectsCharts extends ConsumerWidget {
   final VoidCallback? onNavigateToProjects;
   const ProjectsCharts({super.key, this.query, this.isWide = true, this.docs, this.isSubNodal = false, this.onNavigateToProjects});
 
+  // Helper for child widgets to trigger navigation without tight coupling.
+  static void navigateToProjects(BuildContext context) {
+    // Bubble up a notification? For now rely on ancestor providing callback via InheritedElement.
+    // This static is a placeholder; actual navigation handled by onNavigateToProjects closure in build tree.
+    // Intentionally left minimal since direct context->callback lookup is not implemented here.
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // If docs are provided, avoid building another stream
@@ -32,7 +39,8 @@ class ProjectsCharts extends ConsumerWidget {
       stream: stream,
       builder: (context, snap) {
         if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
+          // Shimmer skeleton while loading
+          return const _ChartsLoadingSkeleton();
         }
         final docs = snap.data!.docs;
         return _buildCharts(context, ref, docs, onNavigateToProjects);
@@ -97,9 +105,23 @@ class ProjectsCharts extends ConsumerWidget {
       final narrow = c.maxWidth < 720;
       final veryNarrow = c.maxWidth < 360;
       final half = (c.maxWidth - 12) / (narrow ? 1 : 2);
+      // Further responsive adjustments: treat ultra narrow and short cards differently.
+      final isAndroid = Theme.of(context).platform == TargetPlatform.android;
+      final isSmallWidth = c.maxWidth < 420;
+      // Heights tuned for overlap prevention; pie is a bit smaller on small screens,
+      // while radar/bars are larger on small Android for better readability/tap targets.
+      double pieHeight = isSmallWidth ? 220 : 280;
+      double radarHeight = isSmallWidth ? 300 : 320;
+      double barsHeight = veryNarrow ? 250 : 290;
+      if (isAndroid && isSmallWidth) {
+        // Favor larger analytical charts on small Android
+        radarHeight += 30;
+        barsHeight += 30;
+      }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Uniform vertical spacing: each chart card gets symmetric vertical padding
           Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -107,52 +129,58 @@ class ProjectsCharts extends ConsumerWidget {
               if (!isSubNodal) ...[
                 SizedBox(
                   width: half,
-                  // Increased height to ensure pie + legends never overlap
-                  height: veryNarrow ? 250 : 320,
-                  child: Card(
-                    elevation: 0,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: _SafeChart(
-                        builder: () => _OutlinedPieByBlock(
-                          blocks: topBlocks,
-                          small: c.maxWidth < 420,
-                          selectedBlock: selectedBlock,
-                          onSelect: (label) {
-                            if (label.trim().isEmpty) return;
-                            ref.read(nodalStatusFilterProvider.notifier).state = null;
-                            ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
-                            ref.read(blockFilterProvider.notifier).state = label;
-                            onNavigate?.call();
-                          },
+                  // Responsive pie height (pie + legends)
+                  height: pieHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6.0),
+                    child: Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: _SafeChart(
+                          builder: () => _OutlinedPieByBlock(
+                            blocks: topBlocks,
+                            small: c.maxWidth < 420,
+                            selectedBlock: selectedBlock,
+                            onSelect: (label) {
+                              if (label.trim().isEmpty) return;
+                              ref.read(nodalStatusFilterProvider.notifier).state = null;
+                              ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                              ref.read(blockFilterProvider.notifier).state = label;
+                              onNavigate?.call();
+                            },
+                          ),
+                          fallbackLabel: 'Projects by block',
                         ),
-                        fallbackLabel: 'Projects by block',
                       ),
                     ),
                   ),
                 ),
                 SizedBox(
                   width: half,
-                  // Increased height to ensure radar + chips never overlap
-                  height: veryNarrow ? 250 : 320,
-                  child: Card(
-                    elevation: 0,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: _SafeChart(
-                        builder: () => _RadarByStage(
-                          entries: stageEntries,
-                          small: c.maxWidth < 500,
-                          selectedStage: selectedStage,
-                          onSelectStage: (stage) {
-                            if (stage.trim().isEmpty) return;
-                            ref.read(nodalStageFilterProvider.notifier).state = stage;
-                            ref.read(nodalStatusFilterProvider.notifier).state = null;
-                            ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
-                            onNavigate?.call();
-                          },
+                  // Responsive radar height
+                  height: radarHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6.0),
+                    child: Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: _SafeChart(
+                          builder: () => _RadarByStage(
+                            entries: stageEntries,
+                            small: c.maxWidth < 500,
+                            selectedStage: selectedStage,
+                            onSelectStage: (stage) {
+                              if (stage.trim().isEmpty) return;
+                              ref.read(nodalStageFilterProvider.notifier).state = stage;
+                              ref.read(nodalStatusFilterProvider.notifier).state = null;
+                              ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                              onNavigate?.call();
+                            },
+                          ),
+                          fallbackLabel: 'Projects by stage',
                         ),
-                        fallbackLabel: 'Projects by stage',
                       ),
                     ),
                   ),
@@ -160,15 +188,18 @@ class ProjectsCharts extends ConsumerWidget {
               ] else ...[
                 SizedBox(
                   width: half,
-                  // Increased height for sub-nodal pie + legends
-                  height: veryNarrow ? 250 : 320,
-                  child: Card(
-                    elevation: 0,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: _SafeChart(
-                        builder: () => _OutlinedPieByGroup(title: 'Projects by Gram Panchayat', entries: topGps, small: c.maxWidth < 420),
-                        fallbackLabel: 'Projects by Gram Panchayat',
+                  // Sub-nodal pie height
+                  height: pieHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6.0),
+                    child: Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: _SafeChart(
+                          builder: () => _OutlinedPieByGroup(title: 'Projects by Gram Panchayat', entries: topGps, small: c.maxWidth < 420, onNavigate: onNavigate),
+                          fallbackLabel: 'Projects by Gram Panchayat',
+                        ),
                       ),
                     ),
                   ),
@@ -176,46 +207,82 @@ class ProjectsCharts extends ConsumerWidget {
               ],
               SizedBox(
                 width: c.maxWidth,
-                height: veryNarrow ? 260 : 300,
-                child: Card(
-                  elevation: 0,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 6,
-                          children: [
-                            _StatChip(color: Colors.green, label: 'Completed', value: completed, icon: CupertinoIcons.check_mark_circled, selected: selectedStatus == ProjectStatus.completed),
-                            _StatChip(color: Colors.orange, label: 'In progress', value: inProgress, icon: CupertinoIcons.time, selected: selectedStatus == ProjectStatus.in_progress),
-                            _StatChip(color: Colors.redAccent, label: 'Cancelled', value: cancelled, icon: CupertinoIcons.xmark_octagon, selected: selectedStatus == ProjectStatus.cancelled),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Expanded(
-                          child: _StatusBars(
-                            completed: completed.toDouble(),
-                            inProgress: inProgress.toDouble(),
-                            cancelled: cancelled.toDouble(),
-                            realCompleted: completed,
-                            realInProgress: inProgress,
-                            realCancelled: cancelled,
-                            onSelect: (idx) {
-                              if (idx == 0) {
-                                ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.completed;
-                              } else if (idx == 1) {
-                                ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.in_progress;
-                              } else if (idx == 2) {
-                                ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.cancelled;
-                              }
-                              ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
-                              onNavigate?.call();
-                            },
+                height: barsHeight,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6.0),
+                  child: Card(
+                    elevation: 0,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 6,
+                            children: [
+                              _StatChip(
+                                color: Colors.green,
+                                label: 'Completed',
+                                value: completed,
+                                icon: CupertinoIcons.check_mark_circled,
+                                selected: selectedStatus == ProjectStatus.completed,
+                                onTap: () {
+                                  ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.completed;
+                                  ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                                  onNavigate?.call();
+                                },
+                              ),
+                              _StatChip(
+                                color: Colors.orange,
+                                label: 'In progress',
+                                value: inProgress,
+                                icon: CupertinoIcons.time,
+                                selected: selectedStatus == ProjectStatus.in_progress,
+                                onTap: () {
+                                  ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.in_progress;
+                                  ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                                  onNavigate?.call();
+                                },
+                              ),
+                              _StatChip(
+                                color: Colors.redAccent,
+                                label: 'Cancelled',
+                                value: cancelled,
+                                icon: CupertinoIcons.xmark_octagon,
+                                selected: selectedStatus == ProjectStatus.cancelled,
+                                onTap: () {
+                                  ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.cancelled;
+                                  ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                                  onNavigate?.call();
+                                },
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 10),
+                          Expanded(
+                            child: _StatusBars(
+                              completed: completed.toDouble(),
+                              inProgress: inProgress.toDouble(),
+                              cancelled: cancelled.toDouble(),
+                              realCompleted: completed,
+                              realInProgress: inProgress,
+                              realCancelled: cancelled,
+                              onSelect: (idx) {
+                                if (idx == 0) {
+                                  ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.completed;
+                                } else if (idx == 1) {
+                                  ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.in_progress;
+                                } else if (idx == 2) {
+                                  ref.read(nodalStatusFilterProvider.notifier).state = ProjectStatus.cancelled;
+                                }
+                                ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                                onNavigate?.call();
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -231,15 +298,17 @@ class ProjectsCharts extends ConsumerWidget {
 // _ScatterByGram removed per requirement: sub-nodal dashboard should only show
 // 'Projects by Gram Panchayat' and the Progress Bar.
 
-class _OutlinedPieByGroup extends StatelessWidget {
+class _OutlinedPieByGroup extends ConsumerWidget {
   final String title;
   final List<MapEntry<String, int>> entries;
   final bool small;
-  const _OutlinedPieByGroup({required this.title, required this.entries, this.small = false});
+  final VoidCallback? onNavigate;
+  const _OutlinedPieByGroup({required this.title, required this.entries, this.small = false, this.onNavigate});
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final total = entries.fold<int>(0, (p, e) => p + e.value);
     final cs = Theme.of(context).colorScheme;
+    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
     final colors = [
       Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.cyan, Colors.teal, Colors.indigo
     ];
@@ -253,28 +322,57 @@ class _OutlinedPieByGroup extends StatelessWidget {
         ],
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
         Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
-  Expanded(
+        Expanded(
           child: PieChart(
             PieChartData(
               startDegreeOffset: -90,
-              centerSpaceRadius: small ? 44 : 54,
-              sectionsSpace: small ? 1 : 2,
+              centerSpaceRadius: (small ? 44.0 : 54.0) - (isAndroid && small ? 6.0 : 0.0),
+              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 2 : (small ? 1 : 2),
               borderData: FlBorderData(show: false),
-              pieTouchData: PieTouchData(enabled: false),
+              pieTouchData: PieTouchData(
+                enabled: true,
+                touchCallback: (event, response) {
+                  final i = response?.touchedSection?.touchedSectionIndex;
+                  if (i != null && i >= 0 && i < entries.length && event is FlTapUpEvent) {
+                    final label = entries[i].key.trim();
+                    if (label.isNotEmpty) {
+                      ref.read(gramPanchayatFilterProvider.notifier).state = label.toLowerCase();
+                      // Clear mutually exclusive filters that would conflict conceptually.
+                      ref.read(nodalStatusFilterProvider.notifier).state = null;
+                      ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+                      // Navigate to projects list via inherited callback using Notification (decouple from direct dependency)
+                      onNavigate?.call();
+                    }
+                  }
+                },
+              ),
               sections: [
                 for (int i = 0; i < entries.length; i++)
                   PieChartSectionData(
                     value: entries[i].value.toDouble(),
                     color: colors[i % colors.length],
-                    radius: small ? 48 : 56,
+                    radius: (small ? 48.0 : 56.0) - (isAndroid && small ? 4.0 : 0.0),
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
-                    title: '${((entries[i].value / total) * 100).toStringAsFixed(0)}%',
-                    titleStyle: TextStyle(fontSize: small ? 9 : 11, fontWeight: FontWeight.w600, color: cs.onPrimary),
+                    title: () {
+                      final totalLocal = total == 0 ? 1 : total;
+                      final pct = entries[i].value / totalLocal;
+                      final veryNarrow = MediaQuery.of(context).size.width < 360;
+                      // Hide tiny slice labels on very narrow screens to avoid overlaps
+                      if (veryNarrow && (pct < 0.12 || entries.length > 6)) return '';
+                      return '${(pct * 100).toStringAsFixed(0)}%';
+                    }(),
+                    titleStyle: TextStyle(
+                      fontSize: (MediaQuery.of(context).size.width < 360) ? 8 : (small ? 8 : 10),
+                      fontWeight: FontWeight.w600,
+                      color: cs.onPrimary,
+                    ),
                   ),
               ],
             ),
@@ -287,8 +385,17 @@ class _OutlinedPieByGroup extends StatelessWidget {
           colorForIndex: (i) => colors[i % colors.length],
           maxVisible: 7,
           labelBuilder: (e) => e.key,
+          onTap: (e) {
+            final label = e.key.trim();
+            if (label.isEmpty) return;
+            ref.read(gramPanchayatFilterProvider.notifier).state = label.toLowerCase();
+            ref.read(nodalStatusFilterProvider.notifier).state = null;
+            ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
+            onNavigate?.call();
+          },
         ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -303,6 +410,7 @@ class _OutlinedPieByBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final total = blocks.fold<int>(0, (p, e) => p + e.value);
     final cs = Theme.of(context).colorScheme;
+    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
     final colors = [
       Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.cyan, Colors.teal, Colors.indigo
     ];
@@ -325,8 +433,8 @@ class _OutlinedPieByBlock extends StatelessWidget {
           child: PieChart(
             PieChartData(
               startDegreeOffset: -90,
-              centerSpaceRadius: small ? 44 : 54,
-              sectionsSpace: small ? 1 : 2,
+              centerSpaceRadius: (small ? 44.0 : 54.0) - (isAndroid && small ? 6.0 : 0.0),
+              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 2 : (small ? 1 : 2),
               borderData: FlBorderData(show: false),
               pieTouchData: PieTouchData(
                 enabled: onSelect != null,
@@ -342,7 +450,7 @@ class _OutlinedPieByBlock extends StatelessWidget {
                   PieChartSectionData(
                     value: blocks[i].value.toDouble(),
                     color: colors[i % colors.length],
-                    radius: small ? 48 : 56,
+                    radius: (small ? 48.0 : 56.0) - (isAndroid && small ? 4.0 : 0.0),
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
                     title: '${((blocks[i].value / total) * 100).toStringAsFixed(0)}%',
                     titleStyle: TextStyle(fontSize: small ? 9 : 11, fontWeight: FontWeight.w600, color: cs.onPrimary),
@@ -480,6 +588,10 @@ class _StatusBars extends StatelessWidget {
       ('In progress', inProgress, Colors.orange, realInProgress),
       ('Cancelled', cancelled, Colors.redAccent, realCancelled),
     ];
+    final screenW = MediaQuery.of(context).size.width;
+    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
+    final smallW = screenW < 420;
+    final rodWidth = (isAndroid && smallW) ? 28.0 : 24.0;
   final maxValue = [realCompleted, realInProgress, realCancelled].fold<int>(0, (p, n) => n > p ? n : p);
   final total = realCompleted + realInProgress + realCancelled;
   // Removed ghost bar; zero values render no bar (only dash in top labels)
@@ -533,9 +645,19 @@ class _StatusBars extends StatelessWidget {
                 final i = v.toInt();
                 if (i < 0 || i >= bars.length) return const SizedBox.shrink();
                 final full = bars[i].$1;
+                final veryNarrow = MediaQuery.of(context).size.width < 360;
+                final label = veryNarrow
+                    ? (full == 'Completed'
+                        ? 'Done'
+                        : full == 'In progress'
+                            ? 'In prog'
+                            : full == 'Cancelled'
+                                ? 'Cancel'
+                                : full)
+                    : full;
                 return Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(full, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+                  child: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
                 );
               },
             ),
@@ -550,7 +672,7 @@ class _StatusBars extends StatelessWidget {
                 BarChartRodData(
                   toY: bars[i].$4 > 0 ? bars[i].$2 : 0.0,
                   color: bars[i].$3.withValues(alpha: bars[i].$4 > 0 ? 1.0 : 0.15), // faint color retained though height zero
-                  width: 24,
+                  width: rodWidth,
                   borderRadius: BorderRadius.circular(8),
                 ),
               ],
@@ -588,30 +710,41 @@ class _StatChip extends StatelessWidget {
   final int value;
   final IconData? icon;
   final bool selected;
-  const _StatChip({required this.color, required this.label, required this.value, this.icon, this.selected = false});
+  final VoidCallback? onTap;
+  const _StatChip({required this.color, required this.label, required this.value, this.icon, this.selected = false, this.onTap});
   @override
   Widget build(BuildContext context) {
+    final chip = AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: selected ? color : color.withValues(alpha: 0.35), width: selected ? 1.3 : 1),
+        color: selected ? color.withValues(alpha: 0.12) : null,
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (icon != null)
+          Icon(icon, size: 13, color: color)
+        else
+          Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 4),
+        Text('$value', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: selected ? color : null)),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: selected ? color : null)),
+      ]),
+    );
+    if (onTap == null) {
+      return Semantics(label: '$label: $value projects', child: chip);
+    }
     return Semantics(
+      button: true,
       label: '$label: $value projects',
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: selected ? color : color.withValues(alpha: 0.35), width: selected ? 1.3 : 1),
-          color: selected ? color.withValues(alpha: 0.12) : null,
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (icon != null)
-            Icon(icon, size: 13, color: color)
-          else
-            Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-          const SizedBox(width: 4),
-          Text('$value', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: selected ? color : null)),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: selected ? color : null)),
-        ]),
-      ));
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: chip,
+      ),
+    );
   }
 }
 
@@ -658,6 +791,186 @@ class _ChartFallback extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// Shimmer effect widget (self-contained, no external dependency).
+class _Shimmer extends StatefulWidget {
+  final Widget child;
+  const _Shimmer({required this.child});
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat();
+  }
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) {
+        final shimmerPosition = _c.value;
+        return ShaderMask(
+          shaderCallback: (rect) {
+            return LinearGradient(
+              begin: Alignment(-1 - shimmerPosition, 0),
+              end: Alignment(1 + shimmerPosition, 0),
+              colors: [
+                cs.surfaceContainerHighest.withValues(alpha: 0.15),
+                cs.surfaceContainerHighest.withValues(alpha: 0.45),
+                cs.surfaceContainerHighest.withValues(alpha: 0.15),
+              ],
+              stops: const [0.15, 0.5, 0.85],
+            ).createShader(rect);
+          },
+          blendMode: BlendMode.srcATop,
+          child: widget.child,
+        );
+      },
+    );
+  }
+}
+
+/// A simple rectangular skeleton block.
+class _SkeletonBlock extends StatelessWidget {
+  final double height;
+  final double? width;
+  final BorderRadius? radius;
+  const _SkeletonBlock({required this.height, this.width, this.radius});
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return _Shimmer(
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+          borderRadius: radius ?? BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+}
+
+/// Skeleton layout replicating charts arrangement while loading stream.
+class _ChartsLoadingSkeleton extends StatelessWidget {
+  const _ChartsLoadingSkeleton();
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, c) {
+      final narrow = c.maxWidth < 720;
+      final veryNarrow = c.maxWidth < 360;
+      final half = (c.maxWidth - 12) / (narrow ? 1 : 2);
+      final cardRadius = BorderRadius.circular(12);
+      Widget chartCard({required double width, required double height, int? legendLines}) {
+        return SizedBox(
+          width: width,
+          height: height,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6.0),
+            child: Card(
+              elevation: 0,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SkeletonBlock(height: 14, width: 140, radius: BorderRadius.all(Radius.circular(4))),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: Center(
+                        child: _SkeletonBlock(
+                          height: (height - 80) * 0.8,
+                          width: (height - 80) * 0.8,
+                          radius: cardRadius,
+                        ),
+                      ),
+                    ),
+                    if (legendLines != null) ...[
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: List.generate(legendLines, (i) => const _SkeletonBlock(height: 20, width: 90)).toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      return SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 4),
+                if (!narrow) chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 5),
+                if (narrow)
+                  chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 5),
+                SizedBox(
+                  width: c.maxWidth,
+                  height: veryNarrow ? 260 : 300,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6.0),
+                    child: Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 6,
+                              children: List.generate(3, (i) => const _SkeletonBlock(height: 26, width: 110, radius: BorderRadius.all(Radius.circular(20)))).toList(),
+                            ),
+                            const SizedBox(height: 16),
+                            Expanded(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  for (int i = 0; i < 3; i++) ...[
+                                    Expanded(
+                                      child: Align(
+                                        alignment: Alignment.bottomCenter,
+                                        child: _SkeletonBlock(height: (veryNarrow ? 180 : 200) * (0.4 + i * 0.2), width: 30, radius: BorderRadius.circular(8)),
+                                      ),
+                                    ),
+                                    if (i < 2) const SizedBox(width: 12),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    });
   }
 }
 
@@ -713,8 +1026,8 @@ class _AdaptiveLegends extends StatelessWidget {
       return ConstrainedBox(
         constraints: BoxConstraints(maxWidth: c.maxWidth),
         child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
+          spacing: (c.maxWidth < 360) ? 4 : 6,
+          runSpacing: (c.maxWidth < 360) ? 4 : 6,
           children: children,
         ),
       );
@@ -746,7 +1059,7 @@ class _LegendChipState extends State<_LegendChip> with SingleTickerProviderState
     final color = widget.color;
     final value = widget.value;
     final selected = widget.selected;
-    final text = label.length > (dense ? 14 : 20) ? label.substring(0, (dense ? 11 : 17)) + '…' : label;
+    final text = label.length > (dense ? 12 : 20) ? '${label.substring(0, (dense ? 10 : 17))}…' : label;
     return Semantics(
       label: '$label: $value projects',
       button: widget.onTap != null,

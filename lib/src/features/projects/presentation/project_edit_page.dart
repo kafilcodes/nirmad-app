@@ -1,28 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:nirmadapp/src/shared/widgets/required_label.dart';
-import '../../../shared/widgets/scroll_safe_dialog.dart';
+import 'package:nirmadapp/src/shared/widgets/scroll_safe_dialog.dart';
 import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
  import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:nirmadapp/src/shared/widgets/app_map.dart';
 import 'package:flutter/services.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
-import '../../projects/data/project_repository.dart';
-import '../../../services/storage_service.dart';
+import 'package:nirmadapp/src/features/projects/data/project_repository.dart';
+import 'package:nirmadapp/src/services/storage_service.dart';
 import 'package:toastification/toastification.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+// Removed unused imports: app_wizard_stepper and section_controller
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
-import '../../../shared/data/blocks_provider.dart';
-import '../../../shared/widgets/date_form_field.dart';
-import '../domain/project.dart';
-import '../../../shared/navigation/unsaved_changes_guard.dart';
-import '../../../shared/widgets/attachment_button.dart';
+import 'package:nirmadapp/src/shared/data/blocks_provider.dart';
+import 'package:nirmadapp/src/shared/widgets/date_form_field.dart';
+import 'package:nirmadapp/src/shared/utils/date_parse.dart';
+import 'package:nirmadapp/src/features/projects/domain/project.dart';
+import 'package:nirmadapp/src/shared/navigation/unsaved_changes_guard.dart';
+import 'package:nirmadapp/src/shared/widgets/attachment_button.dart';
+import 'package:nirmadapp/src/shared/utils/file_type_icon.dart';
 
 class ProjectEditorPage extends ConsumerStatefulWidget {
   final String projectId;
@@ -167,25 +170,16 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
         ],
       ),
     );
-    return res == true;
+    return res ?? false;
   }
 
   @override
   void initState() {
     super.initState();
-    // Register global unsaved-changes guard so sidebar/tab navigations prompt too
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final guard = ref.read(unsavedChangesGuardProvider);
-      guard.register(() async {
-        if (!_dirty || _saving) return true;
-        return await _onWillPop();
-      });
-    });
     void mark() {
-      if (!_suppressDirty) {
-        _dirty = true;
-        _dirtyN.value = true;
+      if (_suppressDirty) return;
+      if (mounted) {
+        setState(() { _dirty = true; _dirtyN.value = true; });
       }
     }
     for (final c in [
@@ -229,12 +223,16 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
       _bankBranch,
       _bankIfsc,
       _workStartDate,
-  _workEndDate,
+      _workEndDate,
     ]) {
       c.addListener(mark);
     }
-  // Load once from server and seed controllers outside build
-  _loadFuture = _resetFromServer();
+    _loadFuture = _resetFromServer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+  ref.read(unsavedChangesGuardProvider).register(_onWillPop);
+      } catch (_) {}
+    });
   }
 
   Future<void> _resetFromServer() async {
@@ -279,10 +277,10 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
       _sanctionDeptName.text = (sanc['sanctioningDepartmentName'] as String?) ?? '';
       _techApprovalNo.text = (sanc['technicalApprovalNo'] as String?) ?? '';
       final ta = sanc['technicalApprovalDate'];
-      _techApprovalDate.text = ta is Timestamp ? _fmt(ta.toDate()) : '';
+      _techApprovalDate.text = ta is Timestamp ? _fmt(ta.toDate()) : (_techApprovalDate.text.isNotEmpty ? _techApprovalDate.text : '');
       _adminApprovalNo.text = (sanc['adminApprovalNo'] as String?) ?? '';
       final aa = sanc['adminApprovalDate'];
-      _adminApprovalDate.text = aa is Timestamp ? _fmt(aa.toDate()) : '';
+      _adminApprovalDate.text = aa is Timestamp ? _fmt(aa.toDate()) : (_adminApprovalDate.text.isNotEmpty ? _adminApprovalDate.text : '');
       _schemeId.text = (sanc['schemeId'] as String?) ?? '';
       _schemeName.text = (sanc['schemeName'] as String?) ?? '';
       _itemId.text = (sanc['itemId'] as String?) ?? '';
@@ -356,121 +354,72 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
         ],
       ),
     );
-    return res == true;
+    return res ?? false;
   }
 
-  // Permissions + pickers
   Future<void> _useMyLocation() async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      LocationPermission p = await Geolocator.checkPermission();
-      if (p == LocationPermission.denied) p = await Geolocator.requestPermission();
-      if (p == LocationPermission.deniedForever || p == LocationPermission.denied) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Location permission denied'),
-              action: SnackBarAction(
-                label: 'Settings',
-                onPressed: () {
-                  openAppSettings();
-                },
-              ),
-            ),
-          );
-        }
-        return;
-      }
-      final serviceOn = await Geolocator.isLocationServiceEnabled();
-      if (!serviceOn) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Turn on device location services to continue.')),
-          );
-        }
-        return;
-      }
       final pos = await Geolocator.getCurrentPosition().timeout(const Duration(seconds: 12));
       final lat = pos.latitude, lng = pos.longitude;
       if (!_isInChhattisgarh(lat, lng)) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select a location within Chhattisgarh.')));
-        }
+        messenger.showSnackBar(const SnackBar(content: Text('Please select a location within Chhattisgarh.')));
         return;
       }
-      setState(() { _location = GeoPoint(lat, lng); _dirty = true; });
+      if (!mounted) return;
+      setState(() { _location = GeoPoint(lat, lng); _dirty = true; _dirtyN.value = true; });
     } on TimeoutException {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location timed out. Try again.')));
+      messenger.showSnackBar(const SnackBar(content: Text('Location timed out. Try again.')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Location failed: $e')));
+      messenger.showSnackBar(SnackBar(content: Text('Location failed: $e')));
     }
   }
 
   Future<void> _pickOnMap() async {
+    final messenger = ScaffoldMessenger.of(context);
     ll.LatLng? picked = _location == null ? null : ll.LatLng(_location!.latitude, _location!.longitude);
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (context) {
-        ll.LatLng center = picked ?? const ll.LatLng(20.5937, 78.9629); // India approx
+        ll.LatLng center = picked ?? const ll.LatLng(20.7072, 81.5480); // Default: Dhamtari
         return StatefulBuilder(builder: (context, setS) {
-          return Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  height: MediaQuery.of(context).size.height * 0.6,
-                  child: FlutterMap(
-                    options: MapOptions(
-                      initialCenter: center,
-                      initialZoom: 12,
-                      cameraConstraint: CameraConstraint.contain(bounds: LatLngBounds.fromPoints([
-                        const ll.LatLng(6.0, 68.0), // SW India approx
-                        const ll.LatLng(36.0, 97.5), // NE India approx
-                      ])),
-                      interactionOptions: const InteractionOptions(
-                        flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
-                      ),
-                      onPositionChanged: (pos, hasGesture) {
-                        // Soft guard present via cameraConstraint; no-op here to appease lints
-                      },
-                      onTap: (tapPos, latLng) {
-                        if (_isInChhattisgarh(latLng.latitude, latLng.longitude)) {
-                          setS(() => picked = latLng);
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pick a point within Chhattisgarh.')));
-                        }
-                      },
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-                        subdomains: const ['a','b','c','d'],
-                        userAgentPackageName: 'com.example.nirmadapp',
-                      ),
-                      const RichAttributionWidget(
-                        attributions: [
-                          TextSourceAttribution('© OpenStreetMap contributors'),
-                          TextSourceAttribution('© CARTO'),
-                        ],
-                        alignment: AttributionAlignment.bottomRight,
-                      ),
-                      if (picked != null)
-                        MarkerLayer(markers: [
-                          Marker(point: picked!, child: const Icon(CupertinoIcons.map_pin, color: Colors.red, size: 28)),
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                      child: AppMap(
+                        initialCenter: center,
+                        initialZoom: 12,
+                        flags: (InteractiveFlag.drag | InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom | InteractiveFlag.scrollWheelZoom),
+                        cameraBounds: LatLngBounds.fromPoints(const [
+                          ll.LatLng(_cgMinLat, _cgMinLng), // SW Chhattisgarh
+                          ll.LatLng(_cgMaxLat, _cgMaxLng), // NE Chhattisgarh
                         ]),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(children: [
-                  OutlinedButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-                  const Spacer(),
-                  FilledButton(onPressed: picked == null ? null : () { Navigator.pop(context, picked); }, child: const Text('Use location')),
-                ]),
-              ],
+                        onTap: (tapPos, latLng) {
+                          if (_isInChhattisgarh(latLng.latitude, latLng.longitude)) {
+                            setS(() => picked = latLng);
+                          } else {
+                            messenger.showSnackBar(const SnackBar(content: Text('Pick a point within Chhattisgarh.')));
+                          }
+                        },
+                        marker: picked,
+                        infoMessage: 'Drag to pan. Pinch (or Ctrl/Cmd + scroll) to zoom.',
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    OutlinedButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                    const Spacer(),
+                    FilledButton(onPressed: picked == null ? null : () { Navigator.pop(context, picked); }, child: const Text('Use location')),
+                  ]),
+                ],
+              ),
             ),
           );
         });
@@ -480,9 +429,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
         if (_isInChhattisgarh(value.latitude, value.longitude)) {
           setState(() { _location = GeoPoint(value.latitude, value.longitude); _dirty = true; });
         } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selected location is outside Chhattisgarh.')));
-          }
+          messenger.showSnackBar(const SnackBar(content: Text('Selected location is outside Chhattisgarh.')));
         }
       }
     });
@@ -571,12 +518,25 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
       canPop: !_dirty || _saving,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
+        final navigator = Navigator.of(context);
         final ok = await _onWillPop();
-        if (ok && mounted) Navigator.of(context).pop();
+        if (ok) navigator.pop();
       },
       child: Scaffold(
       appBar: AppBar(
-  title: const Text('Edit Project (परियोजना संपादित करें)'),
+        leading: IconButton(
+          tooltip: 'Back',
+          icon: const Icon(CupertinoIcons.back),
+          onPressed: () async {
+            final navigator = Navigator.of(context);
+            if (_dirty && !_saving) {
+              final ok = await _onWillPop();
+              if (!ok) return;
+            }
+            navigator.maybePop();
+          },
+        ),
+        title: const Text('Edit Project (परियोजना संपादित करें)'),
         actions: [
           if (isOwner) ...[
             Row(children:[
@@ -598,16 +558,20 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
           TextButton.icon(
             onPressed: _saving ? null : () async {
               if (_dirty) {
+                if (!context.mounted) return;
                 final ok = await showDialog<bool>(
                   context: context,
-                  builder: (ctx) => AlertDialog(
-                    title: const Text('Reset changes?'),
-                    content: _scrollWrap(ctx, const Text('Reload last saved data and discard your edits?')),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-                      FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Reset')),
-                    ],
-                  ),
+                  builder: (ctx) {
+                    final nav = Navigator.of(ctx);
+                    return AlertDialog(
+                      title: const Text('Reset changes?'),
+                      content: _scrollWrap(ctx, const Text('Reload last saved data and discard your edits?')),
+                      actions: [
+                        TextButton(onPressed: () => nav.pop(false), child: const Text('Cancel')),
+                        FilledButton(onPressed: () => nav.pop(true), child: const Text('Reset')),
+                      ],
+                    );
+                  },
                 );
                 if (ok != true) return;
               }
@@ -642,7 +606,8 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
           }
           // owner gating handled via _ownerEditMode and isOwner flags
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
+            physics: const ClampingScrollPhysics(), // Better mobile scrolling
+            padding: const EdgeInsets.all(16), // Increased padding for mobile
             child: Form(
               key: _form,
               child: Column(
@@ -691,7 +656,8 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                           ),
                           const SizedBox(height: 12),
                           DropdownButtonFormField<String>(
-                            value: blocks.any((label) => label.toLowerCase().trim() == _blockId) ? _blockId : null,
+                            // 'value' deprecated: migrate to initialValue (static initial selection)
+                            initialValue: blocks.any((label) => label.toLowerCase().trim() == _blockId) ? _blockId : null,
                             isExpanded: true,
                             decoration: _reqDecoration('Block (ब्लॉक)', const Icon(CupertinoIcons.map_pin_ellipse)),
                             items: [
@@ -727,7 +693,8 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                           const SizedBox(height: 12),
                           if ((isDevAdmin == true) || (isOwner && _ownerEditMode))
                             DropdownButtonFormField<ProjectStatus>(
-                              value: _status,
+                              // use initialValue instead of deprecated value
+                              initialValue: _status,
                               isExpanded: true,
                               decoration: const InputDecoration(
                                 labelText: 'Status (स्थिति)',
@@ -795,34 +762,35 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                   border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: ListTile(
-                                  dense: true,
-                                  leading: const Icon(CupertinoIcons.photo_on_rectangle),
-                                  title: Text(p, overflow: TextOverflow.ellipsis),
-                                  trailing: Wrap(spacing: 4, children: [
-                                    FutureBuilder<String?>(
-                                      future: _resolvePublic(p),
-                                      builder: (context, snap) {
-                                        final url = snap.data;
-                                        if (url == null) return const SizedBox.shrink();
-                                        final name = p.split('/').last;
-                                        return AttachmentButton(
-                                          resolveUrl: () async => url,
-                                          fileName: name,
-                                          showPreview: false,
-                                        );
-                                      },
-                                    ),
-                                    if (fieldsAll)
-                                      IconButton(
-                                        tooltip: 'Remove',
-                                        icon: const Icon(CupertinoIcons.trash, color: Color(0xFFe55353)),
-                                        onPressed: () {
-                                          setState(() { _photoUrls.removeAt(i); _dirty = true; _dirtyN.value = true; });
+                                child: Builder(builder: (context) {
+                                  return ListTile(
+                                    dense: true,
+                                    leading: const Icon(CupertinoIcons.photo_on_rectangle),
+                                    title: Text(p, overflow: TextOverflow.ellipsis),
+                                    trailing: Wrap(spacing: 4, children: [
+                                      FutureBuilder<String?>(
+                                        future: _resolvePublic(p),
+                                        builder: (context, snap) {
+                                          final url = snap.data;
+                                          if (url == null) return const SizedBox.shrink();
+                                          final name = p.split('/').last;
+                                          return AttachmentButton(
+                                            resolveUrl: () async => url,
+                                            fileName: name,
+                                          );
                                         },
                                       ),
-                                  ]),
-                                ),
+                                      if (fieldsAll)
+                                        IconButton(
+                                          tooltip: 'Remove',
+                                          icon: const Icon(CupertinoIcons.trash, color: Color(0xFFe55353)),
+                                          onPressed: () {
+                                            setState(() { _photoUrls.removeAt(i); _dirty = true; _dirtyN.value = true; });
+                                          },
+                                        ),
+                                    ]),
+                                  );
+                                }),
                               );
                             },
                           ),
@@ -832,8 +800,9 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                           child: Wrap(spacing: 8, children: [
                             FilledButton.icon(
                               onPressed: !fieldsAll ? null : () async {
+                                final messenger = ScaffoldMessenger.of(context);
                                 if (_photoUrls.length >= 5) {
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Maximum 5 photos')));
+                                  messenger.showSnackBar(const SnackBar(content: Text('Maximum 5 photos')));
                                   return;
                                 }
                                 final res = await FilePicker.platform.pickFiles(allowMultiple: true, withData: true, type: FileType.image);
@@ -852,7 +821,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                 }
                                 if (selected.isEmpty) return;
 
-                                String _mimeFor(String name) {
+                                String mimeFor(String name) {
                                   final lower = name.toLowerCase();
                                   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
                                   if (lower.endsWith('.png')) return 'image/png';
@@ -872,11 +841,12 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                 ];
                                 bool done = false;
                                 int settled = 0;
+                                if (!context.mounted) return;
                                 await showDialog(
                                   context: context,
                                   barrierDismissible: false,
                                   builder: (_) => StatefulBuilder(builder: (ctx, setS) {
-                                    void _start() {
+                                    void start() {
                                       // Start all uploads in parallel (<= 5) using StorageService for consistent metadata and progress
                                       final storage = ref.read(storageServiceProvider);
                                       for (int i = 0; i < items.length; i++) {
@@ -889,7 +859,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                           path: path,
                                           bytes: bytes,
                                           fileName: f.name,
-                                          contentType: _mimeFor(f.name),
+                                          contentType: mimeFor(f.name),
                                           onProgress: (p) {
                                             setS(() { entry['progress'] = p.clamp(0, 1); });
                                           },
@@ -905,7 +875,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                     }
 
                                     // Kick off after first build
-                                    WidgetsBinding.instance.addPostFrameCallback((_) { if (!done) _start(); });
+                                    WidgetsBinding.instance.addPostFrameCallback((_) { if (!done) start(); });
 
                                     return AlertDialog(
                                       title: const Text('Uploading photos'),
@@ -949,7 +919,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                 if (added.isNotEmpty) {
                                   setState(() { _photoUrls.addAll(added); _dirty = true; _dirtyN.value = true; });
                                   if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Uploaded ${added.length} photo(s)')));
+                                    messenger.showSnackBar(SnackBar(content: Text('Uploaded ${added.length} photo(s)')));
                                   }
                                 }
                               },
@@ -973,28 +943,18 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                         if (_location != null)
                           SizedBox(
                             height: 180,
-                            child: FlutterMap(
-                              options: MapOptions(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: AppMap(
                                 initialCenter: ll.LatLng(_location!.latitude, _location!.longitude),
                                 initialZoom: 14,
+                                minZoom: 8,
+                                maxZoom: 19,
+                                flags: (InteractiveFlag.all & ~InteractiveFlag.flingAnimation),
+                                marker: ll.LatLng(_location!.latitude, _location!.longitude),
+                                showAttribution: false,
+                                infoMessage: 'Tap and drag to pan. Pinch (or Ctrl/Cmd + scroll) to zoom.',
                               ),
-                              children: [
-                                TileLayer(
-                                  urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-                                  subdomains: const ['a','b','c','d'],
-                                  userAgentPackageName: 'com.example.nirmadapp',
-                                ),
-                                const RichAttributionWidget(
-                                  attributions: [
-                                    TextSourceAttribution('© OpenStreetMap contributors'),
-                                    TextSourceAttribution('© CARTO'),
-                                  ],
-                                  alignment: AttributionAlignment.bottomRight,
-                                ),
-                                MarkerLayer(markers: [
-                                  Marker(point: ll.LatLng(_location!.latitude, _location!.longitude), child: const Icon(CupertinoIcons.location_solid, color: Colors.red, size: 28)),
-                                ]),
-                              ],
                             ),
                           )
                         else
@@ -1016,6 +976,49 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
+
+                  // Native Flutter Stepper for consistency with Create Project page
+                  Stepper(
+                    type: StepperType.vertical,
+                    currentStep: _expWork ? 3 : (_expAllot ? 2 : (_expSanc ? 1 : 0)),
+                    onStepTapped: (i) {
+                      setState(() {
+                        _expPrelim = i == 0;
+                        _expSanc = i == 1;
+                        _expAllot = i == 2;
+                        _expWork = i == 3;
+                      });
+                    },
+                    controlsBuilder: (context, details) {
+                      return const SizedBox.shrink(); // No controls needed for edit page
+                    },
+                    steps: [
+                      Step(
+                        title: const Text('Preliminary Description (प्रारंभिक विवरण)'),
+                        isActive: _expPrelim,
+                        state: _expPrelim ? StepState.complete : StepState.indexed,
+                        content: const SizedBox.shrink(), // Content handled by ExpansionTiles below
+                      ),
+                      Step(
+                        title: const Text('Sanction & Compliance (स्वीकृति और अनुपालन)'),
+                        isActive: _expSanc,
+                        state: _expSanc ? StepState.complete : StepState.indexed,
+                        content: const SizedBox.shrink(),
+                      ),
+                      Step(
+                        title: const Text('Allotment Details (वितरण विवरण)'),
+                        isActive: _expAllot,
+                        state: _expAllot ? StepState.complete : StepState.indexed,
+                        content: const SizedBox.shrink(),
+                      ),
+                      Step(
+                        title: const Text('Work Description (कार्य विवरण)'),
+                        isActive: _expWork,
+                        state: _expWork ? StepState.complete : StepState.indexed,
+                        content: const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
 
                   // Section 1: Preliminary Description
                   ExpansionTile(
@@ -1166,7 +1169,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                     ],
                   ),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 16), // Better spacing between sections
                   ExpansionTile(
                     initiallyExpanded: _expSanc,
                     onExpansionChanged: (v) => setState(() => _expSanc = v),
@@ -1336,11 +1339,11 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                     ],
                   ),
 
-                  const SizedBox(height: 8),
-  ExpansionTile(
+                  const SizedBox(height: 16), // Better spacing between sections
+                  ExpansionTile(
                     initiallyExpanded: _expAllot,
                     onExpansionChanged: (v) => setState(() => _expAllot = v),
-                    leading: const CircleAvatar(radius: 12, child: Center(child: Text('3', style: TextStyle(height: 1)))),
+                    leading: const CircleAvatar(radius: 12, child: Text("3")),
                     title: const Text('Allotment Details (आवंटन)'),
                     children: [
                       Card(
@@ -1550,7 +1553,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                     ],
                   ),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 16), // Better spacing between sections
                   ExpansionTile(
                     initiallyExpanded: _expWork,
                     onExpansionChanged: (v) => setState(() => _expWork = v),
@@ -1614,7 +1617,8 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                             },
                           ),
                           DropdownButtonFormField<WorkStage?>(
-                            value: _workStage,
+                            // migrate from deprecated 'value' to 'initialValue'
+                            initialValue: _workStage,
                             decoration: const InputDecoration(labelText: 'Stage (चरण)'),
                             isExpanded: true,
                             items: [
@@ -1639,7 +1643,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                           child: SizedBox(
                             width: 360,
                             child: DropdownButtonFormField<ApramStatus?>(
-                              value: _apramStatus,
+                              initialValue: _apramStatus,
                               decoration: const InputDecoration(labelText: 'Apram status (एप्राम स्थिति)'),
                               isExpanded: true,
                               items: [
@@ -1728,7 +1732,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
       if (_saving)
         Positioned.fill(
           child: Container(
-            color: Colors.black.withOpacity(0.12),
+            color: Colors.black.withValues(alpha: 0.12),
             child: const Center(child: CircularProgressIndicator()),
           ),
         ),
@@ -1742,22 +1746,25 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                   ? null
                   : () async {
                       if (!(_form.currentState?.validate() ?? false)) return;
+                      // Capture UI handles before async gaps
+                      final messenger = ScaffoldMessenger.of(context);
+                      final fs = FocusScope.of(context);
                       // Check connectivity before attempting to save
                       final statuses = await Connectivity().checkConnectivity().catchError((_) => <ConnectivityResult>[]);
                       if (statuses.isEmpty || statuses.every((s) => s == ConnectivityResult.none)) {
                         if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You are offline. Please try again when back online.')));
+                          messenger.showSnackBar(const SnackBar(content: Text('You are offline. Please try again when back online.')));
                         }
                         return;
                       }
                       // Ensure required docs parity: at least 1 approval document
                       if (canEditAll && _approvalDocs.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Admin approval document required')));
+                        messenger.showSnackBar(const SnackBar(content: Text('Admin approval document required')));
                         return;
                       }
                       // Owners must enable edit mode
                       if (isOwner && !_ownerEditMode && !canEditAll && !canEditLimited) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enable Edit mode to save changes')));
+                        messenger.showSnackBar(const SnackBar(content: Text('Enable Edit mode to save changes')));
                         return;
                       }
                       // Confirmation for nodal officers and non-admin roles
@@ -1765,7 +1772,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                         final ok = await _confirmDisclaimer();
                         if (!ok) return;
                       }
-                      FocusScope.of(context).unfocus();
+                      fs.unfocus();
                       setState(() => _saving = true);
                       try {
                                 final update = <String, dynamic>{
@@ -1791,8 +1798,8 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
 
                                 if (canEditAll) {
                                   // Helpers
-                                  DateTime? _parseDate(String s) { try { if (s.trim().isEmpty) return null; return DateTime.parse(s.trim()); } catch (_) { return null; } }
-                                  num? _parseNum(String s) {
+                                  DateTime? parseDate(String s) => parseAnyDate(s);
+                                  num? parseNum(String s) {
                                     const maxRupees = 500000000; // 50 crores
                                     final v = s.trim(); if (v.isEmpty) return null;
                                     final d = double.tryParse(v.replaceAll(',', ''));
@@ -1818,26 +1825,26 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                     'sanctioningDepartmentId': _sanctionDeptId.text.trim().isEmpty ? null : _sanctionDeptId.text.trim(),
                                     'sanctioningDepartmentName': _sanctionDeptName.text.trim().isEmpty ? null : _sanctionDeptName.text.trim(),
                                     'technicalApprovalNo': _techApprovalNo.text.trim().isEmpty ? null : _techApprovalNo.text.trim(),
-                                    'technicalApprovalDate': _parseDate(_techApprovalDate.text),
+                                    'technicalApprovalDate': parseDate(_techApprovalDate.text),
                                     'adminApprovalNo': _adminApprovalNo.text.trim().isEmpty ? null : _adminApprovalNo.text.trim(),
-                                    'adminApprovalDate': _parseDate(_adminApprovalDate.text),
+                                    'adminApprovalDate': parseDate(_adminApprovalDate.text),
                                     'schemeId': _schemeId.text.trim().isEmpty ? null : _schemeId.text.trim(),
                                     'schemeName': _schemeName.text.trim().isEmpty ? null : _schemeName.text.trim(),
                                     'itemId': _itemId.text.trim().isEmpty ? null : _itemId.text.trim(),
                                     'itemName': _itemName.text.trim().isEmpty ? null : _itemName.text.trim(),
                                     'planHeadId': _planHeadId.text.trim().isEmpty ? null : _planHeadId.text.trim(),
                                     'planHeadName': _planHeadName.text.trim().isEmpty ? null : _planHeadName.text.trim(),
-                                    'approvedAmount': _parseNum(_approvedAmount.text),
+                                    'approvedAmount': parseNum(_approvedAmount.text),
                                     'approvalDocumentUrls': _approvalDocs,
                                   }..removeWhere((k, v) => v == null);
                                   if (sanc.isNotEmpty) update['sanctionCompliance'] = sanc;
 
                                   // Allotment
                                   Map<String, dynamic> mkInst(TextEditingController a, TextEditingController d, TextEditingController ra, TextEditingController rd) => {
-                                        'amount': _parseNum(a.text),
-                                        'date': _parseDate(d.text),
-                                        'receivedAmount': _parseNum(ra.text),
-                                        'receivedDate': _parseDate(rd.text),
+                                        'amount': parseNum(a.text),
+                                        'date': parseDate(d.text),
+                                        'receivedAmount': parseNum(ra.text),
+                                        'receivedDate': parseDate(rd.text),
                                       }..removeWhere((k, v) => v == null);
                                   final allotment = <String, dynamic>{
                                     'installment1': mkInst(_inst1Amount, _inst1Date, _inst1RecvAmount, _inst1RecvDate),
@@ -1858,9 +1865,9 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                   // Compute Financial Phase (0..3) based on received installments
                                   int computePhase() {
                                     int phase = 0;
-                                    num? r1 = _parseNum(_inst1RecvAmount.text);
-                                    num? r2 = _parseNum(_inst2RecvAmount.text);
-                                    num? r3 = _parseNum(_inst3RecvAmount.text);
+                                    num? r1 = parseNum(_inst1RecvAmount.text);
+                                    num? r2 = parseNum(_inst2RecvAmount.text);
+                                    num? r3 = parseNum(_inst3RecvAmount.text);
                                     if ((r1 ?? 0) > 0) phase = 1;
                                     if ((r2 ?? 0) > 0) phase = 2;
                                     if ((r3 ?? 0) > 0) phase = 3;
@@ -1870,8 +1877,8 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
 
                                   // Work
                                   final work = {
-                                    'startDate': _parseDate(_workStartDate.text),
-                                    'endDate': _parseDate(_workEndDate.text),
+                                    'startDate': parseDate(_workStartDate.text),
+                                    'endDate': parseDate(_workEndDate.text),
                                     'stage': _workStage?.name,
                                     'apramStatus': _apramStatus?.name,
                                     'measurementBookUrls': _mbUrls,
@@ -1889,7 +1896,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                 }
 
                                 await db.collection('projects').doc(widget.projectId).update(update);
-            if (!mounted) return;
+                                if (!context.mounted) return;
                                 toastification.show(
                                   context: context,
                                   type: ToastificationType.success,
@@ -1901,7 +1908,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
             _dirty = false; _dirtyN.value = false; if (mounted) setState(() {});
                               } catch (e) {
                                 if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+                                messenger.showSnackBar(SnackBar(content: Text('Update failed: $e')));
                               } finally {
                                 if (mounted) setState(() => _saving = false);
                               }
@@ -1993,7 +2000,8 @@ class _UrlListEditorState extends State<_UrlListEditor> {
             if (v.isEmpty) return;
             final uri = Uri.tryParse(v);
             if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a public http(s) link')));
+              final messenger = ScaffoldMessenger.of(context);
+              messenger.showSnackBar(const SnackBar(content: Text('Enter a public http(s) link')));
               return;
             }
             setState(() {
@@ -2045,34 +2053,35 @@ class _UrlListEditorState extends State<_UrlListEditor> {
           separatorBuilder: (_, __) => const SizedBox(height: 6),
           itemBuilder: (context, i) {
             final item = list[i];
-            final icon = _iconFor(item);
+            final iconData = fileTypeIcon(item);
             final canDelete = widget.enabled && list.length > widget.minItems;
             return Container(
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: ListTile(
-                dense: true,
-                leading: Icon(icon, color: _colorFor(item)),
-                title: Text(item, overflow: TextOverflow.ellipsis),
-                trailing: Wrap(spacing: 4, children: [
-                  AttachmentButton(
-                    resolveUrl: () async => await _resolve(item) ?? item,
-                    fileName: _fileNameFor(item),
-                    showPreview: false,
-                  ),
-                  if (canDelete)
-                    IconButton(
-                      tooltip: 'Remove',
-                      icon: const Icon(CupertinoIcons.trash, color: Color(0xFFe55353)),
-                      onPressed: () {
-                        setState(() { list.removeAt(i); });
-                        widget.onChanged(list);
-                      },
+              child: Builder(builder: (context) {
+                return ListTile(
+                  dense: true,
+                  leading: Icon(iconData.icon, color: iconData.color),
+                  title: Text(_fileNameFor(item), overflow: TextOverflow.ellipsis),
+                  trailing: Wrap(spacing: 4, children: [
+                    AttachmentButton(
+                      resolveUrl: () async => await _resolve(item) ?? item,
+                      fileName: _fileNameFor(item),
                     ),
-                ]),
-              ),
+                    if (canDelete)
+                      IconButton(
+                        tooltip: 'Remove',
+                        icon: const Icon(CupertinoIcons.trash, color: Color(0xFFe55353)),
+                        onPressed: () {
+                          setState(() { list.removeAt(i); });
+                          widget.onChanged(list);
+                        },
+                      ),
+                  ]),
+                );
+              }),
             );
           },
         ),
@@ -2084,23 +2093,6 @@ class _UrlListEditorState extends State<_UrlListEditor> {
     return url;
   }
 
-  IconData _iconFor(String url) {
-    final u = url.toLowerCase();
-    if (u.endsWith('.pdf')) return CupertinoIcons.doc_richtext;
-    if (u.endsWith('.jpg') || u.endsWith('.jpeg') || u.endsWith('.png') || u.endsWith('.heic') || u.endsWith('.heif')) return CupertinoIcons.photo_on_rectangle;
-    if (u.endsWith('.xls') || u.endsWith('.xlsx') || u.endsWith('.csv')) return CupertinoIcons.table;
-    if (u.endsWith('.doc') || u.endsWith('.docx')) return CupertinoIcons.doc_text;
-    return CupertinoIcons.link;
-  }
-
-  Color _colorFor(String url) {
-    final u = url.toLowerCase();
-    if (u.endsWith('.pdf')) return const Color(0xFFE55353); // red
-    if (u.endsWith('.jpg') || u.endsWith('.jpeg') || u.endsWith('.png') || u.endsWith('.heic') || u.endsWith('.heif')) return const Color(0xFF6366F1); // indigo
-    if (u.endsWith('.xls') || u.endsWith('.xlsx') || u.endsWith('.csv')) return const Color(0xFF2EB85C); // green
-    if (u.endsWith('.doc') || u.endsWith('.docx')) return const Color(0xFF0EA5E9); // sky blue
-    return const Color(0xFF9A9A9A);
-  }
 
   String _fileNameFor(String url) {
     final idx = url.lastIndexOf('/');
@@ -2118,6 +2110,7 @@ class _UploadButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return OutlinedButton.icon(
       onPressed: () async {
+        final messenger = ScaffoldMessenger.of(context);
         try {
           final res = await FilePicker.platform.pickFiles(
             type: FileType.custom,
@@ -2128,20 +2121,17 @@ class _UploadButton extends StatelessWidget {
           final f = res.files.first;
           final bytes = f.bytes;
           if (bytes == null) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No file data')));
+            messenger.showSnackBar(const SnackBar(content: Text('No file data')));
             return;
           }
           if (bytes.length > StorageService.maxDocBytes) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('File too large')));
+            messenger.showSnackBar(const SnackBar(content: Text('File too large')));
             return;
           }
           await onPickAndUpload(bytes, f.name);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Uploaded')));
-          }
+          messenger.showSnackBar(const SnackBar(content: Text('Uploaded')));
         } catch (e) {
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+          messenger.showSnackBar(SnackBar(content: Text('Upload failed: $e')));
         }
       },
       icon: const Icon(CupertinoIcons.cloud_upload),
@@ -2208,6 +2198,6 @@ String _rupeesInWords(int n) {
   if (lakh > 0) parts.add('${two(lakh)} lakh');
   if (thousand > 0) parts.add('${two(thousand)} thousand');
   if (hundred > 0) parts.add(three(hundred));
-  return parts.join(' ') + ' rupees';
+  return '${parts.join(' ')} rupees';
 }
 

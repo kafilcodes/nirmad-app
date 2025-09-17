@@ -1,21 +1,24 @@
-import 'dart:io';
 
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import '../../auth/data/auth_repository.dart';
-import '../../projects/domain/project.dart';
-import '../../projects/domain/project_update.dart';
-import '../../projects/data/project_repository.dart';
+import 'package:nirmadapp/src/features/auth/data/auth_repository.dart';
+import 'package:nirmadapp/src/features/projects/domain/project.dart';
+import 'package:nirmadapp/src/features/projects/domain/project_update.dart';
+import 'package:nirmadapp/src/features/projects/data/project_repository.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:nirmadapp/src/shared/utils/amount_in_words.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+// Removed unused imports: app_wizard_stepper, section_controller, storage_service
 import '../../auth/domain/app_user.dart';
 
+// ignore_for_file: unused_element
 class PhaseUpdateStepperPage extends ConsumerStatefulWidget {
   final Project project;
   const PhaseUpdateStepperPage({super.key, required this.project});
@@ -25,6 +28,7 @@ class PhaseUpdateStepperPage extends ConsumerStatefulWidget {
 }
 
 class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage> {
+  final ScrollController _scrollController = ScrollController();
   int _currentStep = 0;
   final _comments = <int, String>{};
   final _commentCtrls = <int, TextEditingController>{};
@@ -48,6 +52,7 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
 
   @override
   void dispose() {
+    _scrollController.dispose();
     for (final c in _commentCtrls.values) {
       c.dispose();
     }
@@ -59,49 +64,53 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
     if (user == null) return false;
     // Skip for dev admin
     if (user.role == UserRole.devAdmin) return true;
+    if (!mounted) return false;
     final accepted = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Confirm and proceed'),
-        content: const Text(
-          'I confirm the information provided is accurate to the best of my knowledge. '
-          'Submitting false or misleading data may lead to rejection or action. '
-          'Your update will be recorded with timestamp and may include your location.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('I understand')),
-        ],
-      ),
+      builder: (ctx) {
+        final nav = Navigator.of(ctx);
+        return AlertDialog(
+          title: const Text('Confirm and proceed'),
+          content: const Text(
+            'I confirm the information provided is accurate to the best of my knowledge. '
+            'Submitting false or misleading data may lead to rejection or action. '
+            'Your update will be recorded with timestamp and may include your location.',
+          ),
+          actions: [
+            TextButton(onPressed: () => nav.pop(false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => nav.pop(true), child: const Text('I understand')),
+          ],
+        );
+      },
     );
     return accepted == true;
   }
 
   Future<void> _getLocation() async {
     setState(() => _locating = true);
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final perm = await Geolocator.requestPermission();
       if (perm == LocationPermission.deniedForever || perm == LocationPermission.denied) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Location permission denied'),
-              action: SnackBarAction(label: 'Settings', onPressed: () { openAppSettings(); }),
-            ),
-          );
-        }
+        if (!mounted) return;
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text('Location permission denied'),
+            action: SnackBarAction(label: 'Settings', onPressed: () { openAppSettings(); }),
+          ),
+        );
         return;
       }
       final serviceOn = await Geolocator.isLocationServiceEnabled();
       if (!serviceOn) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Turn on device location services to continue.')),
-          );
-        }
+        if (!mounted) return;
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Turn on device location services to continue.')),
+        );
         return;
       }
       final pos = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
+      if (!mounted) return;
       setState(() {
         _lat = pos.latitude;
         _lng = pos.longitude;
@@ -114,15 +123,14 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
   }
 
   Future<void> _addPhoto() async {
+    final messenger = ScaffoldMessenger.of(context);
     final picker = ImagePicker();
     final img = await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
     if (img == null) return;
     // Enforce max 3 photos per step/update
     final current = _photos[_currentStep]?.length ?? 0;
     if (current >= 3) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Maximum 3 photos per update step')));
-      }
+      messenger.showSnackBar(const SnackBar(content: Text('Maximum 3 photos per update step')));
       return;
     }
   final path = await ref.read(storageServiceProvider).uploadProjectPhoto(projectId: widget.project.id, file: File(img.path));
@@ -137,16 +145,15 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
     );
     final filePath = res?.files.single.path;
     if (filePath == null) return;
-  final path = await ref.read(storageServiceProvider).uploadProjectDoc(projectId: widget.project.id, file: File(filePath));
+    final path = await ref.read(storageServiceProvider).uploadProjectDoc(projectId: widget.project.id, file: File(filePath));
     setState(() => _docs.putIfAbsent(_currentStep, () => []).add(path));
   }
 
   Future<void> _save() async {
+    final messenger = ScaffoldMessenger.of(context);
     final statuses = await Connectivity().checkConnectivity().catchError((_) => <ConnectivityResult>[]);
     if (statuses.isEmpty || statuses.every((s) => s == ConnectivityResult.none)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You are offline. Please try again when back online.')));
-      }
+      messenger.showSnackBar(const SnackBar(content: Text('You are offline. Please try again when back online.')));
       return;
     }
     // Validate financial amounts (if provided) before proceeding
@@ -160,7 +167,7 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
       if (expStr != null && expStr.trim().isNotEmpty) {
         exp = double.tryParse(expStr.trim());
         if (exp == null || exp < 0 || exp > maxAllowed) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             SnackBar(content: Text('Invalid Expenditure at Phase ${widget.project.phase + step + 1}. Enter a number up to ₹50,00,00,000.')),
           );
           return;
@@ -169,7 +176,7 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
       if (recStr != null && recStr.trim().isNotEmpty) {
         rec = double.tryParse(recStr.trim());
         if (rec == null || rec < 0 || rec > maxAllowed) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             SnackBar(content: Text('Invalid Funds Received at Phase ${widget.project.phase + step + 1}. Enter a number up to ₹50,00,00,000.')),
           );
           return;
@@ -181,21 +188,22 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
   // Require explicit confirmation for non-admin roles
   final ok = await _confirmDisclaimer();
   if (!ok) return;
-      // Soft prompt if submitting without location
-      if (_lat == null || _lng == null) {
-        final proceed = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Submit without location?'),
-            content: const Text('Including your current location helps nodal officers verify work. You can still proceed without it.'),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Add location')),
-              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Proceed')),
-            ],
-          ),
-        );
-        if (proceed != true) return;
-      }
+  // Soft prompt if submitting without location
+  if (_lat == null || _lng == null) {
+    if (!mounted) return;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Submit without location?'),
+        content: const Text('Including your current location helps nodal officers verify work. You can still proceed without it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Add location')),
+          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Proceed')),
+        ],
+      ),
+    );
+    if (proceed != true) return;
+  }
       final user = await ref.read(authRepositoryProvider).currentUser();
       if (user == null) return;
       final repo = ref.read(projectRepositoryProvider);
@@ -294,237 +302,279 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
           TextButton.icon(onPressed: _saving ? null : _save, icon: const Icon(CupertinoIcons.paperplane), label: const Text('Submit')),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _lat == null || _lng == null
-                        ? 'No location attached'
-                        : 'Location attached (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)})',
+      body: SingleChildScrollView(
+        controller: _scrollController,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _lat == null || _lng == null
+                          ? 'No location attached'
+                          : 'Location attached (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)})',
+                    ),
                   ),
+                  FilledButton.icon(
+                    onPressed: _locating ? null : _getLocation,
+                    icon: const Icon(CupertinoIcons.location),
+                    label: Text(_locating ? 'Locating\u2026' : 'Use location'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Column(
+              children: [
+                // Native Flutter Stepper for consistency
+                Stepper(
+                  type: StepperType.vertical,
+                  currentStep: _currentStep,
+                  onStepTapped: (i) => setState(() => _currentStep = i),
+                  controlsBuilder: (context, details) {
+                    return const SizedBox.shrink(); // No controls needed - using custom buttons below
+                  },
+                  steps: List.generate(4, (i) => Step(
+                    title: Text('Phase ${widget.project.phase + i + 1}'),
+                    isActive: _currentStep == i,
+                    state: _currentStep >= i ? StepState.complete : StepState.indexed,
+                    content: const SizedBox.shrink(), // Content handled separately
+                  )),
                 ),
-                FilledButton.icon(
-                  onPressed: _locating ? null : _getLocation,
-                  icon: const Icon(CupertinoIcons.location),
-                  label: Text(_locating ? 'Locating…' : 'Use location'),
+                const SizedBox(height: 8),
+                _stepContent(_currentStep),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => setState(() => _currentStep = (_currentStep - 1).clamp(0, steps.length - 1)),
+                      child: const Text('Back'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: () => setState(() => _currentStep = (_currentStep + 1).clamp(0, steps.length - 1)),
+                      child: const Text('Next'),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: Stepper(
-              currentStep: _currentStep,
-              onStepContinue: () => setState(() => _currentStep = (_currentStep + 1).clamp(0, steps.length - 1)),
-              onStepCancel: () => setState(() => _currentStep = (_currentStep - 1).clamp(0, steps.length - 1)),
-              steps: steps,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
-  // Bottom action bar removed to prevent overflows on small devices; use AppBar action instead
     );
   }
 
-  Step _step(int index) {
+  // Call this after a reset or when you want to scroll to top and focus first field
+  Future<void> _scrollToTopAndUnfocus() async {
+    await Future.delayed(const Duration(milliseconds: 80));
+    if (mounted) {
+      _scrollController.animateTo(0, duration: const Duration(milliseconds: 320), curve: Curves.easeOut);
+      FocusScope.of(context).unfocus();
+    }
+  }
+
+Step _step(int index) {
     final isSkipped = _skip[index] == true;
     final hasContent = ((_comments[index] ?? '').trim().isNotEmpty) || (_photos[index]?.isNotEmpty == true) || (_docs[index]?.isNotEmpty == true) || (_types[index]?.isNotEmpty == true);
   final stepState = (isSkipped || hasContent) ? StepState.complete : StepState.indexed;
   return Step(
       title: Text('Phase ${widget.project.phase + index + 1}'),
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          CheckboxListTile(
-            value: _skip[index] == true,
-            onChanged: (v) => setState(() => _skip[index] = v == true),
-            dense: true,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: const Text('Skip this step (no update will be created)') ,
-          ),
-          // Update type selector (optional)
-          DropdownButtonFormField<String>(
-            decoration: const InputDecoration(labelText: 'Update Type (optional)') ,
-            items: const [
-              DropdownMenuItem(value: 'work', child: Text('Work Progress')),
-              DropdownMenuItem(value: 'financial', child: Text('Financial Details')),
-              DropdownMenuItem(value: 'details', child: Text('Project Details Change')),
-              DropdownMenuItem(value: 'status', child: Text('Status Change')),
-              DropdownMenuItem(value: 'request', child: Text('Request (items/funds/other)')),
-            ],
-            initialValue: _types[index],
-            onChanged: (v) => setState(() {
-              if (v == null) {
-                _types.remove(index);
-                _payloads.remove(index);
+      content: _stepContent(index),
+      isActive: true,
+      state: stepState,
+    );
+  }
+
+  Widget _stepContent(int index) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CheckboxListTile(
+          value: _skip[index] == true,
+          onChanged: (v) => setState(() => _skip[index] = v == true),
+          dense: true,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: const Text('Skip this step (no update will be created)'),
+        ),
+        DropdownButtonFormField<String>(
+          decoration: const InputDecoration(labelText: 'Update Type (optional)'),
+          items: const [
+            DropdownMenuItem(value: 'work', child: Text('Work Progress')),
+            DropdownMenuItem(value: 'financial', child: Text('Financial Details')),
+            DropdownMenuItem(value: 'details', child: Text('Project Details Change')),
+            DropdownMenuItem(value: 'status', child: Text('Status Change')),
+            DropdownMenuItem(value: 'request', child: Text('Request (items/funds/other)')),
+          ],
+          initialValue: _types[index],
+          onChanged: (v) => setState(() {
+            if (v == null) {
+              _types.remove(index);
+              _payloads.remove(index);
+            } else {
+              _types[index] = v;
+              _payloads.putIfAbsent(index, () => <String, dynamic>{});
+            }
+          }),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _commentCtrls.putIfAbsent(index, () {
+            final c = TextEditingController(text: _comments[index]);
+            c.addListener(() {
+              final v = c.text;
+              final w = _countWords(v);
+              if (w <= 100) {
+                setState(() {
+                  _comments[index] = v;
+                  _commentWords[index] = w;
+                });
               } else {
-                _types[index] = v;
-                _payloads.putIfAbsent(index, () => <String, dynamic>{});
+                final trimmed = _firstWords(v, 100);
+                if (trimmed != v) {
+                  c.text = trimmed;
+                  final end = trimmed.length;
+                  c.selection = TextSelection.fromPosition(TextPosition(offset: end));
+                }
+                setState(() {
+                  _comments[index] = trimmed;
+                  _commentWords[index] = 100;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Max 100 words allowed')));
               }
+            });
+            return c;
+          }),
+          textAlignVertical: TextAlignVertical.center,
+          decoration: const InputDecoration(labelText: 'Comment'),
+          maxLines: 3,
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Text('${_commentWords[index] ?? 0}/100 words', style: Theme.of(context).textTheme.labelSmall),
+        ),
+        if ((_types[index] ?? '') == 'financial') ...[
+          const SizedBox(height: 8),
+          TextFormField(
+            textAlignVertical: TextAlignVertical.center,
+            decoration: const InputDecoration(labelText: 'Expenditure Amount (optional)'),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              _TwoDecimalNumberFormatter(),
+            ],
+            onChanged: (v) => setState(() {
+              _payloads.putIfAbsent(index, () => <String, dynamic>{})['expenditure'] = v;
             }),
+          ),
+          Builder(builder: (context) {
+            final s = (_payloads[index]?['expenditure'] as String?)?.trim() ?? '';
+            final helper = _inrHelper(s);
+            return helper == null
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(helper, style: Theme.of(context).textTheme.labelSmall),
+                  );
+          }),
+          const SizedBox(height: 8),
+          TextFormField(
+            textAlignVertical: TextAlignVertical.center,
+            decoration: const InputDecoration(labelText: 'Funds Received (optional)'),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              _TwoDecimalNumberFormatter(),
+            ],
+            onChanged: (v) => setState(() {
+              _payloads.putIfAbsent(index, () => <String, dynamic>{})['fundsReceived'] = v;
+            }),
+          ),
+          Builder(builder: (context) {
+            final s = (_payloads[index]?['fundsReceived'] as String?)?.trim() ?? '';
+            final helper = _inrHelper(s);
+            return helper == null
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('Received: $helper', style: Theme.of(context).textTheme.labelSmall),
+                  );
+          }),
+        ],
+        if ((_types[index] ?? '') == 'status') ...[
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            decoration: const InputDecoration(labelText: 'Status'),
+            items: const [
+              DropdownMenuItem(value: 'in_progress', child: Text('In Progress')),
+              DropdownMenuItem(value: 'completed', child: Text('Completed')),
+              DropdownMenuItem(value: 'cancelled', child: Text('Cancelled')),
+            ],
+            initialValue: _payloads[index]?['status'] as String?,
+            onChanged: (v) => setState(() => _payloads.putIfAbsent(index, () => <String, dynamic>{})['status'] = v),
+          ),
+        ],
+        if ((_types[index] ?? '') == 'request') ...[
+          const SizedBox(height: 8),
+          TextFormField(
+            textAlignVertical: TextAlignVertical.center,
+            decoration: const InputDecoration(labelText: 'Request Title'),
+            onChanged: (v) => _payloads.putIfAbsent(index, () => <String, dynamic>{})['title'] = v,
           ),
           const SizedBox(height: 8),
           TextFormField(
-            controller: _commentCtrls.putIfAbsent(index, () {
-              final c = TextEditingController(text: _comments[index]);
-              c.addListener(() {
-                final v = c.text;
-                final w = _countWords(v);
-                if (w <= 100) {
-                  setState(() {
-                    _comments[index] = v;
-                    _commentWords[index] = w;
-                  });
-                } else {
-                  final trimmed = _firstWords(v, 100);
-                  if (trimmed != v) {
-                    c.text = trimmed;
-                    final end = trimmed.length;
-                    c.selection = TextSelection.fromPosition(TextPosition(offset: end));
-                  }
-                  setState(() {
-                    _comments[index] = trimmed;
-                    _commentWords[index] = 100;
-                  });
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Max 100 words allowed')));
-                }
-              });
-              return c;
-            }),
             textAlignVertical: TextAlignVertical.center,
-            decoration: const InputDecoration(labelText: 'Comment'),
+            decoration: const InputDecoration(labelText: 'Request Details'),
             maxLines: 3,
+            onChanged: (v) => _payloads.putIfAbsent(index, () => <String, dynamic>{})['details'] = v,
           ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text('${_commentWords[index] ?? 0}/100 words', style: Theme.of(context).textTheme.labelSmall),
-          ),
-          if ((_types[index] ?? '') == 'financial') ...[
-            const SizedBox(height: 8),
-            TextFormField(
-              textAlignVertical: TextAlignVertical.center,
-              decoration: const InputDecoration(labelText: 'Expenditure Amount (optional)') ,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [
-                _TwoDecimalNumberFormatter(),
-              ],
-              onChanged: (v) => setState(() {
-                _payloads.putIfAbsent(index, () => <String, dynamic>{})['expenditure'] = v;
-              }),
-            ),
-            Builder(builder: (context) {
-              final s = (_payloads[index]?['expenditure'] as String?)?.trim() ?? '';
-              final helper = _inrHelper(s);
-              return helper == null
-                  ? const SizedBox.shrink()
-                  : Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(helper, style: Theme.of(context).textTheme.labelSmall),
-                    );
-            }),
-            const SizedBox(height: 8),
-            TextFormField(
-              textAlignVertical: TextAlignVertical.center,
-              decoration: const InputDecoration(labelText: 'Funds Received (optional)') ,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [
-                _TwoDecimalNumberFormatter(),
-              ],
-              onChanged: (v) => setState(() {
-                _payloads.putIfAbsent(index, () => <String, dynamic>{})['fundsReceived'] = v;
-              }),
-            ),
-            Builder(builder: (context) {
-              final s = (_payloads[index]?['fundsReceived'] as String?)?.trim() ?? '';
-              final helper = _inrHelper(s);
-              return helper == null
-                  ? const SizedBox.shrink()
-                  : Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text('Received: $helper', style: Theme.of(context).textTheme.labelSmall),
-                    );
-            }),
-          ],
-          if ((_types[index] ?? '') == 'status') ...[
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(labelText: 'Status') ,
-              items: const [
-                DropdownMenuItem(value: 'in_progress', child: Text('In Progress')),
-                DropdownMenuItem(value: 'completed', child: Text('Completed')),
-                DropdownMenuItem(value: 'cancelled', child: Text('Cancelled')),
-              ],
-              initialValue: _payloads[index]?['status'] as String?,
-              onChanged: (v) => setState(() => _payloads.putIfAbsent(index, () => <String, dynamic>{})['status'] = v),
-            ),
-          ],
-          if ((_types[index] ?? '') == 'request') ...[
-            const SizedBox(height: 8),
-            TextFormField(
-              textAlignVertical: TextAlignVertical.center,
-              decoration: const InputDecoration(labelText: 'Request Title'),
-              onChanged: (v) => _payloads.putIfAbsent(index, () => <String, dynamic>{})['title'] = v,
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              textAlignVertical: TextAlignVertical.center,
-              decoration: const InputDecoration(labelText: 'Request Details'),
-              maxLines: 3,
-              onChanged: (v) => _payloads.putIfAbsent(index, () => <String, dynamic>{})['details'] = v,
-            ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(spacing: 8, children: [
-            ElevatedButton.icon(
-              onPressed: _addPhoto,
-              icon: const Icon(CupertinoIcons.camera),
-              label: const Text('Add Photo'),
-              style: ElevatedButton.styleFrom(
-                alignment: Alignment.center,
-                textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      height: 1.0,
-                      leadingDistribution: TextLeadingDistribution.even,
-                      textBaseline: TextBaseline.alphabetic,
-                    ),
-              ),
-            ),
-            ElevatedButton.icon(
-              onPressed: _addDoc,
-              icon: const Icon(CupertinoIcons.paperclip),
-              label: const Text('Add Document'),
-              style: ElevatedButton.styleFrom(
-                alignment: Alignment.center,
-                textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      height: 1.0,
-                      leadingDistribution: TextLeadingDistribution.even,
-                      textBaseline: TextBaseline.alphabetic,
-                    ),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 8),
-          if ((_photos[index] ?? const []).isNotEmpty) ...[
-            const Text('Photos:'),
-            ...(_photos[index] ?? const []).map((p) => Text(p, maxLines: 1, overflow: TextOverflow.ellipsis)),
-          ],
-          if ((_docs[index] ?? const []).isNotEmpty) ...[
-            const Text('Documents:'),
-            ...(_docs[index] ?? const []).map((p) => Text(p, maxLines: 1, overflow: TextOverflow.ellipsis)),
-          ],
         ],
-      ),
-  isActive: true,
-  state: stepState,
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, children: [
+          ElevatedButton.icon(
+            onPressed: _addPhoto,
+            icon: const Icon(CupertinoIcons.camera),
+            label: const Text('Add Photo'),
+            style: ElevatedButton.styleFrom(
+              alignment: Alignment.center,
+              textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    height: 1.0,
+                    leadingDistribution: TextLeadingDistribution.even,
+                    textBaseline: TextBaseline.alphabetic,
+                  ),
+            ),
+          ),
+          ElevatedButton.icon(
+            onPressed: _addDoc,
+            icon: const Icon(CupertinoIcons.paperclip),
+            label: const Text('Add Document'),
+            style: ElevatedButton.styleFrom(
+              alignment: Alignment.center,
+              textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    height: 1.0,
+                    leadingDistribution: TextLeadingDistribution.even,
+                    textBaseline: TextBaseline.alphabetic,
+                  ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        if ((_photos[index] ?? const []).isNotEmpty) ...[
+          const Text('Photos:'),
+          ...(_photos[index] ?? const []).map((p) => Text(p, maxLines: 1, overflow: TextOverflow.ellipsis)),
+        ],
+        if ((_docs[index] ?? const []).isNotEmpty) ...[
+          const Text('Documents:'),
+          ...(_docs[index] ?? const []).map((p) => Text(p, maxLines: 1, overflow: TextOverflow.ellipsis)),
+        ],
+      ],
     );
   }
 }
 
+
 // INR helper utilities for showing money in Indian format and words
-extension on _PhaseUpdateStepperPageState {
+extension _INRHelper on _PhaseUpdateStepperPageState {
   String? _inrHelper(String s) {
     final norm = s.replaceAll(',', '').trim();
     if (norm.isEmpty) return null;
@@ -548,7 +598,12 @@ extension on _PhaseUpdateStepperPageState {
     return '${parts.join(',')},$last3';
   }
 
-  String _rupeesInWords(int n) {
+String _rupeesInWords(int n) {
+    // delegated to shared helper for consistency
+    return AmountInWords.toRupees(n);
+  }
+
+String _rupeesInWordsOld(int n) {
     if (n == 0) return 'zero rupees';
     String two(int x) {
       const ones = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
@@ -573,7 +628,7 @@ extension on _PhaseUpdateStepperPageState {
     if (lakh > 0) parts.add('${two(lakh)} lakh');
     if (thousand > 0) parts.add('${two(thousand)} thousand');
     if (hundred > 0) parts.add(three(hundred));
-    return parts.join(' ') + ' rupees';
+    return '${parts.join(' ')} rupees';
   }
 }
 

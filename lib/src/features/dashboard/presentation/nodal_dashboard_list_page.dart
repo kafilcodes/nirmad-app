@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../projects/domain/project.dart';
@@ -14,6 +13,7 @@ import '../../../shared/widgets/no_data.dart';
 import '../../../shared/data/blocks_provider.dart';
 import '../../../shared/widgets/project_card.dart';
 import '../state/projects_snapshot_provider.dart';
+import '../../../shared/utils/date_parse.dart';
 
 final nodalStatusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
 // Overdue-days filter (e.g., 30 or 60). Null means no overdue filter.
@@ -28,6 +28,8 @@ final _viewGridProvider = StateProvider<bool>((_) => true);
 final _searchProvider = StateProvider.autoDispose<String>((_) => '');
 // Exposed (not private) so dashboard shell can reset this on tab changes.
 final blockFilterProvider = StateProvider<String?>((_) => null);
+// New: Gram Panchayat filter (only used for sub-nodal role). Value stored lowercase & trimmed.
+final gramPanchayatFilterProvider = StateProvider<String?>((_) => null);
 enum _SortBy { updatedDesc, updatedAsc, nameAsc, nameDesc, status }
 final _sortProvider = StateProvider<_SortBy>((_) => _SortBy.updatedDesc);
 final _pageSize = 25;
@@ -43,6 +45,7 @@ class NodalDashboardListPage extends ConsumerWidget {
   final isGrid = ref.watch(_viewGridProvider);
   final search = ref.watch(_searchProvider);
   final blockFilter = ref.watch(blockFilterProvider);
+  final gpFilter = ref.watch(gramPanchayatFilterProvider); // may be null unless sub-nodal interaction
   return Scaffold(
       appBar: AppBar(
         toolbarHeight: 52,
@@ -56,53 +59,51 @@ class NodalDashboardListPage extends ConsumerWidget {
           },
         ),
         actions: [
-          // Sort
-          IconButton(
-            tooltip: 'Sort',
-            icon: const Icon(CupertinoIcons.arrow_up_arrow_down_square),
-            onPressed: () => _openSortSheet(context, ref),
-          ),
-          // Status filter with active dot indicator
-      _withDot(
-      active: status != null,
-            child: IconButton(
-              tooltip: 'Status',
-              icon: const Icon(CupertinoIcons.checkmark_seal),
-              onPressed: () async {
-                final sel = await _pickStatus(context);
-        ref.read(nodalStatusFilterProvider.notifier).state = sel;
-        // Do not clear overdue filter automatically; allow combinations
-                _resetPagination(ref);
-              },
+          // Keep only view toggle on very narrow screens; move filters below
+          if (MediaQuery.of(context).size.width >= 480) ...[
+            IconButton(
+              tooltip: 'Sort',
+              icon: const Icon(CupertinoIcons.arrow_up_arrow_down_square),
+              onPressed: () => _openSortSheet(context, ref),
             ),
-          ),
-          // Overdue (deadline) quick filter
-          _withDot(
-            active: overdueDays != null,
-            child: IconButton(
-              tooltip: 'Overdue',
-              icon: const Icon(CupertinoIcons.calendar),
-              onPressed: () async {
-                final sel = await _pickOverdueDays(context);
-                ref.read(nodalOverdueDaysFilterProvider.notifier).state = sel;
-                _resetPagination(ref);
-              },
-            ),
-          ),
-          if (auth != null && (auth.role == UserRole.superNodal || auth.role == UserRole.devAdmin))
             _withDot(
-              active: blockFilter != null && blockFilter.isNotEmpty,
+              active: status != null,
               child: IconButton(
-                tooltip: 'Block',
-                icon: const Icon(CupertinoIcons.map_pin_ellipse),
+                tooltip: 'Status',
+                icon: const Icon(CupertinoIcons.checkmark_seal),
                 onPressed: () async {
-                  final sel = await _pickBlock(context, ref);
-                  ref.read(blockFilterProvider.notifier).state = sel;
+                  final sel = await _pickStatus(context);
+                  ref.read(nodalStatusFilterProvider.notifier).state = sel;
                   _resetPagination(ref);
                 },
               ),
             ),
-          // View toggle
+            _withDot(
+              active: overdueDays != null,
+              child: IconButton(
+                tooltip: 'Overdue',
+                icon: const Icon(CupertinoIcons.calendar),
+                onPressed: () async {
+                  final sel = await _pickOverdueDays(context);
+                  ref.read(nodalOverdueDaysFilterProvider.notifier).state = sel;
+                  _resetPagination(ref);
+                },
+              ),
+            ),
+            if (auth != null && (auth.role == UserRole.superNodal || auth.role == UserRole.devAdmin))
+              _withDot(
+                active: blockFilter != null && blockFilter.isNotEmpty,
+                child: IconButton(
+                  tooltip: 'Block',
+                  icon: const Icon(CupertinoIcons.map_pin_ellipse),
+                  onPressed: () async {
+                    final sel = await _pickBlock(context, ref);
+                    ref.read(blockFilterProvider.notifier).state = sel;
+                    _resetPagination(ref);
+                  },
+                ),
+              ),
+          ],
           IconButton(
             tooltip: isGrid ? 'Grid view' : 'List view',
             onPressed: () => ref.read(_viewGridProvider.notifier).state = !isGrid,
@@ -110,6 +111,65 @@ class NodalDashboardListPage extends ConsumerWidget {
           ),
           const SizedBox(width: 4),
         ],
+        bottom: MediaQuery.of(context).size.width < 480
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(44),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 4,
+                    children: [
+                      // Sort
+                      IconButton(
+                        tooltip: 'Sort',
+                        icon: const Icon(CupertinoIcons.arrow_up_arrow_down_square),
+                        onPressed: () => _openSortSheet(context, ref),
+                      ),
+                      // Status
+                      _withDot(
+                        active: status != null,
+                        child: IconButton(
+                          tooltip: 'Status',
+                          icon: const Icon(CupertinoIcons.checkmark_seal),
+                          onPressed: () async {
+                            final sel = await _pickStatus(context);
+                            ref.read(nodalStatusFilterProvider.notifier).state = sel;
+                            _resetPagination(ref);
+                          },
+                        ),
+                      ),
+                      // Overdue
+                      _withDot(
+                        active: overdueDays != null,
+                        child: IconButton(
+                          tooltip: 'Overdue',
+                          icon: const Icon(CupertinoIcons.calendar),
+                          onPressed: () async {
+                            final sel = await _pickOverdueDays(context);
+                            ref.read(nodalOverdueDaysFilterProvider.notifier).state = sel;
+                            _resetPagination(ref);
+                          },
+                        ),
+                      ),
+                      if (auth != null && (auth.role == UserRole.superNodal || auth.role == UserRole.devAdmin))
+                        _withDot(
+                          active: blockFilter != null && blockFilter.isNotEmpty,
+                          child: IconButton(
+                            tooltip: 'Block',
+                            icon: const Icon(CupertinoIcons.map_pin_ellipse),
+                            onPressed: () async {
+                              final sel = await _pickBlock(context, ref);
+                              ref.read(blockFilterProvider.notifier).state = sel;
+                              _resetPagination(ref);
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            : null,
       ),
       body: SafeArea(
         child: Column(
@@ -145,6 +205,11 @@ class NodalDashboardListPage extends ConsumerWidget {
                       if (blockFilter != null && blockFilter.isNotEmpty && (auth?.role == UserRole.superNodal || auth?.role == UserRole.devAdmin)) {
                         final keys = blockQueryKeys(blockFilter).map((e) => e.toLowerCase()).toSet();
                         items = items.where((p) => keys.contains(p.blockId.toLowerCase())).toList();
+                      }
+                      // Gram Panchayat filter (only if sub-nodal selected via charts)
+                      if (gpFilter != null && gpFilter.isNotEmpty && auth?.role == UserRole.subNodal) {
+                        final target = gpFilter.toLowerCase();
+                        items = items.where((p) => (p.preliminaryDescription.gramPanchayat?.trim().toLowerCase() ?? '') == target).toList();
                       }
                       // Apply search/status/sort
                       final shown = _applyFiltersAndSort(ref, items, search);
@@ -224,8 +289,7 @@ class NodalDashboardListPage extends ConsumerWidget {
     final stageFilter = ref.read(nodalStageFilterProvider);
     if (stageFilter != null && stageFilter.isNotEmpty) {
       filtered = filtered.where((p) {
-        final wd = (p.workDescription as Map<String, dynamic>? ) ?? const {};
-        var stage = (wd['stage'] as String?)?.trim().toLowerCase() ?? 'unknown';
+        var stage = p.workDescription.stage?.name.toLowerCase() ?? 'unknown';
         if (p.status == ProjectStatus.completed) stage = 'completed';
         return stage == stageFilter;
       }).toList();
@@ -258,6 +322,7 @@ class NodalDashboardListPage extends ConsumerWidget {
             ref.read(nodalOverdueDaysFilterProvider.notifier).state = null;
             ref.read(blockFilterProvider.notifier).state = null;
             ref.read(nodalStageFilterProvider.notifier).state = null;
+            ref.read(gramPanchayatFilterProvider.notifier).state = null;
           }),
           Expanded(child: list),
         ],
@@ -269,15 +334,16 @@ class NodalDashboardListPage extends ConsumerWidget {
     return LayoutBuilder(
       builder: (context, c) {
         final maxW = c.maxWidth;
-        final itemMin = 360.0; // card target width
+        final isSmall = maxW < 420;
+        final itemMin = isSmall ? 300.0 : 340.0; // denser on small screens
         final columns = (maxW / itemMin).floor().clamp(1, 4);
         return GridView.builder(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            childAspectRatio: 1.35,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
+            childAspectRatio: isSmall ? 1.1 : 1.25,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
           ),
           itemCount: filtered.length,
           itemBuilder: (context, i) {
@@ -313,51 +379,66 @@ class NodalDashboardListPage extends ConsumerWidget {
             sColor = Colors.redAccent;
             break;
         }
+        // Gradient card to match owner list style
+        final gradient = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            cs.primary.withValues(alpha: 0.55),
+            cs.primary.withValues(alpha: 0.85),
+          ],
+        );
+        final deadlineVal = p.financials['deadline'];
+        final isLate = _isOverdueByDays(p, 1); // late if before today
         return Card(
           elevation: 0,
-          color: cs.surface,
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: () => _openDetails(context, p, tabbed: true),
-            child: Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: sColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Ink(
+            decoration: BoxDecoration(gradient: gradient, borderRadius: BorderRadius.circular(12)),
+            child: InkWell(
+              onTap: () => _openDetails(context, p, tabbed: true),
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(color: cs.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+                      child: Icon(CupertinoIcons.building_2_fill, color: cs.primary),
                     ),
-                    child: Icon(sIcon, color: sColor, size: 22),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 10,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Row(children: [const Icon(CupertinoIcons.location_solid, size: 14), const SizedBox(width: 4), Text(p.blockId)]),
-                            Row(children: [Icon(sIcon, size: 14, color: sColor), const SizedBox(width: 4), Text(p.status.name)]),
-                            Row(children: [const Icon(CupertinoIcons.time, size: 14), const SizedBox(width: 4), Text(_fmtWhen(p.updatedAt))]),
-                          ],
-                        ),
-                      ],
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Expanded(child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white))),
+                            const SizedBox(width: 8),
+                            Text('#${p.id}', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70)),
+                          ]),
+                          const SizedBox(height: 6),
+                          Wrap(spacing: 6, runSpacing: 6, children: [
+                            StatusChip(label: p.status.name, inverted: true, color: sColor, icon: sIcon),
+                            if (p.phase > 0) StatusChip(label: 'Phase ${p.phase}', inverted: true, color: Colors.white70, icon: CupertinoIcons.number),
+                            if (deadlineVal != null)
+                              StatusChip(
+                                label: 'Due ${_fmtShortDate(_deadlineOf(deadlineVal) ?? DateTime.now())}',
+                                inverted: true,
+                                color: isLate ? Colors.redAccent : Colors.white70,
+                                icon: CupertinoIcons.calendar,
+                              ),
+                          ]),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: () => _openDetails(context, p, tabbed: true),
-                    icon: const Icon(CupertinoIcons.chevron_right),
-                    tooltip: 'Open',
-                  ),
-                ],
+                    const SizedBox(width: 12),
+                    const Icon(CupertinoIcons.chevron_right, size: 18, color: Colors.white70),
+                  ],
+                ),
               ),
             ),
           ),
@@ -394,8 +475,7 @@ class NodalDashboardListPage extends ConsumerWidget {
     final stageFilter = ref.read(nodalStageFilterProvider);
     if (stageFilter != null && stageFilter.isNotEmpty) {
       filtered = filtered.where((p) {
-        final wd = (p.workDescription as Map<String, dynamic>? ) ?? const {};
-        var stage = (wd['stage'] as String?)?.trim().toLowerCase() ?? 'unknown';
+        var stage = p.workDescription.stage?.name.toLowerCase() ?? 'unknown';
         if (p.status == ProjectStatus.completed) stage = 'completed';
         return stage == stageFilter;
       }).toList();
@@ -424,7 +504,8 @@ class NodalDashboardListPage extends ConsumerWidget {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: p, tabbed: tabbed)));
   }
 
-  // Humanized updated time
+  // Humanized updated time (kept for potential future use)
+  // ignore: unused_element
   String _fmtWhen(DateTime d) {
     final now = DateTime.now();
     final diff = now.difference(d);
@@ -499,7 +580,7 @@ class NodalDashboardListPage extends ConsumerWidget {
 
   bool _isOverdueByDays(Project p, int days) {
     if (p.status == ProjectStatus.completed) return false;
-    final d = _deadlineOf(p.financials['deadline']);
+    final d = parseAnyDate(p.financials['deadline']);
     if (d == null) return false;
     final today = DateTime.now();
     final startOfToday = DateTime(today.year, today.month, today.day);
@@ -507,21 +588,7 @@ class NodalDashboardListPage extends ConsumerWidget {
     return d.isBefore(cutoff);
   }
 
-  DateTime? _deadlineOf(dynamic v) {
-    try {
-      if (v == null) return null;
-      if (v is Timestamp) return v.toDate();
-      if (v is DateTime) return v;
-      if (v is String) return DateTime.tryParse(v);
-      if (v is Map && v['seconds'] != null) {
-        final secs = (v['seconds'] as num).toInt();
-        return DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
-      }
-      return null;
-    } catch (_) {
-      return null;
-    }
-  }
+  DateTime? _deadlineOf(dynamic v) => parseAnyDate(v);
 
   Future<String?> _pickBlock(BuildContext context, WidgetRef ref) async {
     return showModalBottomSheet<String?>(
@@ -637,6 +704,7 @@ class _ActiveFiltersBar extends ConsumerWidget {
     final overdue = ref.watch(nodalOverdueDaysFilterProvider);
     final block = ref.watch(blockFilterProvider);
     final stage = ref.watch(nodalStageFilterProvider);
+  final gp = ref.watch(gramPanchayatFilterProvider);
     final chips = <Widget>[];
     void add(String label, VoidCallback onRemove) {
       chips.add(Padding(
@@ -653,6 +721,9 @@ class _ActiveFiltersBar extends ConsumerWidget {
     if (block != null && block.isNotEmpty) {
       add('Block: $block', () => ref.read(blockFilterProvider.notifier).state = null);
     }
+    if (gp != null && gp.isNotEmpty) {
+      add('Gram Panchayat: ${_titleCase(gp)}', () => ref.read(gramPanchayatFilterProvider.notifier).state = null);
+    }
     if (stage != null && stage.isNotEmpty) {
       add('Stage: $stage', () => ref.read(nodalStageFilterProvider.notifier).state = null);
     }
@@ -667,4 +738,16 @@ class _ActiveFiltersBar extends ConsumerWidget {
       ),
     );
   }
+
+  String _titleCase(String input) {
+    return input
+        .split(RegExp(r'\s+'))
+        .map((w) => w.isEmpty ? w : w[0].toUpperCase() + (w.length > 1 ? w.substring(1) : ''))
+        .join(' ');
+  }
 }
+
+// Small location badge with icon and ellipsis-safe label.
+// Removed unused _LocBadge and _MiniChip (legacy visual experiments) to reduce lint noise.
+
+String _fmtShortDate(DateTime d) => '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';

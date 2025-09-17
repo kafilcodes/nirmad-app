@@ -12,16 +12,22 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart' show LatLng;
-import '../../auth/data/auth_repository.dart';
-import '../../projects/data/project_repository.dart';
-import '../../projects/domain/project.dart';
-// import '../../../services/storage_service.dart';
-import '../../../shared/widgets/scroll_safe_dialog.dart';
+import 'package:nirmadapp/src/shared/widgets/app_map.dart';
+import 'package:latlong2/latlong.dart';
+
+import 'package:nirmadapp/src/features/auth/data/auth_repository.dart';
+import 'package:nirmadapp/src/shared/utils/amount_in_words.dart';
+import 'package:nirmadapp/src/features/projects/data/project_repository.dart';
+import 'package:nirmadapp/src/features/projects/domain/project.dart';
+import 'package:nirmadapp/src/shared/utils/date_parse.dart';
+import 'package:nirmadapp/src/shared/widgets/scroll_safe_dialog.dart';
+import 'package:flutter/services.dart';
+// Removed unused imports: app_wizard_stepper and section_controller
 
 class ProjectUpdateFormPage extends ConsumerStatefulWidget {
   final Project project;
-  const ProjectUpdateFormPage({super.key, required this.project});
+  final bool embedded; // when true, render content without Scaffold/AppBar for embedding in tabs
+  const ProjectUpdateFormPage({super.key, required this.project, this.embedded = false});
 
   @override
   ConsumerState<ProjectUpdateFormPage> createState() => _ProjectUpdateFormPageState();
@@ -30,6 +36,16 @@ class ProjectUpdateFormPage extends ConsumerStatefulWidget {
 class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
   final _formKey = GlobalKey<FormState>();
   bool _saving = false;
+  // Stepper header state and anchors
+  int _activeStep = 0;
+  final _commentStepKey = GlobalKey();
+  final _stageStepKey = GlobalKey();
+  final _installmentsStepKey = GlobalKey();
+  // Collapsible toggles
+  bool _showComment = true;
+  bool _showStage = true;
+  bool _showInstallments = true;
+  bool _showAttach = true;
 
   // Basic fields
   String? _comment;
@@ -56,12 +72,28 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
   void initState() {
     super.initState();
     _commentController = TextEditingController(text: _comment ?? '');
+    // Preselect current project stage if available
+    try {
+      _stage = widget.project.workDescription.stage;
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _commentController.dispose();
     super.dispose();
+  }
+
+  void _scrollToKey(GlobalKey key) {
+    final ctx = key.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOut,
+        alignment: 0.05,
+      );
+    }
   }
 
   int _countWords(String s) {
@@ -258,30 +290,22 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
                       ],
                     ),
                   ),
-                  Expanded(
+                  Flexible(
                     child: ClipRRect(
                       borderRadius: const BorderRadius.all(Radius.circular(8)),
-                      child: FlutterMap(
-                        options: MapOptions(
-                          initialCenter: LatLng(lat, lng),
-                          initialZoom: 16,
-                          interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
-                        ),
-                        children: [
-                          TileLayer(
-                            urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            subdomains: const ['a', 'b', 'c'],
-                            userAgentPackageName: 'com.example.nirmadapp',
-                          ),
-                          MarkerLayer(markers: [
-                            Marker(
-                              point: LatLng(lat, lng),
-                              width: 40,
-                              height: 40,
-                              child: Icon(CupertinoIcons.location_solid, color: cs.primary, size: 36),
-                            ),
-                          ]),
-                        ],
+                      child: AppMap(
+                        initialCenter: LatLng(lat, lng),
+                        initialZoom: 16,
+                        minZoom: 8,
+                        maxZoom: 19,
+                        flags: (InteractiveFlag.drag | InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom | InteractiveFlag.scrollWheelZoom),
+                        marker: LatLng(lat, lng),
+                        showAttribution: false,
+                        cameraBounds: LatLngBounds.fromPoints(const [
+                          LatLng(-85.0, -180.0), // SW world
+                          LatLng(85.0, 180.0),   // NE world
+                        ]),
+                        infoMessage: 'Map is locked to your current location for confirmation.',
                       ),
                     ),
                   ),
@@ -313,7 +337,7 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
           _lat = lat;
           _lng = lng;
         });
-      }
+       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to get location')));
@@ -368,7 +392,7 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
         head = head.substring(0, head.length - 2);
       }
       if (head.isNotEmpty) parts.insert(0, head);
-      s = parts.join(',') + ',' + tail;
+      s = '${parts.join(',')},$tail';
     } else {
       s = tail;
     }
@@ -376,34 +400,10 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
   }
 
   String _rupeesInWords(int n) {
-    if (n == 0) return 'zero rupees';
-    final belowTwenty = [
-      'zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'
-    ];
-    final tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
-    String two(int x) {
-      if (x < 20) return belowTwenty[x];
-      final t = tens[x ~/ 10];
-      final r = x % 10;
-      return r == 0 ? t : '$t ${belowTwenty[r]}';
-    }
-    String three(int x) {
-      if (x < 100) return two(x);
-      final h = x ~/ 100;
-      final r = x % 100;
-      return r == 0 ? '${belowTwenty[h]} hundred' : '${belowTwenty[h]} hundred ${two(r)}';
-    }
-    final crore = n ~/ 10000000;
-    final lakh = (n % 10000000) ~/ 100000;
-    final thousand = (n % 100000) ~/ 1000;
-    final hundred = n % 1000;
-    final parts = <String>[];
-    if (crore > 0) parts.add('${two(crore)} crore');
-    if (lakh > 0) parts.add('${two(lakh)} lakh');
-    if (thousand > 0) parts.add('${two(thousand)} thousand');
-    if (hundred > 0) parts.add(three(hundred));
-    return parts.join(' ') + ' rupees';
+    return AmountInWords.toRupees(n);
   }
+
+  // Old implementation kept previously for reference is removed to avoid unused_element lint
 
   Map<String, dynamic> _buildPayload() {
     final payload = <String, dynamic>{};
@@ -466,6 +466,7 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
   if (!ok) return;
       // Soft prompt if submitting without location
       if (_lat == null || _lng == null) {
+        if (!mounted) return;
         final proceed = await showScrollSafeDialog<bool>(
           context: context,
           builder: (ctx) => Column(
@@ -569,175 +570,311 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
   @override
   Widget build(BuildContext context) {
     // Live project stream to sync installment state in real-time
+    Widget contentBuilder(Project project) {
+      final cs = Theme.of(context).colorScheme;
+      Widget sectionTitle(IconData icon, String title) => Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Row(children: [Icon(icon, size: 18, color: cs.primary), const SizedBox(width: 6), Text(title, style: Theme.of(context).textTheme.titleMedium)]),
+          );
+
+      // Helper to compute allowed stage options: current and next only
+      List<WorkStage> allowedStages(WorkStage? current) {
+        final values = WorkStage.values;
+        if (current == null) return [values.first];
+        if (current == WorkStage.completed) return [WorkStage.completed];
+        final idx = values.indexOf(current);
+        final next = values[(idx + 1).clamp(0, values.length - 1)];
+         // include current and next
+         return {current, next}.toList();
+      }
+
+      return Form(
+        key: _formKey,
+        child: ListView(
+          physics: const ClampingScrollPhysics(), // Better mobile scrolling
+          padding: const EdgeInsets.all(16), // Increased padding for mobile
+          children: [
+            // Native Flutter Stepper for consistency
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              child: Stepper(
+                type: StepperType.vertical,
+                currentStep: _activeStep,
+                onStepTapped: (i) {
+                  setState(() => _activeStep = i);
+                  final keys = [_commentStepKey, _stageStepKey, _installmentsStepKey];
+                  if (i >= 0 && i < keys.length) _scrollToKey(keys[i]);
+                },
+                controlsBuilder: (context, details) {
+                  return const SizedBox.shrink(); // No controls needed
+                },
+                steps: const [
+                  Step(
+                    title: Text('Comment'),
+                    content: SizedBox.shrink(),
+                  ),
+                  Step(
+                    title: Text('Stage'),
+                    content: SizedBox.shrink(),
+                  ),
+                  Step(
+                    title: Text('Installments'),
+                    content: SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ),
+            // Comment
+            Card(
+              elevation: 0,
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: KeyedSubtree(key: _commentStepKey, child: sectionTitle(CupertinoIcons.chat_bubble_text, 'Comment'))),
+                        TextButton.icon(
+                          onPressed: () => setState(() => _showComment = !_showComment),
+                          icon: Icon(_showComment ? CupertinoIcons.chevron_down : CupertinoIcons.chevron_right, size: 16),
+                          label: Text(_showComment ? 'Collapse' : 'Expand'),
+                        ),
+                      ],
+                    ),
+                    if (_showComment) ...[
+                      const SizedBox(height: 16), // Increased spacing for mobile
+                      TextFormField(
+                        textAlignVertical: TextAlignVertical.center,
+                        controller: _commentController,
+                        decoration: const InputDecoration(
+                          labelText: 'Comment',
+                          prefixIcon: Icon(CupertinoIcons.chat_bubble),
+                        ),
+                        minLines: 1,
+                        maxLines: 6,
+                        onChanged: _onCommentChanged,
+                      ),
+                      const SizedBox(height: 4),
+                      Text('$_commentWords/100 words', style: Theme.of(context).textTheme.labelSmall),
+                    ]
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16), // Better spacing between sections
+            // Stage
+            Card(
+              elevation: 0,
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: KeyedSubtree(key: _stageStepKey, child: sectionTitle(CupertinoIcons.settings, 'Work Stage'))),
+                        TextButton.icon(
+                          onPressed: () => setState(() => _showStage = !_showStage),
+                          icon: Icon(_showStage ? CupertinoIcons.chevron_down : CupertinoIcons.chevron_right, size: 16),
+                          label: Text(_showStage ? 'Collapse' : 'Expand'),
+                        ),
+                      ],
+                    ),
+                    if (_showStage) ...[
+                      const SizedBox(height: 16), // Increased spacing for mobile
+                      DropdownButtonFormField<WorkStage>(
+                        decoration: const InputDecoration(
+                          label: RequiredLabel('Work Stage'),
+                          prefixIcon: Icon(CupertinoIcons.cube_box),
+                        ),
+                        initialValue: _stage ?? project.workDescription.stage,
+                        items: allowedStages(project.workDescription.stage).map((e) => DropdownMenuItem(
+                              value: e,
+                              child: Row(children: [
+                                Icon(_stageIcon(e), size: 18),
+                                const SizedBox(width: 8),
+                                Text(e.name),
+                              ]),
+                            )).toList(),
+                        onChanged: (v) => setState(() => _stage = v),
+                        validator: (v) => v == null ? 'This field is required' : null,
+                      ),
+                    ]
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16), // Better spacing between sections
+            // Installments
+            Card(
+              elevation: 0,
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: KeyedSubtree(key: _installmentsStepKey, child: sectionTitle(CupertinoIcons.creditcard, 'Installments'))),
+                        TextButton.icon(
+                          onPressed: () => setState(() => _showInstallments = !_showInstallments),
+                          icon: Icon(_showInstallments ? CupertinoIcons.chevron_down : CupertinoIcons.chevron_right, size: 16),
+                          label: Text(_showInstallments ? 'Collapse' : 'Expand'),
+                        ),
+                      ],
+                    ),
+                    if (_showInstallments) ...[
+                      const SizedBox(height: 16), // Increased spacing for mobile
+                      _installmentEditor(context, project, 1, project.allotmentDetails.installment1),
+                      const SizedBox(height: 8),
+                      _installmentEditor(context, project, 2, project.allotmentDetails.installment2),
+                      const SizedBox(height: 8),
+                      _installmentEditor(context, project, 3, project.allotmentDetails.installment3),
+                    ]
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16), // Better spacing between sections
+            // Attachments & Location
+            Card(
+              elevation: 0,
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(CupertinoIcons.paperclip, size: 18, color: cs.primary),
+                        const SizedBox(width: 6),
+                        Expanded(child: Text('Attachments & Location', style: Theme.of(context).textTheme.titleMedium)),
+                        TextButton.icon(
+                          onPressed: () => setState(() => _showAttach = !_showAttach),
+                          icon: Icon(_showAttach ? CupertinoIcons.chevron_down : CupertinoIcons.chevron_right, size: 16),
+                          label: Text(_showAttach ? 'Collapse' : 'Expand'),
+                        ),
+                      ],
+                    ),
+                    if (_showAttach) ...[
+                      sectionTitle(CupertinoIcons.paperclip, 'Attachments & Location'),
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        FilledButton.icon(onPressed: _pickPhoto, icon: const Icon(CupertinoIcons.camera), label: const Text('Add Photos')),
+                        FilledButton.icon(onPressed: _pickDoc, icon: const Icon(CupertinoIcons.doc), label: const Text('Add PDF')),
+                        FilledButton.icon(onPressed: _locating ? null : _openLocationSheet, icon: const Icon(CupertinoIcons.location), label: Text(_locating ? 'Loading…' : 'Use location')),
+                      ]),
+                      const SizedBox(height: 10),
+                      if (_photos.isNotEmpty) ...[
+                        Text('Photos', style: Theme.of(context).textTheme.labelLarge),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _photos.map((p) {
+                            final name = p.split('/').last;
+                            return Chip(
+                              avatar: const Icon(CupertinoIcons.camera),
+                              label: Text(name, overflow: TextOverflow.ellipsis),
+                              onDeleted: () => setState(() => _photos.remove(p)),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (_docs.isNotEmpty) ...[
+                        Text('Documents', style: Theme.of(context).textTheme.labelLarge),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _docs.map((p) {
+                            final name = p.split('/').last;
+                            return Chip(
+                              avatar: const Icon(CupertinoIcons.doc_text),
+                              label: Text(name, overflow: TextOverflow.ellipsis),
+                              onDeleted: () => setState(() => _docs.remove(p)),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      Row(children: [
+                        Icon(CupertinoIcons.location_solid, size: 18, color: cs.primary),
+                        const SizedBox(width: 6),
+                        Expanded(child: Text(_lat == null || _lng == null ? 'No location attached' : 'Location attached (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)})')),
+                      ]),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: _saving ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.paperplane),
+              label: const Text('Submit Update'),
+              style: FilledButton.styleFrom(
+                alignment: Alignment.center,
+                textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      height: 1.0,
+                      leadingDistribution: TextLeadingDistribution.even,
+                      textBaseline: TextBaseline.alphabetic,
+                    ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      );
+    }
+
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance.collection('projects').doc(widget.project.id).snapshots(),
       builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting && snap.data == null) {
+          if (widget.embedded) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return Scaffold(
+            appBar: AppBar(
+              leading: IconButton(
+                tooltip: 'Back',
+                icon: const Icon(CupertinoIcons.back),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+              title: const Text('Update Project'),
+            ),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+
         final project = (snap.data != null && snap.data!.data() != null)
             ? Project.fromDoc(snap.data!)
             : widget.project;
-        final cs = Theme.of(context).colorScheme;
-  Widget sectionTitle(IconData icon, String title) => Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: Row(children: [Icon(icon, size: 18, color: cs.primary), const SizedBox(width: 6), Text(title, style: Theme.of(context).textTheme.titleMedium)]),
-            );
+
+        final body = contentBuilder(project);
+        if (widget.embedded) return body;
 
         return Scaffold(
-          appBar: AppBar(title: const Text('Update Project')),
-          body: Form(
-            key: _formKey,
-            child: ListView(
-              padding: const EdgeInsets.all(12),
-              children: [
-                // Comment
-                Card(
-                  elevation: 0,
-                  color: Theme.of(context).colorScheme.surfaceContainerLow,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        sectionTitle(CupertinoIcons.chat_bubble_text, 'Comment'),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          textAlignVertical: TextAlignVertical.center,
-                          controller: _commentController,
-                          decoration: InputDecoration(
-                            labelText: 'Comment',
-                            prefixIcon: const Icon(CupertinoIcons.chat_bubble),
-                          ),
-                          minLines: 1,
-                          maxLines: 6,
-                          onChanged: _onCommentChanged,
-                        ),
-            const SizedBox(height: 4),
-            Text('${_commentWords}/100 words', style: Theme.of(context).textTheme.labelSmall),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Stage
-                Card(
-                  elevation: 0,
-                  color: Theme.of(context).colorScheme.surfaceContainerLow,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        sectionTitle(CupertinoIcons.settings, 'Work Stage'),
-                        const SizedBox(height: 8),
-                        DropdownButtonFormField<WorkStage>(
-                          decoration: const InputDecoration(
-                            label: RequiredLabel('Work Stage'),
-                            prefixIcon: Icon(CupertinoIcons.cube_box),
-                          ),
-                          value: _stage,
-                          items: WorkStage.values.map((e) => DropdownMenuItem(
-                                value: e,
-                                child: Row(children: [
-                                  Icon(_stageIcon(e), size: 18),
-                                  const SizedBox(width: 8),
-                                  Text(e.name),
-                                ]),
-                              )).toList(),
-                          onChanged: (v) => setState(() => _stage = v),
-                          validator: (v) => v == null ? 'This field is required' : null,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Installments
-                Card(
-                  elevation: 0,
-                  color: Theme.of(context).colorScheme.surfaceContainerLow,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        sectionTitle(CupertinoIcons.creditcard, 'Installments'),
-                        const SizedBox(height: 8),
-                        _installmentEditor(context, project, 1, project.allotmentDetails.installment1),
-                        const SizedBox(height: 8),
-                        _installmentEditor(context, project, 2, project.allotmentDetails.installment2),
-                        const SizedBox(height: 8),
-                        _installmentEditor(context, project, 3, project.allotmentDetails.installment3),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Attachments & Location
-                Card(
-                  elevation: 0,
-                  color: Theme.of(context).colorScheme.surfaceContainerLow,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        sectionTitle(CupertinoIcons.paperclip, 'Attachments & Location'),
-                        const SizedBox(height: 8),
-                        Wrap(spacing: 8, runSpacing: 8, children: [
-                          FilledButton.icon(onPressed: _pickPhoto, icon: const Icon(CupertinoIcons.camera), label: const Text('Add Photos')),
-                          FilledButton.icon(onPressed: _pickDoc, icon: const Icon(CupertinoIcons.doc), label: const Text('Add PDF')),
-                          FilledButton.icon(onPressed: _locating ? null : _openLocationSheet, icon: const Icon(CupertinoIcons.location), label: Text(_locating ? 'Loading…' : 'Use location')),
-                        ]),
-                        const SizedBox(height: 10),
-                        if (_photos.isNotEmpty) ...[
-                          Text('Photos', style: Theme.of(context).textTheme.labelLarge),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: _photos.map((p) {
-                              final name = p.split('/').last;
-                              return Chip(avatar: const Icon(CupertinoIcons.camera), label: Text(name, overflow: TextOverflow.ellipsis));
-                            }).toList(),
-                          ),
-                          const SizedBox(height: 8),
-                        ],
-                        if (_docs.isNotEmpty) ...[
-                          Text('Documents', style: Theme.of(context).textTheme.labelLarge),
-                          const SizedBox(height: 6),
-                          Wrap(spacing: 8, runSpacing: 8, children: _docs.map((p) {
-                            final name = p.split('/').last;
-                            return Chip(avatar: const Icon(CupertinoIcons.doc_text), label: Text(name, overflow: TextOverflow.ellipsis));
-                          }).toList()),
-                          const SizedBox(height: 8),
-                        ],
-                        Row(children: [
-                          Icon(CupertinoIcons.location_solid, size: 18, color: cs.primary),
-                          const SizedBox(width: 6),
-                          Expanded(child: Text(_lat == null || _lng == null ? 'No location attached' : 'Location attached (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)})')),
-                        ]),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: _saving ? null : _save,
-                  icon: _saving ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.paperplane),
-                  label: const Text('Submit Update'),
-                  style: FilledButton.styleFrom(
-                    alignment: Alignment.center,
-                    textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          height: 1.0,
-                          leadingDistribution: TextLeadingDistribution.even,
-                          textBaseline: TextBaseline.alphabetic,
-                        ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
+          appBar: AppBar(
+            leading: IconButton(
+              tooltip: 'Back',
+              icon: const Icon(CupertinoIcons.back),
+              onPressed: () => Navigator.of(context).maybePop(),
             ),
+            title: const Text('Update Project'),
           ),
+          body: body,
         );
       },
     );
@@ -758,14 +895,14 @@ class _DateField extends StatelessWidget {
         final picked = await showDatePicker(
           context: context,
           initialDate: value ?? now,
-          firstDate: DateTime(now.year - 5),
-          lastDate: DateTime(now.year + 5),
+          firstDate: now.subtract(const Duration(days: 365)),
+          lastDate: now.add(const Duration(days: 365)),
         );
         onChanged(picked);
       },
       child: InputDecorator(
         decoration: InputDecoration(labelText: label, prefixIcon: const Icon(CupertinoIcons.calendar)),
-        child: Text(value == null ? '-' : value!.toLocal().toString().split(' ').first),
+        child: Text(value == null ? '-' : fmtYmd(value!.toLocal())),
       ),
     );
   }
@@ -801,8 +938,18 @@ extension on _ProjectUpdateFormPageState {
             enabled: !disabled,
             decoration: moneyDecoration('Amount', _iAmt[n]),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r"[0-9\.]")),
+              LengthLimitingTextInputFormatter(18),
+            ],
             onChanged: (v) {
-              _iAmt[n] = v;
+              // Enforce ₹50 crores max
+              final parsed = double.tryParse(v.trim());
+              if (parsed != null && parsed > 500000000) {
+                _iAmt[n] = '500000000';
+              } else {
+                _iAmt[n] = v;
+              }
               sbSetState(() {});
             },
           ),
@@ -829,8 +976,17 @@ extension on _ProjectUpdateFormPageState {
             enabled: !disabled,
             decoration: moneyDecoration('Received Amount', _iRecAmt[n]),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r"[0-9\.]")),
+              LengthLimitingTextInputFormatter(18),
+            ],
             onChanged: (v) {
-              _iRecAmt[n] = v;
+              final parsed = double.tryParse(v.trim());
+              if (parsed != null && parsed > 500000000) {
+                _iRecAmt[n] = '500000000';
+              } else {
+                _iRecAmt[n] = v;
+              }
               sbSetState(() {});
             },
           ),
@@ -853,7 +1009,7 @@ extension on _ProjectUpdateFormPageState {
       return Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.4)),
+          border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.4)),
         ),
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

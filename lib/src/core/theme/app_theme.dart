@@ -4,8 +4,9 @@ import 'package:flutter/foundation.dart';
 import '../ui/animation_policies.dart';
 
 class AppTheme {
-  // Global accent: updated brand purple (#6E60FE)
-  static const _seed = Color(0xFF6E60FE);
+  // Global accent / brand primary color
+  static const _seed = Color(0xFF5148FB); // brand accent / seed for tonal palette
+  static const _primary = Color(0xFF9D9DFB); // latest lighter primary (distinct from accent)
 
   // Normalize text metrics to avoid top/bottom imbalance with certain fonts
   static TextTheme _normalizeTextTheme(TextTheme t) {
@@ -38,8 +39,13 @@ class AppTheme {
   }
 
   static ThemeData get light {
+    final generated = ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.light);
+    final scheme = generated.copyWith(
+      primary: _primary,
+      onPrimary: Colors.black, // ensure contrast on lighter primary
+    );
     final base = ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.light),
+      colorScheme: scheme,
       useMaterial3: true,
       visualDensity: VisualDensity.adaptivePlatformDensity,
     );
@@ -83,6 +89,12 @@ class AppTheme {
       cardTheme: base.cardTheme.copyWith(
         elevation: 1,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      appBarTheme: const AppBarTheme(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        backgroundColor: Colors.transparent,
       ),
       // Chips
       chipTheme: base.chipTheme.copyWith(
@@ -143,8 +155,13 @@ class AppTheme {
   }
 
   static ThemeData get dark {
+    final generated = ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.dark);
+    final scheme = generated.copyWith(
+      primary: _primary,
+      onPrimary: Colors.black, // maintain contrast for elevated/filled buttons in dark theme
+    );
     final base = ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.dark),
+      colorScheme: scheme,
       useMaterial3: true,
       visualDensity: VisualDensity.adaptivePlatformDensity,
     );
@@ -188,6 +205,12 @@ class AppTheme {
       cardTheme: base.cardTheme.copyWith(
         elevation: 1,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      appBarTheme: const AppBarTheme(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        backgroundColor: Colors.transparent,
       ),
       // Chips
       chipTheme: base.chipTheme.copyWith(

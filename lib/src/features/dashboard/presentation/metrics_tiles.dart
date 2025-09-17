@@ -1,7 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+import '../../../shared/utils/date_parse.dart';
 
 typedef MetricsTapHandler = void Function(String filterKey);
 
@@ -37,18 +38,23 @@ class MetricsTiles extends ConsumerWidget {
   int delayedCount(int days) => _delayedByDaysCountFromDocs(docs, days);
         final delayed30 = delayedCount(30);
         final delayed60 = delayedCount(60);
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              SizedBox(width: 240, child: _tile('Total', total, Colors.blue, () => onTap?.call('all'))),
-              SizedBox(width: 240, child: _tile('In progress', inProgress, Colors.orange, () => onTap?.call('in_progress'))),
-              SizedBox(width: 240, child: _tile('Completed', completed, Colors.green, () => onTap?.call('completed'))),
-              SizedBox(width: 240, child: _tile('Delayed 30d', delayed30, Colors.redAccent, () => onTap?.call('delayed_30'))),
-              SizedBox(width: 240, child: _tile('Delayed 60d', delayed60, Colors.red, () => onTap?.call('delayed_60'))),
-            ],
-          ),
-        );
+        return LayoutBuilder(builder: (context, c) {
+          final maxW = c.maxWidth == double.infinity ? MediaQuery.of(context).size.width : c.maxWidth;
+          final isNarrow = maxW < 680; // mobile-first: stack into two per row on small screens
+          final tileWidth = isNarrow ? (maxW - 12) / 2 : 240.0;
+          final children = <Widget>[
+SizedBox(width: tileWidth, child: _tile(context, 'Total', total, Colors.blue, () => onTap?.call('all'))),
+SizedBox(width: tileWidth, child: _tile(context, 'In progress', inProgress, Colors.orange, () => onTap?.call('in_progress'))),
+SizedBox(width: tileWidth, child: _tile(context, 'Completed', completed, Colors.green, () => onTap?.call('completed'))),
+SizedBox(width: tileWidth, child: _tile(context, 'Delayed 30d', delayed30, Colors.redAccent, () => onTap?.call('delayed_30'))),
+SizedBox(width: tileWidth, child: _tile(context, 'Delayed 60d', delayed60, Colors.red, () => onTap?.call('delayed_60'))),
+          ];
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: children,
+          );
+        });
       },
     );
   }
@@ -61,36 +67,73 @@ class MetricsTiles extends ConsumerWidget {
   int delayedCount(int days) => _delayedByDaysCountFromDocs(docs, days);
     final delayed30 = delayedCount(30);
     final delayed60 = delayedCount(60);
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          SizedBox(width: 240, child: _tile('Total', total, Colors.blue, () => onTap?.call('all'))),
-          SizedBox(width: 240, child: _tile('In progress', inProgress, Colors.orange, () => onTap?.call('in_progress'))),
-          SizedBox(width: 240, child: _tile('Completed', completed, Colors.green, () => onTap?.call('completed'))),
-          SizedBox(width: 240, child: _tile('Delayed 30d', delayed30, Colors.redAccent, () => onTap?.call('delayed_30'))),
-          SizedBox(width: 240, child: _tile('Delayed 60d', delayed60, Colors.red, () => onTap?.call('delayed_60'))),
-        ],
-      ),
-    );
+    return LayoutBuilder(builder: (context, c) {
+      final maxW = c.maxWidth == double.infinity ? MediaQuery.of(context).size.width : c.maxWidth;
+      final isNarrow = maxW < 680;
+      final tileWidth = isNarrow ? (maxW - 12) / 2 : 240.0;
+      final children = <Widget>[
+SizedBox(width: tileWidth, child: _tile(context, 'Total', total, Colors.blue, () => onTap?.call('all'))),
+SizedBox(width: tileWidth, child: _tile(context, 'In progress', inProgress, Colors.orange, () => onTap?.call('in_progress'))),
+SizedBox(width: tileWidth, child: _tile(context, 'Completed', completed, Colors.green, () => onTap?.call('completed'))),
+SizedBox(width: tileWidth, child: _tile(context, 'Delayed 30d', delayed30, Colors.redAccent, () => onTap?.call('delayed_30'))),
+SizedBox(width: tileWidth, child: _tile(context, 'Delayed 60d', delayed60, Colors.red, () => onTap?.call('delayed_60'))),
+      ];
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: children,
+      );
+    });
   }
 
-  Widget _tile(String label, int value, Color color, VoidCallback? onTap) {
+  Widget _tile(BuildContext context, String label, int value, Color color, VoidCallback? onTap) {
+    final cs = Theme.of(context).colorScheme;
+    final icon = label == 'Total'
+        ? Icons.layers
+        : label == 'In progress'
+            ? CupertinoIcons.time
+            : label == 'Completed'
+                ? CupertinoIcons.check_mark_circled
+                : label.contains('30')
+                    ? CupertinoIcons.calendar
+                    : CupertinoIcons.exclamationmark_triangle;
     return Card(
-  color: color.withValues(alpha: 0.1),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label),
-            const SizedBox(height: 4),
-            Text('$value', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
-          ],
-        ),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: cs.outlineVariant),
       ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 88),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+                  child: Icon(icon, size: 20, color: color),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('$value', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800, fontSize: 26)),
+                      const SizedBox(height: 2),
+                      Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -106,17 +149,7 @@ int _delayedByDaysCountFromDocs(List<QueryDocumentSnapshot<Map<String, dynamic>>
     final status = data['status'];
     if (status == 'completed') continue;
     final deadline = data['financials'] is Map ? (data['financials']['deadline']) : null;
-    DateTime? due;
-    if (deadline is Timestamp) {
-      due = deadline.toDate();
-    } else if (deadline is DateTime) {
-      due = deadline;
-    } else if (deadline is String) {
-      due = DateTime.tryParse(deadline);
-    } else if (deadline is Map && deadline['seconds'] != null) {
-      final secs = (deadline['seconds'] as num).toInt();
-      due = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
-    }
+    final due = parseAnyDate(deadline);
     if (due != null && due.isBefore(cutoff)) count++;
   }
   return count;

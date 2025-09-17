@@ -29,7 +29,7 @@ class GPRecord {
 
 /// Loads Gram Panchayat dataset from bundled asset `local_data.json`.
 final gramPanchayatDataProvider = FutureProvider<List<GPRecord>>((ref) async {
-  Future<String> _loadAsset(AssetBundle bundle) async {
+  Future<String> loadAsset(AssetBundle bundle) async {
     // Try declared root asset first
     try {
       return await bundle.loadString('local_data.json');
@@ -40,7 +40,7 @@ final gramPanchayatDataProvider = FutureProvider<List<GPRecord>>((ref) async {
   }
 
   try {
-    final raw = await _loadAsset(rootBundle);
+    final raw = await loadAsset(rootBundle);
     final arr = jsonDecode(raw);
     if (arr is! List) return const <GPRecord>[];
     final list = arr

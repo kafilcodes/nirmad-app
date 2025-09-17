@@ -11,7 +11,7 @@ import '../providers/firebase_providers.dart';
 /// - Warms current user's Firestore doc and role/blocks.
 /// - Warms owner's recent projects or nodal's first page projects.
 /// - Stores a disk snapshot for immediate subsequent renders.
-final bootstrapPrefetchProvider = FutureProvider<void>((ref) async {
+Future<void> _bootstrapPrefetch(Ref ref) async {
   final auth = await ref.read(authRepositoryProvider).currentUser();
   if (auth == null) return;
   final db = ref.read(firestoreProvider);
@@ -52,8 +52,10 @@ final bootstrapPrefetchProvider = FutureProvider<void>((ref) async {
   } else {
     // Nodal: warm first page. We use a generic query without filters; UI filters further
     try {
-      final build = (CollectionReference<Map<String, dynamic>> col) =>
-          col.orderBy('updatedAt', descending: true).limit(25);
+      Query<Map<String, dynamic>> build(
+          CollectionReference<Map<String, dynamic>> col) {
+        return col.orderBy('updatedAt', descending: true).limit(25);
+      }
       final list = await dao.getList<Map<String, dynamic>>(
         spec: const QuerySpec(path: 'projects', limit: 25),
         build: build,
@@ -66,4 +68,6 @@ final bootstrapPrefetchProvider = FutureProvider<void>((ref) async {
       await disk.setJson('nodal:projects:first', list, ttl: const Duration(minutes: 3));
     } catch (_) {}
   }
-});
+}
+
+final bootstrapPrefetchProvider = FutureProvider<void>(_bootstrapPrefetch);

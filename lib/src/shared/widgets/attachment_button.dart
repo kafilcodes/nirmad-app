@@ -1,15 +1,14 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import '../utils/download_and_open_helper.dart';
+import '../services/download_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 typedef AttachmentUrlResolver = Future<String> Function();
 
 class AttachmentButton extends StatefulWidget {
-  const AttachmentButton({super.key, required this.resolveUrl, required this.fileName, this.showPreview = true});
+  const AttachmentButton({super.key, required this.resolveUrl, required this.fileName});
   final AttachmentUrlResolver resolveUrl;
   final String fileName;
-  final bool showPreview;
-
   @override
   State<AttachmentButton> createState() => _AttachmentButtonState();
 }
@@ -18,36 +17,35 @@ class _AttachmentButtonState extends State<AttachmentButton> {
   bool _busy = false;
   double? _progress;
 
-  bool _isImage(String name) {
-    final n = name.toLowerCase();
-    return n.endsWith('.jpg') || n.endsWith('.jpeg') || n.endsWith('.png') || n.endsWith('.heic') || n.endsWith('.heif') || n.endsWith('.webp');
-  }
-
-  Future<void> _preview(String url) async {
-    await showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        child: InteractiveViewer(
-          child: AspectRatio(
-            aspectRatio: 1,
-            child: Image.network(url, fit: BoxFit.contain),
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _open() async {
     setState(() { _busy = true; _progress = null; });
     try {
       final url = await widget.resolveUrl();
-      await DownloadAndOpenHelper.downloadAndOpen(
-        url: url,
-        fileName: widget.fileName,
-        onProgress: (p) => setState(() => _progress = p),
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+    if (mounted) setState(() { _busy = false; });
+  }
+
+  Future<void> _downloadDirect() async {
+    setState(() { _busy = true; _progress = null; });
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final url = await widget.resolveUrl();
+      if (!mounted) return; // ensure context-safe usage below
+      final svc = DownloadService();
+      await svc.download(
+        context,
+        url,
+        widget.fileName,
+        onProgress: (p) {
+          if (!mounted) return;
+          setState(() => _progress = p);
+        },
       );
     } catch (_) {
-      // swallow errors; UX remains minimal
+      if (mounted) {
+        messenger.showSnackBar(const SnackBar(content: Text('Download failed')));
+      }
     } finally {
       if (mounted) setState(() { _busy = false; });
     }
@@ -55,37 +53,27 @@ class _AttachmentButtonState extends State<AttachmentButton> {
 
   @override
   Widget build(BuildContext context) {
-    final isImage = _isImage(widget.fileName);
+    final cs = Theme.of(context).colorScheme;
     if (_busy) {
       return SizedBox(
-        width: 120,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Expanded(child: LinearProgressIndicator(value: _progress)),
-            const SizedBox(width: 8),
-            Text(_progress == null ? '...' : '${(_progress! * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12)),
-          ],
-        ),
+        width: 110,
+        child: Row(children: [
+          Expanded(child: LinearProgressIndicator(value: _progress)),
+          const SizedBox(width: 6),
+          Text(_progress == null ? '…' : '${(_progress! * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11)),
+        ]),
       );
     }
-
-    return Wrap(spacing: 4, children: [
-  if (widget.showPreview && isImage)
-        IconButton(
-          tooltip: 'Preview',
-          onPressed: () async {
-            final url = await widget.resolveUrl();
-            if (!mounted) return;
-            await _preview(url);
-          },
-          icon: const Icon(CupertinoIcons.eye, color: Color(0xFFF6C445)),
+    return Tooltip(
+      message: 'Open (long-press to download)',
+      child: GestureDetector(
+        onLongPress: _downloadDirect,
+        child: IconButton(
+          tooltip: 'Open',
+          onPressed: _open,
+          icon: Icon(CupertinoIcons.arrow_up_right_square, color: cs.primary),
         ),
-      IconButton(
-        tooltip: 'Open',
-        onPressed: _open,
-        icon: const Icon(CupertinoIcons.square_arrow_down, color: Color(0xFF2EB85C)),
       ),
-    ]);
+    );
   }
 }

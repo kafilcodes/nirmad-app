@@ -6,13 +6,11 @@ import 'package:firebase_auth/firebase_auth.dart' as fb;
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/domain/app_user.dart';
 import '../../features/auth/presentation/modern_login_page.dart';
-import '../../features/auth/presentation/onboarding_page.dart';
 import '../../features/dashboard/presentation/dashboard_wrapper_page.dart';
 import '../../features/owner/presentation/owner_shell.dart';
 import 'package:go_transitions/go_transitions.dart';
 import '../../core/logging/app_logger.dart';
 import '../bootstrap/bootstrap_prefetch.dart';
-import '../prefs/shared_prefs.dart';
 
 class _AuthNotifier extends ChangeNotifier {
   _AuthNotifier(Stream<dynamic> stream) {
@@ -45,31 +43,25 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/splash',
         name: 'splash',
         builder: (context, state) => const _SplashGate(),
-        pageBuilder: GoTransitions.fadeUpwards,
-      ),
-      GoRoute(
-        path: '/onboarding',
-        name: 'onboarding',
-        builder: (context, state) => const OnboardingPage(),
-        pageBuilder: GoTransitions.fadeUpwards,
+        pageBuilder: GoTransitions.fadeUpwards.call,
       ),
       GoRoute(
         path: '/',
         name: 'login',
         builder: (context, state) => const ModernLoginPage(),
-  pageBuilder: GoTransitions.fadeUpwards,
+        pageBuilder: GoTransitions.fadeUpwards.call,
       ),
       GoRoute(
         path: '/dashboard',
         name: 'dashboard',
   builder: (context, state) => const DashboardWrapperPage(),
-  pageBuilder: GoTransitions.zoom,
+  pageBuilder: GoTransitions.zoom.call,
       ),
       GoRoute(
         path: '/owner',
         name: 'owner',
   builder: (context, state) => const OwnerShell(),
-  pageBuilder: GoTransitions.cupertino,
+  pageBuilder: GoTransitions.cupertino.call,
       ),
     ],
     redirect: (context, state) {
@@ -78,8 +70,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isLoggedIn = fb.FirebaseAuth.instance.currentUser != null;
       AppLogger.i.d('Router redirect check -> loc: ${state.matchedLocation}, atLogin: $atLogin, isLoggedIn: $isLoggedIn');
       if (!isLoggedIn) {
-        // Allow onboarding while logged out
-        if (state.matchedLocation == '/' || state.matchedLocation == '/onboarding') {
+        // Onboarding disabled: always go to login
+        if (state.matchedLocation == '/') {
           return null;
         }
         AppLogger.i.d('Router redirect -> not logged in, to /');
@@ -120,16 +112,12 @@ class _SplashGate extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cached = ref.read(cachedRedirectPathProvider);
-    final prefs = ref.read(sharedPrefsProvider);
   // Fire-and-forget prefetch to warm caches
   ref.read(bootstrapPrefetchProvider.future).ignore();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final isLoggedIn = fb.FirebaseAuth.instance.currentUser != null;
       // If not logged in, check onboarding gate
-      final seen = prefs.getBool('onboarding_seen') ?? false;
-      final target = isLoggedIn
-          ? (cached ?? '/dashboard')
-          : (seen ? '/' : '/onboarding');
+      final target = isLoggedIn ? (cached ?? '/') : '/';
       AppLogger.i.d('SplashGate -> isLoggedIn: $isLoggedIn, cached: ${cached ?? '(none)'}, go: $target');
       if (context.mounted) context.go(target);
     });

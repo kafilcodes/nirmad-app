@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ThemeController extends StateNotifier<ThemeMode> {
-  ThemeController(this._prefs) : super(ThemeMode.light) {
+  ThemeController(this._prefs) : super(ThemeMode.dark) {
     _load();
   }
 
@@ -13,15 +13,15 @@ class ThemeController extends StateNotifier<ThemeMode> {
 
   void _load() {
     final v = _prefs.getString(_key);
+    if (v == null) {
+      // Default to dark when user has no stored preference
+      state = ThemeMode.dark;
+      return;
+    }
     switch (v) {
-      case 'light':
-        state = ThemeMode.light;
-        break;
-      case 'dark':
-        state = ThemeMode.dark;
-        break;
-      default:
-        state = ThemeMode.light; // default to light if unset
+      case 'light': state = ThemeMode.light; break;
+      case 'dark': state = ThemeMode.dark; break;
+      default: state = ThemeMode.dark;
     }
   }
 
@@ -30,7 +30,7 @@ class ThemeController extends StateNotifier<ThemeMode> {
     await _prefs.setString(_key, switch (mode) {
       ThemeMode.light => 'light',
       ThemeMode.dark => 'dark',
-      ThemeMode.system => 'light', // treat system as light to avoid OS-driven changes
+      ThemeMode.system => 'dark', // treat system as dark to keep default experience
     });
   }
 

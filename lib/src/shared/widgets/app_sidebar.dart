@@ -123,30 +123,39 @@ class AppSidebar extends ConsumerWidget {
                     const SizedBox(height: 4),
                     // Footer stays pinned
           _SidebarFooter(onLogout: () async {
-                      if (!context.mounted) return;
-                      // Show a modal progress barrier
-                      showDialog(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (_) => const Center(child: CircularProgressIndicator()),
-                      );
-                      try {
-            // Clear local caches best-effort before signOut
-            try { await ref.read(draftMediaStoreProvider).clear(); } catch (_) {}
-            try { await ref.read(sharedPrefsProvider).clear(); } catch (_) {}
-            // Invalidate profile so next login pulls fresh data
-            try { ref.invalidate(currentUserProfileProvider); } catch (_) {}
-                        await auth.signOut();
-                      } catch (_) {
-                        // ignored
-                      } finally {
-                        if (!context.mounted) return;
-                        // Ensure the loading dialog is closed
-                        Navigator.of(context, rootNavigator: true).pop();
-                        // Now route to login, replacing stack
-                        context.go('/');
-                      }
-                    }),
+            if (!context.mounted) return;
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) => const Center(child: CircularProgressIndicator()),
+            );
+            try {
+              // IMPORTANT: signOut FIRST so session doc is cleared using existing device_session_id.
+              await auth.signOut();
+              // Per-user draft cleanup AFTER signOut; do NOT wipe the entire SharedPreferences
+              // to preserve stable device_session_id preventing false multi-device conflicts.
+              try { await ref.read(draftMediaStoreProvider).clear(); } catch (_) {}
+              try {
+                final prefs = ref.read(sharedPrefsProvider);
+                // Explicitly remove only per-user volatile keys; preserve device_session_id.
+                for (final k in const [
+                  'profile_draft',
+                  'project_creation_draft',
+                  'auth_cache', // signOut already removes; extra safety
+                ]) {
+                  if (prefs.containsKey(k)) prefs.remove(k);
+                }
+              } catch (_) {}
+              try { ref.invalidate(currentUserProfileProvider); } catch (_) {}
+            } catch (_) {
+              // ignored (UI will still navigate to login)
+            } finally {
+              if (context.mounted) {
+                Navigator.of(context, rootNavigator: true).pop();
+                context.go('/');
+              }
+            }
+          }),
                   ],
                 ),
               ),
@@ -158,7 +167,7 @@ class AppSidebar extends ConsumerWidget {
   }
 
   List<Widget> _buildSectionsForRole(UserRole role, ColorScheme cs, int? notifIndex, int unread, int selectedIndex) {
-    Widget _sectionLabel(String text) => LayoutBuilder(
+    Widget sectionLabel(String text) => LayoutBuilder(
           builder: (context, c) => ConstrainedBox(
             constraints: BoxConstraints(maxWidth: c.maxWidth),
             child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -210,7 +219,7 @@ class AppSidebar extends ConsumerWidget {
     if (role == UserRole.devAdmin) {
       return [
         SidebarSection(
-          label: _sectionLabel('Management'),
+label: sectionLabel('Management'),
           children: [
             dest(index: 0, icon: CupertinoIcons.square_grid_2x2, filled: CupertinoIcons.square_grid_2x2_fill, label: 'Dashboard'),
             dest(index: 1, icon: CupertinoIcons.person_2, filled: CupertinoIcons.person_2_fill, label: 'Users'),
@@ -223,19 +232,19 @@ class AppSidebar extends ConsumerWidget {
     if (role == UserRole.superNodal || role == UserRole.subNodal) {
       return [
         SidebarSection(
-          label: _sectionLabel('Overview'),
+label: sectionLabel('Overview'),
           children: [
             dest(index: 0, icon: CupertinoIcons.square_grid_2x2, filled: CupertinoIcons.square_grid_2x2_fill, label: 'Dashboard'),
           ],
         ),
         SidebarSection(
-          label: _sectionLabel('Projects'),
+label: sectionLabel('Projects'),
           children: [
             dest(index: 1, icon: CupertinoIcons.folder, filled: CupertinoIcons.folder_fill, label: 'Projects'),
           ],
         ),
         SidebarSection(
-          label: _sectionLabel('My Services'),
+label: sectionLabel('My Services'),
           children: [
             dest(index: 2, icon: CupertinoIcons.bell, filled: CupertinoIcons.bell_fill, label: 'Updates'),
             dest(index: 3, icon: CupertinoIcons.person_crop_circle, filled: CupertinoIcons.person_crop_circle_fill, label: 'Profile'),
@@ -247,14 +256,14 @@ class AppSidebar extends ConsumerWidget {
     // Project Owner
     return [
       SidebarSection(
-        label: _sectionLabel('Projects'),
+label: sectionLabel('Projects'),
         children: [
           dest(index: 0, icon: CupertinoIcons.list_bullet, filled: CupertinoIcons.list_bullet, label: 'Projects'),
           dest(index: 1, icon: CupertinoIcons.add_circled, filled: CupertinoIcons.add_circled_solid, label: 'Create Project'),
         ],
       ),
       SidebarSection(
-        label: _sectionLabel('My Services'),
+label: sectionLabel('My Services'),
         children: [
           dest(index: 2, icon: CupertinoIcons.bell, filled: CupertinoIcons.bell_fill, label: 'Updates'),
           dest(index: 3, icon: CupertinoIcons.person_crop_circle, filled: CupertinoIcons.person_crop_circle_fill, label: 'Profile'),
@@ -272,46 +281,52 @@ class _UnifiedProfileHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final prof = ref.watch(currentUserProfileProvider);
-    final email = (prof?.email ?? fb.FirebaseAuth.instance.currentUser?.email ?? '').trim();
+    final authUser = fb.FirebaseAuth.instance.currentUser;
+    final emailRaw = (prof?.email ?? authUser?.email ?? '').trim();
+    final safeEmailLocal = emailRaw.contains('@') ? emailRaw.split('@').first : emailRaw;
     final name = (prof?.displayName ?? '').trim();
-  final text = name.isNotEmpty ? name : (email.split('@').first);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          _SidebarAvatar(text: text),
-          const SizedBox(height: 12),
-          LayoutBuilder(builder: (context, c) {
-            final row = Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(CupertinoIcons.person, size: 16),
-                const SizedBox(width: 6),
-                Flexible(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800))),
-              ],
-            );
-            return SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(constraints: BoxConstraints(minWidth: 0, maxWidth: c.maxWidth), child: row));
-          }),
-          if (name.isNotEmpty) ...[
-            const SizedBox(height: 4),
+    // Fallback precedence: displayName > email local-part > 'User'
+    final text = name.isNotEmpty ? name : (safeEmailLocal.isNotEmpty ? safeEmailLocal : 'User');
+    return KeyedSubtree(
+      key: ValueKey(authUser?.uid ?? 'guest'),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _SidebarAvatar(text: text),
+            const SizedBox(height: 12),
             LayoutBuilder(builder: (context, c) {
-              final row2 = Row(
+              final row = Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(CupertinoIcons.mail, size: 14),
+                  const Icon(CupertinoIcons.person, size: 16),
                   const SizedBox(width: 6),
-                  Flexible(child: Text(email, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall)),
+                  Flexible(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800))),
                 ],
               );
-              return SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(constraints: BoxConstraints(minWidth: 0, maxWidth: c.maxWidth), child: row2));
+              return SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(constraints: BoxConstraints(minWidth: 0, maxWidth: c.maxWidth), child: row));
             }),
+            if (name.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              LayoutBuilder(builder: (context, c) {
+                final row2 = Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(CupertinoIcons.mail, size: 14),
+                    const SizedBox(width: 6),
+                    Flexible(child: Text(emailRaw, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall)),
+                  ],
+                );
+                return SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(constraints: BoxConstraints(minWidth: 0, maxWidth: c.maxWidth), child: row2));
+              }),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -362,29 +377,18 @@ class _SidebarFooter extends ConsumerWidget {
   return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // District logo (theme-aware) above footer controls
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4),
-          child: SizedBox(
-            height: 50,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 220, maxHeight: 96),
-                child: Builder(builder: (context) {
-                  final isDark = Theme.of(context).brightness == Brightness.dark;
-                  final asset = isDark ? 'assets/dmt_white.png' : 'assets/dmt_black.png';
-                  return Image.asset(
-                    asset,
-                    fit: BoxFit.contain,
-                    filterQuality: FilterQuality.high,
-                    isAntiAlias: true,
-                  );
-                }),
-              ),
+          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8),
+          child: Center(
+            child: Text(
+              '© Dhamtari District Administration',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
-        const SizedBox(height: 8),
         const Divider(height: 1),
         const SizedBox(height: 4),
         const SizedBox(height: 8),

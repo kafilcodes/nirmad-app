@@ -10,7 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/data/auth_repository.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:form_builder_validators/form_builder_validators.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+// import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // removed dependency
 import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -39,27 +39,64 @@ class _ProfilePageState extends State<ProfilePage> {
   // Local draft autosave
   Map<String, dynamic> _draft = {};
   int _viewGen = 0; // bump to animate a single smooth transition after save
+  int _headerGen = 0; // force header rebuild after manual refresh
   // markers (not currently used in UI but kept for potential restore banners)
   // DateTime _lastChange = DateTime.now();
   // bool _restoring = true;
   // Debounce timer
   Timer? _saveDebounce;
   StreamSubscription<fb.User?>? _authSub;
+  String? _observedUid; // Track last seen uid to reset state on account switch
 
   @override
   void initState() {
     super.initState();
     _load();
-    // Keep the disabled email field in sync with the live auth user
+    // Unified listener: handles uid change, email & displayName updates.
     _authSub = fb.FirebaseAuth.instance.userChanges().listen((u) {
+      final uid = u?.uid;
       final email = (u?.email ?? '').trim();
-      if (email.isEmpty) return;
-      // Only patch email field; avoid unnecessary rebuilds
+      final dn = (u?.displayName ?? '').trim();
+      final prevUid = _observedUid;
+      // Detect account switch (including logout -> login different user)
+      if (uid != null && uid.isNotEmpty && prevUid != null && prevUid != uid) {
+        // Hard reset all form state to eliminate previous user's cached fields
+        _formKey.currentState?.reset();
+        _initialValues = const {};
+        _draft = {};
+        _dirty = false;
+        _editing = false;
+        _requireAllFields = false;
+        // Load fresh data for new user
+        _load();
+      }
+      if (uid == null && _observedUid != null) {
+        // Signed out: clear local state so no leakage in-memory if widget kept alive
+        _formKey.currentState?.reset();
+        _initialValues = const {};
+        _draft = {};
+        _dirty = false;
+        _editing = false;
+        _requireAllFields = false;
+        setState(() => _headerGen++);
+      }
+      _observedUid = uid;
+      // Patch email/displayName if changed for current account
+      bool changed = false;
       final currentEmail = (_initialValues['email'] as String?)?.trim() ?? '';
-      if (email == currentEmail) return;
-      _initialValues = Map<String, dynamic>.from(_initialValues)..['email'] = email;
-      _formKey.currentState?.patchValue({'email': email});
-      // No setState here to avoid double refresh; form field updates itself
+      if (email.isNotEmpty && email != currentEmail) {
+        _initialValues = Map<String, dynamic>.from(_initialValues)..['email'] = email;
+        _formKey.currentState?.patchValue({'email': email});
+        changed = true;
+      }
+      final currentDn = (_initialValues['displayName'] as String?)?.trim() ?? '';
+      if (dn.isNotEmpty && dn != currentDn) {
+        _initialValues = Map<String, dynamic>.from(_initialValues)..['displayName'] = dn;
+        changed = true;
+      }
+      if (changed && mounted) {
+        setState(() => _headerGen++); // force avatar/label refresh
+      }
     });
   }
 
@@ -126,6 +163,17 @@ class _ProfilePageState extends State<ProfilePage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _formKey.currentState?.patchValue(initial);
       });
+    }
+  }
+
+  Future<void> _forceRefreshProfile() async {
+    try {
+      await fb.FirebaseAuth.instance.currentUser?.reload();
+    } catch (_) {}
+    // Re-run load to sync Firestore fields (will setState internally)
+    await _load();
+    if (mounted) {
+      setState(() => _headerGen++);
     }
   }
 
@@ -200,6 +248,7 @@ class _ProfilePageState extends State<ProfilePage> {
         showProgressBar: false,
         icon: const Icon(Icons.check_circle),
       );
+
       // Update initial values and reset edit state (single smooth transition)
       setState(() {
         _initialValues = {
@@ -244,10 +293,12 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
+    final bool narrowScreen = MediaQuery.of(context).size.width < 360;
+    final double avatarSize = narrowScreen ? 108.0 : 128.0;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.symmetric(horizontal: narrowScreen ? 12 : 16, vertical: 16),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 880),
@@ -264,6 +315,11 @@ class _ProfilePageState extends State<ProfilePage> {
                     return Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                      // Header rebuild key ensures avatar updates after manual refresh
+                      KeyedSubtree(
+                        key: ValueKey('header-$_headerGen'),
+                        child: const SizedBox.shrink(),
+                      ),
                       InkWell(
                         borderRadius: const BorderRadius.all(Radius.circular(64)),
                         // Disable photo upload per request; rely on generated avatar
@@ -272,14 +328,14 @@ class _ProfilePageState extends State<ProfilePage> {
                           alignment: Alignment.center,
                           children: [
                           SizedBox(
-                            width: 128,
-                            height: 128,
+                            width: avatarSize,
+                            height: avatarSize,
                             child: Consumer(builder: (context, ref, _) {
                               final display = displayLabel;
                               final first = (display.isNotEmpty ? display[0] : (email.isNotEmpty ? email[0] : '?')).toUpperCase();
                               final cs = Theme.of(context).colorScheme;
                               return CircleAvatar(
-                                radius: 64,
+                                radius: avatarSize / 2,
                                 backgroundColor: cs.primary,
                                 child: Text(
                                   first,
@@ -290,7 +346,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                     leadingDistribution: TextLeadingDistribution.even,
                                   ),
                                   style: TextStyle(
-                                    fontSize: 48,
+                                    fontSize: narrowScreen ? 42 : 48,
                                     fontWeight: FontWeight.w700,
                                     color: cs.onPrimary,
                                     height: 1.0,
@@ -324,10 +380,9 @@ class _ProfilePageState extends State<ProfilePage> {
                           ),
                           if (_saving)
               ClipOval(
-                              child: Container(
-                                width: 128,
-                                height: 128,
-                color: Colors.black.withValues(alpha: 0.25),
+                              child: SizedBox(
+                                width: avatarSize,
+                                height: avatarSize,
                                 child: const Center(
                                   child: SizedBox(
                                     width: 28,
@@ -352,6 +407,16 @@ class _ProfilePageState extends State<ProfilePage> {
                               style: Theme.of(context).textTheme.titleLarge,
                               textAlign: TextAlign.center,
                               overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Tooltip(
+                            message: 'Refresh profile',
+                            child: IconButton(
+                              icon: const Icon(CupertinoIcons.refresh, size: 18),
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.all(4),
+                              onPressed: _saving ? null : _forceRefreshProfile,
                             ),
                           ),
                         ],
@@ -386,7 +451,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   clipBehavior: Clip.antiAlias,
                   elevation: 1,
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: EdgeInsets.all(narrowScreen ? 12 : 16),
                     child: FormBuilder(
                       key: _formKey,
                       initialValue: _initialValues,
@@ -417,7 +482,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       child: LayoutBuilder(builder: (context, c) {
                         final isWide = c.maxWidth > 640;
                         final col = isWide ? 2 : 1;
-                        final gap = 16.0;
+                        final gap = c.maxWidth < 360 ? 12.0 : 16.0;
                         final fieldWidth = isWide ? (c.maxWidth - gap) / col : c.maxWidth;
                         return Wrap(
                           spacing: gap,
@@ -466,12 +531,12 @@ class _ProfilePageState extends State<ProfilePage> {
                                       ? 'This field is required'
                                       : null,
                                   FormBuilderValidators.match(RegExp(r'^[6-9]\d{9}$'), errorText: 'Enter 10-digit Indian mobile'),
-                                  (val) {
-                                    if (val == null || val.trim().isEmpty) return null; // optional
-                                    final s = val.trim();
-                                    if (s.length != 10) return 'Must be 10 digits';
-                                    return null;
-                                  },
+                                   (val) {
+                                     if (val == null || val.trim().isEmpty) return null; // optional
+                                     final s = val.trim();
+                                     if (s.length != 10) return 'Must be 10 digits';
+                                     return null;
+                                   },
                                 ]),
                                 keyboardType: TextInputType.phone,
                                 inputFormatters: [
@@ -491,7 +556,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                   prefixIcon: const Icon(CupertinoIcons.chat_bubble_text),
                                   suffixIcon: const Padding(
                                     padding: EdgeInsets.only(right: 8.0, left:8.0, top: 8.0, bottom: 8.0),
-                                    child: FaIcon(FontAwesomeIcons.whatsapp, size: 20, color: Color(0xFF25D366)),
+                                    child: Icon(CupertinoIcons.chat_bubble_text_fill, size: 20, color: Color(0xFF25D366)),
                                   ),
                                   suffixIconConstraints: const BoxConstraints(minHeight: 24, minWidth: 24),
                                 ),
@@ -593,7 +658,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               ),
                             ),
                             SizedBox(
-                              width: c.maxWidth,
+                              width: fieldWidth,
                               child: FormBuilderTextField(
                                 name: 'address',
                                 maxLines: 3,
@@ -616,35 +681,72 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
                 const SizedBox(height: 12),
                 Align(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_editing)
-                        OutlinedButton(
-                          onPressed: _saving
-                              ? null
-                              : () {
-                                  setState(() {
-                                    _formKey.currentState?.reset();
-                                    _formKey.currentState?.patchValue(_initialValues);
-                                    _dirty = false;
-                                    _editing = false;
-                                  });
-                                },
-                          child: const Text('Cancel'),
+                  child: narrowScreen
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (_editing)
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton(
+                                  onPressed: _saving
+                                      ? null
+                                      : () {
+                                          setState(() {
+                                            _formKey.currentState?.reset();
+                                            _formKey.currentState?.patchValue(_initialValues);
+                                            _dirty = false;
+                                            _editing = false;
+                                          });
+                                        },
+                                  child: const Text('Cancel'),
+                                ),
+                              ),
+                            if (_editing) const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: _saving || !_editing || !_dirty || !(_formKey.currentState?.isValid ?? false)
+                                    ? null
+                                    : _save,
+                                icon: _saving
+                                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                    : const Icon(CupertinoIcons.checkmark_alt),
+                                label: Text(_saving ? 'Saving…' : 'Save changes'),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_editing)
+                              OutlinedButton(
+                                onPressed: _saving
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _formKey.currentState?.reset();
+                                          _formKey.currentState?.patchValue(_initialValues);
+                                          _dirty = false;
+                                          _editing = false;
+                                        });
+                                      },
+                                child: const Text('Cancel'),
+                              ),
+                            if (_editing) const SizedBox(width: 8),
+                            FilledButton.icon(
+                              onPressed: _saving || !_editing || !_dirty || !(_formKey.currentState?.isValid ?? false)
+                                  ? null
+                                  : _save,
+                              icon: _saving
+                                  ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Icon(CupertinoIcons.checkmark_alt),
+                              label: Text(_saving ? 'Saving…' : 'Save changes'),
+                            ),
+                          ],
                         ),
-                      if (_editing) const SizedBox(width: 8),
-                      FilledButton.icon(
-                        onPressed: _saving || !_editing || !_dirty || !(_formKey.currentState?.isValid ?? false)
-                            ? null
-                            : _save,
-                        icon: _saving
-                            ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(CupertinoIcons.checkmark_alt),
-                        label: Text(_saving ? 'Saving…' : 'Save changes'),
-                      ),
-                    ],
-                  ),
                 ),
               ],
             ),

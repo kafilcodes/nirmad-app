@@ -20,9 +20,38 @@ import 'src/core/logging/app_logger.dart';
 import 'package:logger/logger.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'src/core/widgets/offline_monitor.dart';
+import 'package:awesome_notifications/awesome_notifications.dart';
+import 'src/shared/services/download_service.dart';
+import 'package:keyboard_dismisser/keyboard_dismisser.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Initialize notifications (needed for downloader progress on Android)
+  try {
+    await AwesomeNotifications().initialize(
+      null,
+      [
+        NotificationChannel(
+          channelKey: 'downloads',
+          channelName: 'Downloads',
+          channelDescription: 'File download progress and completion',
+          defaultColor: const Color(0xFF5148FB),
+          importance: NotificationImportance.High,
+          channelShowBadge: true,
+          locked: false,
+        ),
+      ],
+      debug: !kReleaseMode,
+    );
+    // Request permission only if not granted
+    final allowed = await AwesomeNotifications().isNotificationAllowed();
+    if (!allowed) {
+      // Do not force user; could show a dialog later. For now, just request politely.
+      await AwesomeNotifications().requestPermissionToSendNotifications();
+    }
+  } catch (_) {}
+  // Pre-initialize downloader to avoid first-use latency (ignore failures)
+  try { await DownloadService().ensureInitialized(); } catch (_) {}
   // Surface all uncaught errors to the console with context (helps on web release builds)
   FlutterError.onError = (FlutterErrorDetails details) {
     // Forward Flutter framework errors to the zone handler below
@@ -32,9 +61,9 @@ Future<void> main() async {
     // Ensure top-level uncaught errors still print something useful
     // Avoid leaking secrets; we only log error type/message
     // ignore: avoid_print
-    print('Top-level error: ' + error.toString());
+  print('Top-level error: ${error.toString()}');
     // ignore: avoid_print
-    print(stack.toString());
+  print(stack.toString());
     return true; // handled
   };
   // Configure logging early (quiet in release)
@@ -45,7 +74,7 @@ Future<void> main() async {
     await dotenv.load(fileName: ".env");
   } catch (e, st) {
     // ignore: avoid_print
-    print('dotenv load error: ' + e.toString());
+  print('dotenv load error: ${e.toString()}');
     // ignore: avoid_print
     print(st.toString());
     rethrow;
@@ -79,7 +108,7 @@ Future<void> main() async {
       );
     } catch (e, st) {
       // ignore: avoid_print
-      print('Firebase.initializeApp (web) failed: ' + e.toString());
+    print('Firebase.initializeApp (web) failed: ${e.toString()}');
       // ignore: avoid_print
       print(st.toString());
       rethrow;
@@ -95,7 +124,7 @@ Future<void> main() async {
       await Firebase.initializeApp();
     } catch (e, st) {
       // ignore: avoid_print
-      print('Firebase.initializeApp (native) failed: ' + e.toString());
+    print('Firebase.initializeApp (native) failed: ${e.toString()}');
       // ignore: avoid_print
       print(st.toString());
       rethrow;
@@ -122,20 +151,13 @@ Future<void> main() async {
     } catch (_) {}
   });
   final prefs = await SharedPreferences.getInstance();
-  runZonedGuarded(() {
-    runApp(ProviderScope(
-      overrides: [
-        themeControllerProvider.overrideWith((ref) => ThemeController(prefs)),
-        sharedPrefsProvider.overrideWithValue(prefs),
-      ],
-      child: const MyApp(),
-    ));
-  }, (error, stack) {
-    // ignore: avoid_print
-    print('Uncaught zone error: ' + error.toString());
-    // ignore: avoid_print
-    print(stack.toString());
-  });
+  runApp(ProviderScope(
+    overrides: [
+      themeControllerProvider.overrideWith((ref) => ThemeController(prefs)),
+      sharedPrefsProvider.overrideWithValue(prefs),
+    ],
+    child: const MyApp(),
+  ));
 }
 
 class MyApp extends ConsumerWidget {
@@ -148,27 +170,34 @@ class MyApp extends ConsumerWidget {
     // Kick off app warmup (disk-first snapshots, user doc, first page lists)
     ref.watch(bootstrapPrefetchProvider);
     final themeMode = ref.watch(themeControllerProvider);
-    return ToastificationWrapper(
-      child: OfflineMonitor(
-        child: DefaultTextHeightBehavior(
-          textHeightBehavior: const TextHeightBehavior(
-            applyHeightToFirstAscent: true,
-            applyHeightToLastDescent: true,
-            leadingDistribution: TextLeadingDistribution.even,
-          ),
-          child: MaterialApp.router(
-      title: 'Nirmad',
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      themeMode: themeMode,
-      routerConfig: goRouter,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
+    return KeyboardDismisser(
+      gestures: [
+        GestureType.onTap,
+        GestureType.onPanUpdateDownDirection,
       ],
-  supportedLocales: const [Locale('en')],
-      debugShowCheckedModeBanner: false,
+      child: MaterialApp.router(
+        title: 'Nirmad',
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: themeMode,
+        routerConfig: goRouter,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [Locale('en')],
+        debugShowCheckedModeBanner: false,
+        builder: (context, child) => ToastificationWrapper(
+          child: OfflineMonitor(
+            child: DefaultTextHeightBehavior(
+              textHeightBehavior: const TextHeightBehavior(
+                applyHeightToFirstAscent: true,
+                applyHeightToLastDescent: true,
+                leadingDistribution: TextLeadingDistribution.even,
+              ),
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         ),
       ),

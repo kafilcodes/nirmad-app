@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:toastification/toastification.dart';
+import '../../shared/utils/date_parse.dart';
 
 class DateFormField extends StatefulWidget {
   final TextEditingController controller;
@@ -11,6 +12,7 @@ class DateFormField extends StatefulWidget {
   final FocusNode? focusNode;
   final bool required;
   final bool enabled;
+  final Widget? validationSuffix; // optional animated validation icon
   const DateFormField({
     super.key,
     required this.controller,
@@ -21,6 +23,7 @@ class DateFormField extends StatefulWidget {
     this.focusNode,
     this.required = false,
     this.enabled = true,
+    this.validationSuffix,
   });
 
   @override
@@ -36,15 +39,15 @@ class _DateFormFieldState extends State<DateFormField> {
       final picked = await showDatePicker(
         context: context,
         initialDate: init,
-        firstDate: widget.firstDate ?? DateTime(2000),
-        lastDate: widget.lastDate ?? DateTime(now.year + 5),
+        firstDate: widget.firstDate ?? now.subtract(const Duration(days: 365)),
+        lastDate: widget.lastDate ?? now.add(const Duration(days: 365)),
         helpText: widget.label,
       );
       if (picked != null) {
         widget.controller.text = _fmt(picked);
       }
     } catch (_) {
-      // ignore: use_build_context_synchronously
+      if (!mounted) return;
       toastification.show(
         context: context,
         title: const Text('Date picker unavailable'),
@@ -52,21 +55,20 @@ class _DateFormFieldState extends State<DateFormField> {
         type: ToastificationType.info,
         style: ToastificationStyle.fillColored,
         autoCloseDuration: const Duration(seconds: 3),
-  showProgressBar: false,
-  icon: const Icon(CupertinoIcons.calendar),
+        showProgressBar: false,
+        icon: const Icon(CupertinoIcons.calendar),
       );
     }
   }
 
-  String _fmt(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-  DateTime? _parse(String s) { try { if (s.trim().isEmpty) return null; return DateTime.parse(s.trim()); } catch (_) { return null; } }
+  String _fmt(DateTime d) => fmtYmd(d);
+  DateTime? _parse(String s) => parseAnyDate(s);
 
   String? _defaultValidator(String? v) {
     final s = (v ?? '').trim();
     if (s.isEmpty) return null;
-    final re = RegExp(r'^\d{4}-\d{2}-\d{2}$');
-    if (!re.hasMatch(s)) return 'Use YYYY-MM-DD';
-    try { DateTime.parse(s); } catch (_) { return 'Invalid date'; }
+    final d = parseAnyDate(s);
+    if (d == null) return 'Invalid date';
     return null;
   }
 
@@ -84,10 +86,16 @@ class _DateFormFieldState extends State<DateFormField> {
       decoration: InputDecoration(
         label: widget.required ? labelRich : null,
         labelText: widget.required ? null : widget.label,
-        suffixIcon: IconButton(
-          icon: const Icon(CupertinoIcons.calendar),
-          onPressed: _pick,
-          tooltip: 'Pick date',
+        suffixIcon: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.validationSuffix != null) widget.validationSuffix!,
+            IconButton(
+              icon: const Icon(CupertinoIcons.calendar),
+              onPressed: _pick,
+              tooltip: 'Pick date',
+            ),
+          ],
         ),
       ),
       keyboardType: TextInputType.datetime,

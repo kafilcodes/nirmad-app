@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import '../../../shared/utils/date_parse.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:gap/gap.dart';
 import 'package:flutter/services.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:timelines_plus/timelines_plus.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
@@ -16,7 +18,6 @@ import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../data/project_repository.dart';
 import '../domain/project.dart';
-// import 'phase_update_stepper_page.dart';
 // import '../../../services/functions_service.dart';
 import '../../../core/providers/firebase_providers.dart';
 import 'project_edit_page.dart' as editor;
@@ -25,6 +26,7 @@ import '../domain/project_update.dart';
 // removed unused updates_repository import after refactor
 // storage_service is provided indirectly via provider in attachments tab usage
 import '../../../shared/widgets/attachment_button.dart';
+import 'project_update_form_page.dart';
 // import '../../../core/widgets/branding_footer.dart';
 // import '../../../shared/ui/toast.dart';
 // import '../../auth/data/auth_repository.dart';
@@ -82,7 +84,7 @@ class ProjectDetailPage extends ConsumerWidget {
         if (budget > 0) _moneyChipInr(context, 'Due', due),
       ],
     );
-    ButtonStyle _outlinedPill(ColorScheme cs) => OutlinedButton.styleFrom(
+    ButtonStyle outlinedPill(ColorScheme cs) => OutlinedButton.styleFrom(
           foregroundColor: cs.primary,
           backgroundColor: Colors.transparent,
           side: BorderSide(color: cs.primary.withValues(alpha: 0.6)),
@@ -101,34 +103,36 @@ class ProjectDetailPage extends ConsumerWidget {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         OutlinedButton.icon(
-          style: _outlinedPill(cs),
+          style: outlinedPill(cs),
           onPressed: () => _exportProjectWithProgress(context, ref, project),
           icon: const Icon(CupertinoIcons.arrow_down_doc),
           label: const Text('Export'),
         ),
         if (isOwner && _hasAnyLateInstallments(project))
           OutlinedButton.icon(
-            style: _outlinedPill(cs),
+            style: outlinedPill(cs),
             onPressed: () => _reportLateInstallments(context, ref, project),
             icon: const Icon(CupertinoIcons.exclamationmark_triangle),
             label: const Text('Report late'),
           ),
         if (user != null && !isCompleted && ((user.role == UserRole.devAdmin) || (user.role == UserRole.superNodal) || (user.role == UserRole.subNodal) || (user.role == UserRole.projectOwner && user.uid == project.ownerId)))
           OutlinedButton.icon(
-            style: _outlinedPill(cs),
+            style: outlinedPill(cs),
             onPressed: () async {
-              await Navigator.of(context).push(MaterialPageRoute(builder: (_) => editor.ProjectEditorPage(projectId: project.id)));
+              final navigator = Navigator.of(context);
+              await navigator.push(MaterialPageRoute(builder: (_) => editor.ProjectEditorPage(projectId: project.id)));
             },
             icon: const Icon(CupertinoIcons.pencil),
             label: const Text('Edit'),
           ),
         if (!isCompleted && ((isOwner && workCompleted) || isDevAdmin == true))
           OutlinedButton.icon(
-            style: _outlinedPill(cs),
+            style: outlinedPill(cs),
             onPressed: () => _confirmMarkAsDone(context, ref, project, user, override: isDevAdmin == true && !workCompleted),
             icon: const Icon(CupertinoIcons.check_mark_circled),
             label: Text(isDevAdmin == true && !workCompleted ? 'Mark as Done (Override)' : 'Mark as Done'),
           ),
+        
       ],
     );
     return Container(
@@ -204,77 +208,87 @@ class ProjectDetailPage extends ConsumerWidget {
     );
   }
 
-  final tabsBuilder = (Project pj) => DefaultTabController(
-        length: 4,
-        child: Column(
-          children: [
-            // Tabs are visually separated from the top summary by the caller
-            const TabBar(
-              isScrollable: true,
-              tabs: [
-                Tab(text: 'Details (विवरण)', icon: Icon(CupertinoIcons.doc_plaintext, size: 16)),
-                Tab(text: 'Attachments (संलग्नक)', icon: Icon(CupertinoIcons.paperclip, size: 16)),
-                Tab(text: 'Updates (टिप्पणियाँ)', icon: Icon(CupertinoIcons.bubble_left_bubble_right, size: 16)),
-                Tab(text: 'Owner (स्वामी)', icon: Icon(CupertinoIcons.person, size: 16)),
-              ],
-            ),
-            Expanded(
-              child: TabBarView(
-                children: [
-                  // Details tab: textual sections only
-          ListView(
-                    key: const PageStorageKey('tab:details'),
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      _sectionTitle(context, 'Details (विवरण)'),
-                      const Gap(8),
-            _detailsSections(context, pj),
-                      const Gap(24),
-                    ],
-                  ),
-                  // Attachments (restored listing + add)
-                  _AttachmentsTab(project: pj, user: user),
-                  // Owner Info
-                  ListView(
-                    key: const PageStorageKey('tab:owner'),
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      _sectionTitle(context, 'Owner (स्वामी)'),
-                      const Gap(8),
-                      Card(
-                          elevation: 0,
-                          child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: _ownerInfo(context, pj))),
-                      const Gap(24),
-                    ],
-                  ),
-                // Updates tab
-                _UpdatesTab(project: pj, user: user),
-                // Owner Info tab already defined above
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
+  // tabsBuilder removed in unified scroll refactor
 
   return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
     stream: FirebaseFirestore.instance.collection('projects').doc(project.id).snapshots(),
     builder: (context, snap) {
   final pj = (snap.data != null && snap.data!.data() != null) ? Project.fromDoc(snap.data!) : project;
-      return Scaffold(
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        body: SafeArea(
-          top: false,
-          child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            header(pj),
-            // Top summary area: outside tabs
-            const Divider(height: 1),
-            Expanded(child: tabsBuilder(pj)),
-          ],
+      // Unified scroll: header + stages + tabs scroll together; TabBar pinned
+      final workCompleted = pj.workDescription.stage == WorkStage.completed;
+      final canUpdate = (user != null) && (pj.status != ProjectStatus.completed) && !workCompleted && (
+        (user.role == UserRole.devAdmin) || (user.role == UserRole.superNodal) || (user.role == UserRole.subNodal) || (user.role == UserRole.projectOwner && user.uid == pj.ownerId)
+      );
+      return DefaultTabController(
+        length: canUpdate ? 5 : 4,
+        child: Scaffold(
+          backgroundColor: Theme.of(context).colorScheme.surface,
+          body: NestedScrollView(
+            headerSliverBuilder: (context, innerScrolled) => [
+              SliverToBoxAdapter(child: header(pj)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: _stagesComposite(context, pj),
+                ),
+              ),
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _PinnedTabBarDelegate(
+                  child: Container(
+                    color: Theme.of(context).colorScheme.surface,
+                    child: TabBar(
+                      isScrollable: true,
+                      tabs: [
+                        const Tab(text: 'Details (विवरण)', icon: Icon(CupertinoIcons.doc_plaintext, size: 16)),
+                        const Tab(text: 'Attachments (संलग्नक)', icon: Icon(CupertinoIcons.paperclip, size: 16)),
+                        const Tab(text: 'Updates (टिप्पणियाँ)', icon: Icon(CupertinoIcons.bubble_left_bubble_right, size: 16)),
+                        if (canUpdate) const Tab(text: 'Update (अद्यतन)', icon: Icon(CupertinoIcons.pencil, size: 16)),
+                        const Tab(text: 'Owner (स्वामी)', icon: Icon(CupertinoIcons.person, size: 16)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            body: TabBarView(
+              children: [
+                ListView(
+                  key: const PageStorageKey('tab:details'),
+                  padding: const EdgeInsets.all(12),
+                  children: [
+                    _sectionTitle(context, 'Details (विवरण)'),
+                    const Gap(8),
+                    _detailsSections(context, pj),
+                    const Gap(24),
+                  ],
+                ),
+                _AttachmentsTab(project: pj, user: user),
+                _UpdatesTab(project: pj, user: user),
+                if (canUpdate)
+                  ProjectUpdateFormPage(
+                    key: const PageStorageKey('tab:update'),
+                    project: pj,
+                    embedded: true,
+                  ),
+                ListView(
+                  key: const PageStorageKey('tab:owner'),
+                  padding: const EdgeInsets.all(12),
+                  children: [
+                    _sectionTitle(context, 'Owner (स्वामी)'),
+                    const Gap(8),
+                    Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: _ownerInfo(context, pj),
+                      ),
+                    ),
+                    const Gap(24),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -332,11 +346,13 @@ Future<void> _confirmMarkAsDone(BuildContext context, WidgetRef ref, Project pro
         'createdAt': Timestamp.fromDate(DateTime.now()),
       });
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Project marked as completed')));
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(const SnackBar(content: Text('Project marked as completed')));
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
       }
     }
   }
@@ -389,9 +405,9 @@ class _AttachmentsTab extends ConsumerWidget {
                 elevation: 0,
                 child: ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  leading: const Icon(CupertinoIcons.paperclip),
+                  leading: _attachmentIcon(context, e.path),
                   title: Text(e.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(e.label),
+                  // Removed subtitle (labels) per request
                   trailing: AttachmentButton(
                     fileName: e.fileName,
                     resolveUrl: () async => storage.getDownloadURL(e.path),
@@ -409,6 +425,49 @@ class _AttachmentEntry {
   final String path;
   _AttachmentEntry({required this.label, required this.path});
   String get fileName => path.split('/').last;
+}
+
+Widget _attachmentIcon(BuildContext context, String path) {
+  final lower = path.toLowerCase();
+  final cs = Theme.of(context).colorScheme;
+  IconData icon;
+  Color bg;
+  if (lower.endsWith('.png') ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.webp') ||
+      lower.endsWith('.gif') ||
+      lower.endsWith('.bmp') ||
+      lower.endsWith('.heic') ||
+      lower.endsWith('.svg')) {
+    icon = CupertinoIcons.photo_on_rectangle;
+    bg = cs.primary.withValues(alpha: 0.10);
+  } else if (lower.endsWith('.pdf')) {
+    icon = Icons.picture_as_pdf_outlined;
+    bg = Colors.red.withValues(alpha: 0.12);
+  } else if (lower.endsWith('.doc') || lower.endsWith('.docx')) {
+    icon = Icons.description_outlined;
+    bg = cs.secondary.withValues(alpha: 0.12);
+  } else if (lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.csv')) {
+    icon = Icons.grid_on_outlined;
+    bg = Colors.green.withValues(alpha: 0.12);
+  } else if (lower.endsWith('.zip') || lower.endsWith('.rar') || lower.endsWith('.7z')) {
+    icon = Icons.archive_outlined;
+    bg = cs.outlineVariant.withValues(alpha: 0.20);
+  } else {
+    icon = CupertinoIcons.doc_text;
+    bg = cs.outlineVariant.withValues(alpha: 0.16);
+  }
+  return Container(
+    width: 42,
+    height: 42,
+    decoration: BoxDecoration(
+      color: bg,
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: bg.withValues(alpha: 0.4), width: 1),
+    ),
+    child: Icon(icon, size: 20, color: cs.onSurfaceVariant),
+  );
 }
 
 class _UpdatesTab extends ConsumerWidget {
@@ -462,7 +521,7 @@ class _UpdatesTab extends ConsumerWidget {
                             const SizedBox(height: 6),
                             Wrap(spacing: 12, runSpacing: 4, children: [
                               _metaChip(context, '#${u.phase}'),
-                              _metaChip(context, _fmtDateTime(u.createdAt)!),
+                              _metaChip(context, _fmtDateTime(u.createdAt) ?? '—'),
                             ]),
                           ]),
                         ),
@@ -474,7 +533,7 @@ class _UpdatesTab extends ConsumerWidget {
             },
           ),
         ),
-        if (user != null)
+  if (user != null && (user!.role == UserRole.superNodal || user!.role == UserRole.subNodal || user!.role == UserRole.devAdmin))
           SafeArea(
             top: false,
             child: Padding(
@@ -510,27 +569,37 @@ Widget _metaChip(BuildContext context, String text) {
 
 Future<void> _showAddCommentDialog(BuildContext context, WidgetRef ref, Project project, AppUser user) async {
   final controller = TextEditingController();
+  final messenger = ScaffoldMessenger.of(context);
   final ok = await showScrollSafeDialog<bool>(
     context: context,
     barrierDismissible: true,
-    builder: (ctx) => Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('New Comment', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 12),
-        TextField(
-          controller: controller,
-          maxLines: 5,
-          decoration: const InputDecoration(hintText: 'Enter comment...'),
-        ),
-        const SizedBox(height: 16),
-        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          const SizedBox(width: 8),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
-        ])
-      ],
+    builder: (ctx) => AnimatedPadding(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('New Comment', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            keyboardType: TextInputType.multiline,
+            minLines: 3,
+            maxLines: 8,
+            decoration: const InputDecoration(hintText: 'Enter comment...'),
+          ),
+          const SizedBox(height: 16),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            const SizedBox(width: 8),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          ])
+        ],
+      ),
     ),
   );
   if (ok == true && controller.text.trim().isNotEmpty) {
@@ -546,7 +615,7 @@ Future<void> _showAddCommentDialog(BuildContext context, WidgetRef ref, Project 
       );
       await repo.addUpdate(project.id, update);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
   controller.dispose();
@@ -855,12 +924,12 @@ Widget _installmentRow(BuildContext context, String label, Installment? i) {
   final recDate = i?.receivedDate;
   String primaryLine = '';
   if (amount != null) primaryLine += 'Amt: ${_fmtMoneyInr(amount)}';
-  if (date != null) primaryLine += (primaryLine.isEmpty ? '' : '  •  ') + 'Date: ${_fmtDate(date)}';
+  if (date != null) primaryLine += '${primaryLine.isEmpty ? '' : '  •  '}Date: ${_fmtDate(date)}';
   final now = DateTime.now();
   final isLate = (rec == null) && (date != null) && date.isBefore(DateTime(now.year, now.month, now.day));
   final lateDays = isLate ? DateTime(now.year, now.month, now.day).difference(DateTime(date.year, date.month, date.day)).inDays : 0;
   final receivedWidget = rec == null
-      ? Text('(not received)', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.7)))
+      ? Text('(not received)', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).textTheme.bodySmall?.color?.withValues(alpha: 0.7)))
       : Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -921,9 +990,9 @@ String? _installment(Installment? i) {
   final dr = i.receivedDate;
   final parts = <String>[];
   if (a != null) parts.add('Amt: $a');
-  if (d != null) parts.add('Date: ${d.toLocal().toString().split(' ').first}');
+  if (d != null) parts.add('Date: ${fmtYmd(d.toLocal())}');
   if (ar != null) parts.add('Rec: $ar');
-  if (dr != null) parts.add('Rec on: ${dr.toLocal().toString().split(' ').first}');
+  if (dr != null) parts.add('Rec on: ${fmtYmd(dr.toLocal())}');
   return parts.isEmpty ? null : parts.join('  •  ');
 }
 
@@ -1029,7 +1098,7 @@ String _rupeesInWords(int n) {
   if (lakh > 0) parts.add('${two(lakh)} lakh');
   if (thousand > 0) parts.add('${two(thousand)} thousand');
   if (hundred > 0) parts.add(three(hundred));
-  return parts.join(' ') + ' rupees';
+  return '${parts.join(' ')} rupees';
 }
 
 num _computeOverdueAmount(Project project) {
@@ -1049,6 +1118,223 @@ num _computeOverdueAmount(Project project) {
   addIfLate(project.allotmentDetails.installment2);
   addIfLate(project.allotmentDetails.installment3);
   return total;
+}
+
+// ---------------- Stages Timeline (extracted working version) ----------------
+Widget _stagesComposite(BuildContext context, Project project) {
+  final cs = Theme.of(context).colorScheme;
+  return Card(
+    elevation: 0,
+    color: Colors.transparent,
+    child: Padding(
+      padding: const EdgeInsets.all(14.0),
+      child: LayoutBuilder(builder: (context, c) {
+        final narrow = c.maxWidth < 720;
+        Widget dateBox({required IconData icon, required String label, required DateTime? date}) => Container(
+              constraints: const BoxConstraints(minWidth: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.06),
+                border: Border.all(color: cs.primary.withValues(alpha: 0.45)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(icon, size: 22, color: cs.primary),
+                const SizedBox(width: 10),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.primary)),
+                  Text(
+                    date == null ? '(not entered)' : _fmtDate(date)!,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ]),
+              ]),
+            );
+        final timeline = Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: _stageTimeline(context, project.workDescription.stage),
+        );
+        final left = dateBox(icon: Icons.event, label: 'Start', date: project.workDescription.startDate ?? project.createdAt);
+        final right = dateBox(icon: Icons.event_available, label: 'End (planned)', date: project.workDescription.endDate);
+        if (narrow) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            left,
+            const SizedBox(height: 12),
+            timeline,
+            const SizedBox(height: 12),
+            right,
+          ]);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            left,
+            const SizedBox(width: 14),
+            Expanded(child: Align(alignment: Alignment.center, child: timeline)),
+            const SizedBox(width: 14),
+            right,
+          ],
+        );
+      }),
+    ),
+  );
+}
+
+Widget _stageTimeline(BuildContext context, WorkStage? current) => _StageTimeline(current: current);
+
+class _StageTimeline extends StatefulWidget {
+  final WorkStage? current;
+  const _StageTimeline({required this.current});
+  @override
+  State<_StageTimeline> createState() => _StageTimelineState();
+}
+
+class _StageTimelineState extends State<_StageTimeline> {
+  static const double _itemExtent = 90.0;
+  static const Duration _step = Duration(milliseconds: 240);
+  int _revealed = 0; // how many steps are revealed
+  int _gen = 0; // cancellation token
+  bool _reduceMotion = false;
+
+  int get _idx => widget.current == null ? -1 : WorkStage.values.indexOf(widget.current!);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _kick();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StageTimeline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.current != widget.current) {
+      _kick();
+    }
+  }
+
+  Future<void> _kick() async {
+    final idx = _idx;
+    final my = ++_gen;
+    if (idx < 0) {
+      setState(() => _revealed = 0);
+      return;
+    }
+    if (_reduceMotion) {
+      setState(() => _revealed = idx + 1);
+      return;
+    }
+    setState(() => _revealed = 0);
+    for (int i = 0; i <= idx; i++) {
+      if (!mounted || _gen != my) return;
+      await Future.delayed(_step);
+      if (!mounted || _gen != my) return;
+      setState(() => _revealed = i + 1);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final steps = WorkStage.values;
+    final cs = Theme.of(context).colorScheme;
+    return LayoutBuilder(builder: (context, c) {
+      final totalWidth = steps.length * _itemExtent;
+      final width = totalWidth > c.maxWidth ? c.maxWidth : totalWidth;
+      Color colorFor(int i) {
+        if (i == (_revealed - 1) && i == _idx) return cs.primary; // current
+        if (i < (_revealed - 1)) return cs.outline; // past
+        return cs.outlineVariant; // future
+      }
+      return SizedBox(
+        height: 124,
+        child: Center(
+          child: SizedBox(
+            width: width,
+            child: Timeline.tileBuilder(
+              theme: TimelineThemeData(
+                direction: Axis.horizontal,
+                connectorTheme: ConnectorThemeData(thickness: 4, color: cs.outlineVariant),
+                indicatorTheme: IndicatorThemeData(size: 36, color: cs.primary),
+              ),
+              builder: TimelineTileBuilder.connected(
+                itemCount: steps.length,
+                indicatorBuilder: (context, i) {
+                  final icon = Icon(_iconForStage(steps[i]), color: colorFor(i), size: 24);
+                  final child = Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: (i == _idx) ? colorFor(i).withValues(alpha: 0.12) : Colors.transparent,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: colorFor(i)),
+                    ),
+                    child: icon,
+                  );
+                  final revealed = i < _revealed;
+                  return AnimatedScale(
+                    scale: revealed ? 1.0 : 0.6,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    child: child,
+                  );
+                },
+                connectorBuilder: (context, i, type) {
+                  final active = i < (_revealed - 1);
+                  return SolidLineConnector(color: active ? cs.primary : cs.outlineVariant);
+                },
+                contentsBuilder: (context, i) {
+                  final label = _labelForStage(steps[i]);
+                  final active = (i == _idx) && i < _revealed;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 10.0, left: 8, right: 8),
+                    child: Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: active ? cs.primary : null)),
+                  );
+                },
+                nodePositionBuilder: (context, index) => 0.5,
+                indicatorPositionBuilder: (_, __) => 0.5,
+                itemExtentBuilder: (_, __) => _itemExtent,
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+  }
+}
+
+IconData _iconForStage(WorkStage s) {
+  switch (s) {
+    case WorkStage.layout:
+      return CupertinoIcons.map;
+    case WorkStage.plinth:
+      return Icons.foundation;
+    case WorkStage.lintel:
+      return Icons.architecture;
+    case WorkStage.finishing:
+      return Icons.brush;
+    case WorkStage.completed:
+      return CupertinoIcons.check_mark_circled;
+  }
+}
+
+String _labelForStage(WorkStage s) {
+  switch (s) {
+    case WorkStage.layout:
+      return 'Layout';
+    case WorkStage.plinth:
+      return 'Plinth';
+    case WorkStage.lintel:
+      return 'Lintel';
+    case WorkStage.finishing:
+      return 'Finishing';
+    case WorkStage.completed:
+      return 'Completed';
+  }
 }
 
 // (Removed unused timeline composite during repair)
@@ -1385,7 +1671,7 @@ Future<Uint8List> _buildProjectPdf(
   margin: const pw.EdgeInsets.all(48),
   );
 
-  String? _sanitize(String? v) => v?.replaceAll(RegExp(r'[•–—]'), '-');
+  String? sanitize(String? v) => v?.replaceAll(RegExp(r'[•–—]'), '-');
   pw.Widget kv(String k, String? v) => v == null || v.trim().isEmpty
       ? pw.SizedBox()
       : pw.Padding(
@@ -1393,7 +1679,7 @@ Future<Uint8List> _buildProjectPdf(
           child: pw.Row(children: [
             pw.SizedBox(width: 140, child: pw.Text(k, style: pw.TextStyle(fontSize: 10, color: PdfColors.grey700))),
             pw.SizedBox(width: 8),
-            pw.Expanded(child: pw.Text(_sanitize(v)!, style: const pw.TextStyle(fontSize: 11))),
+            pw.Expanded(child: pw.Text(sanitize(v)!, style: const pw.TextStyle(fontSize: 11))),
           ]),
         );
   final budget = project.sanctionCompliance.approvedAmount ?? 0;
@@ -1566,11 +1852,32 @@ class _ExportProgress {
       );
 }
 
+class _PinnedTabBarDelegate extends SliverPersistentHeaderDelegate {
+  final Widget child;
+  _PinnedTabBarDelegate({required this.child});
+  @override
+  double get minExtent => kToolbarHeight - 8; // slightly compact
+  @override
+  double get maxExtent => kToolbarHeight - 8;
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
+      ),
+      child: child,
+    );
+  }
+  @override
+  bool shouldRebuild(covariant _PinnedTabBarDelegate oldDelegate) => oldDelegate.child != child;
+}
+
 // (Removed unused _attachmentsList during repair)
 
 // (Removed unused _iconForName during repair)
 
-String? _fmtDate(DateTime? d) => d?.toLocal().toString().split(' ').first;
+String? _fmtDate(DateTime? d) => d == null ? null : fmtYmd(d.toLocal());
 
 bool _hasAnyLateInstallments(Project project) {
   final now = DateTime.now();
@@ -1593,7 +1900,8 @@ Future<void> _reportLateInstallments(BuildContext context, WidgetRef ref, Projec
     final exists = await col.doc(docId).get();
     if (exists.exists) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Already reported today')));
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(const SnackBar(content: Text('Already reported today')));
       }
       return;
     }
@@ -1612,7 +1920,8 @@ Future<void> _reportLateInstallments(BuildContext context, WidgetRef ref, Projec
     add(project.allotmentDetails.installment3, 'I3');
     if (parts.isEmpty) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No late installments')));
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(const SnackBar(content: Text('No late installments')));
       }
       return;
     }
@@ -1626,11 +1935,13 @@ Future<void> _reportLateInstallments(BuildContext context, WidgetRef ref, Projec
       'createdAt': Timestamp.fromDate(DateTime.now()),
     }, SetOptions(merge: false));
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reported. A system comment was added.')));
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(const SnackBar(content: Text('Reported. A system comment was added.')));
     }
   } catch (e) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
   }
 }
 

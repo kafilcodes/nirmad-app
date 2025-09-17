@@ -4,7 +4,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
-import 'nodal_dashboard_list_page.dart';
 import 'metrics_tiles.dart';
 import 'projects_charts.dart';
 import '../../../shared/widgets/app_sidebar.dart';
@@ -16,7 +15,7 @@ import 'package:go_router/go_router.dart';
 import '../state/projects_snapshot_provider.dart';
 import '../../../shared/data/blocks_provider.dart';
 import '../../projects/domain/project.dart';
-import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider;
+import 'nodal_dashboard_list_page.dart' show NodalDashboardListPage, nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider;
 
 class NodalDashboardPage extends ConsumerStatefulWidget {
   const NodalDashboardPage({super.key});
@@ -116,14 +115,20 @@ class _NodalDashboardPageState extends ConsumerState<NodalDashboardPage> with Si
                           if (isCompact)
                             IconButton(
                               icon: Icon(_sidebarOpen ? CupertinoIcons.clear : CupertinoIcons.bars),
-                              onPressed: () => setState(() => _sidebarOpen = !_sidebarOpen),
+                              onPressed: () {
+                                FocusScope.of(context).unfocus();
+                                setState(() => _sidebarOpen = !_sidebarOpen);
+                              },
                               tooltip: 'Menu',
                             )
                           else
                             IconButton(
                               // Use previous iOS sidebar icons to show/hide the sidebar entirely
                               icon: Icon(_sidebarHidden ? CupertinoIcons.sidebar_right : CupertinoIcons.sidebar_left),
-                              onPressed: () => setState(() => _sidebarHidden = !_sidebarHidden),
+                              onPressed: () {
+                                FocusScope.of(context).unfocus();
+                                setState(() => _sidebarHidden = !_sidebarHidden);
+                              },
                               tooltip: _sidebarHidden ? 'Show sidebar' : 'Hide sidebar',
                             ),
                           const Spacer(),
@@ -245,15 +250,31 @@ class _NodalMetricsAndCharts extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (isSub && blockName.isNotEmpty) ...[
-            Card(
-              elevation: 0,
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Row(children: [
-                  const Icon(CupertinoIcons.person_2_square_stack, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text('Welcome, Sub Nodal Officer of $blockName', style: const TextStyle(fontWeight: FontWeight.w600))),
-                ]),
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(children: [
+                const Icon(CupertinoIcons.person_2_square_stack, size: 18),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Welcome, Sub Nodal Officer of $blockName', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600))),
+              ]),
+            ),
+            const SizedBox(height: 8),
+          ],
+          // Mobile-first: show greeting above stats for super nodal
+          if ((user?.role == UserRole.superNodal) && MediaQuery.of(context).size.width < 720) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Builder(builder: (context) {
+                  final cs = Theme.of(context).colorScheme;
+                  return Text.rich(
+                    TextSpan(children: [
+                      TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
+                      TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                    ]),
+                  );
+                }),
               ),
             ),
             const SizedBox(height: 8),
@@ -287,9 +308,10 @@ class _NodalMetricsAndCharts extends ConsumerWidget {
             },
           ),
           const SizedBox(height: 12),
-          // Greeting after Stats section (mobile-first)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0),
+          // Greeting after Stats section (desktop/web, or non-super-nodal)
+          if (!(user?.role == UserRole.superNodal && MediaQuery.of(context).size.width < 720))
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Builder(builder: (context) {

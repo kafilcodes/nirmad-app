@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:mime/mime.dart' as mime;
-import 'package:open_filex/open_filex.dart';
+import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 
 class FileOpenHelper {
@@ -17,10 +17,9 @@ class FileOpenHelper {
     final contentType = mime.lookupMimeType(fileName) ?? 'application/octet-stream';
     final path = await _save(bytes: bytes, fileName: fileName);
     // On Android, use OpenFilex to trigger chooser based on MIME
-    final res = await OpenFilex.open(path, type: contentType);
+    final res = await OpenFile.open(path, type: contentType);
     if (res.type != ResultType.done) {
-      // Best-effort: some devices require no explicit type
-      await OpenFilex.open(path);
+      await OpenFile.open(path);
     }
     return path;
   }

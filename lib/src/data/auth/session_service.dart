@@ -23,10 +23,15 @@ class SessionService {
     final u = _auth.currentUser;
     if (u == null) return false;
     final ref = _db.collection('users').doc(u.uid).collection('sessions').doc('current');
-    final snap = await ref.get();
-    if (!snap.exists) return true;
-    final current = snap.data();
-    final activeId = current?['sessionId'] as String?;
+    DocumentSnapshot<Map<String, dynamic>>? snap;
+    // Prefer server to avoid stale cache after a just-completed logout.
+    try {
+      snap = await ref.get(const GetOptions(source: Source.server));
+    } catch (_) {
+      try { snap = await ref.get(const GetOptions(source: Source.cache)); } catch (_) {}
+    }
+    if (snap == null || !snap.exists) return true;
+    final activeId = snap.data()?['sessionId'] as String?;
     return activeId == null || activeId == sessionId;
   }
 

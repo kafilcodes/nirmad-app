@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter/services.dart';
@@ -1293,7 +1292,7 @@ class _UserDialogState extends State<_UserDialog> {
     );
     // Role and Block controls (role dropdown, block when required)
     final roleWidget = DropdownButtonFormField<String>(
-      value: roleSelected,
+      initialValue: roleSelected,
       isExpanded: true,
       decoration: const InputDecoration(labelText: 'Role', prefixIcon: Icon(CupertinoIcons.shield)),
       items: const [
@@ -1307,7 +1306,7 @@ class _UserDialogState extends State<_UserDialog> {
 
     final needsBlock = roleSelected == 'project_owner' || roleSelected == 'sub_nodal';
     final blockWidget = DropdownButtonFormField<String>(
-      value: selectedBlockId,
+      initialValue: selectedBlockId,
       isExpanded: true,
       decoration: const InputDecoration(labelText: 'Block', prefixIcon: Icon(CupertinoIcons.map_pin_ellipse)),
       items: const [
@@ -1367,7 +1366,7 @@ class _UserDialogState extends State<_UserDialog> {
     addField(
       key: 'gender',
       field: DropdownButtonFormField<String>(
-        value: gender.isEmpty ? null : gender,
+        initialValue: gender.isEmpty ? null : gender,
         isExpanded: true,
         decoration: const InputDecoration(labelText: 'Gender', prefixIcon: Icon(CupertinoIcons.person_2)),
         items: const [

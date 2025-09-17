@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gap/gap.dart';
@@ -24,7 +25,6 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _obscure = true;
-  bool _rememberMe = true;
   bool _loading = false;
   // Permissions are not required to login; we track them only to offer quick-fix later.
   bool _permissionsOk = true;
@@ -78,6 +78,8 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
     final ok = _formKey.currentState?.validate() ?? false;
     if (!ok) return;
     setState(() => _loading = true);
+    final router = GoRouter.of(context);
+    final messenger = ScaffoldMessenger.of(context);
     try {
       await ref.read(authRepositoryProvider).signIn(
             _emailCtrl.text.trim(),
@@ -104,13 +106,12 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
         } catch (_) {}
       }
       if (target != null) {
-        // ignore: use_build_context_synchronously
-  context.go(target);
+        router.go(target);
       }
     } on FirebaseAuthException catch (e) {
       final msg = _mapFirebaseError(e);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        messenger.showSnackBar(SnackBar(content: Text(msg)));
       }
     } catch (e) {
       final err = e.toString();
@@ -122,57 +123,103 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
           builder: (ctx) {
             final confirmCtrl = TextEditingController();
             final formKey = GlobalKey<FormState>();
+            bool submitting = false;
+            // Provide only the dialog content; ScrollSafeDialog supplies Material & scrolling.
             return Form(
               key: formKey,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('You’re signed in elsewhere', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  const Text('This account is active on another device. To continue here and sign out the other device, confirm your password.'),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: confirmCtrl,
-                    obscureText: true,
-                    autofocus: true,
-                    decoration: const InputDecoration(labelText: 'Confirm password'),
-                    textInputAction: TextInputAction.done,
-                    onFieldSubmitted: (_) {
-                      if (formKey.currentState?.validate() ?? false) {
-                        Navigator.pop(ctx, confirmCtrl.text);
-                      }
-                    },
-                    validator: (v) => (v == null || v.length < 6) ? 'Enter your password' : null,
+                  Text(
+                    'You’re signed in elsewhere',
+                    style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'This account is active on another device. To continue here and sign out the other device, confirm your password.',
+                  ),
+                  const SizedBox(height: 16),
+                  FocusTraversalGroup(
+                    policy: OrderedTraversalPolicy(),
+                    child: TextFormField(
+                      controller: confirmCtrl,
+                      obscureText: true,
+                      autofocus: true,
+                      maxLength: 128,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.deny(RegExp(r'[<>"\\;\x00-\x1F\x7F]')),
+                        LengthLimitingTextInputFormatter(128),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Confirm password',
+                        counterText: '',
+                      ),
+                      textInputAction: TextInputAction.done,
+                      textAlignVertical: TextAlignVertical.center,
+                      onFieldSubmitted: (_) {
+                        if (formKey.currentState?.validate() ?? false) {
+                          Navigator.pop(ctx, confirmCtrl.text);
+                        }
+                      },
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Password is required';
+                        if (v.length < 6) return 'Minimum 6 characters';
+                        if (v.length > 128) return 'Password too long';
+                        if (v.contains(RegExp(r'[<>"\\;\x00-\x1F\x7F]'))) return 'Invalid characters in password';
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 24),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('Cancel')),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, null),
+                        child: const Text('Cancel'),
+                      ),
                       const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: () {
-                          if (formKey.currentState?.validate() ?? false) {
-                            Navigator.pop(ctx, confirmCtrl.text);
-                          }
+                      StatefulBuilder(
+                        builder: (context, setState) {
+                          return FilledButton.icon(
+                            icon: submitting
+                                ? SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.2,
+                                      valueColor: AlwaysStoppedAnimation(
+                                        Theme.of(context).colorScheme.onPrimary,
+                                      ),
+                                    ),
+                                  )
+                                : const Icon(Icons.logout),
+                            onPressed: submitting
+                                ? null
+                                : () {
+                                    if (formKey.currentState?.validate() ?? false) {
+                                      setState(() => submitting = true);
+                                      Navigator.pop(ctx, confirmCtrl.text);
+                                    }
+                                  },
+                            label: const Text('Use here'),
+                          );
                         },
-                        child: const Text('Logout other device and continue'),
                       ),
                     ],
-                  )
+                  ),
                 ],
               ),
             );
           },
         );
-    if (confirmedPassword != null) {
+        if (confirmedPassword != null) {
           try {
-            FocusScope.of(context).unfocus();
             await ref.read(authRepositoryProvider).forceSignInTakeover(
-                  _emailCtrl.text.trim(),
+                _emailCtrl.text.trim(),
       confirmedPassword,
-                );
+              );
             if (!mounted) return;
             // Navigate as in normal sign-in
             try {
@@ -187,21 +234,21 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
                 }
               } catch (_) {}
             }
-            if (target != null) context.go(target);
+            if (!mounted) return;
+            if (target != null) router.go(target);
           } on FirebaseAuthException catch (e2) {
             final msg = _mapFirebaseError(e2);
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+              messenger.showSnackBar(SnackBar(content: Text(msg)));
             }
           } catch (_) {
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unable to continue here. Try again.')));
+              messenger.showSnackBar(const SnackBar(content: Text('Unable to continue here. Try again.')));
             }
           }
+        } else if (mounted) {
+          messenger.showSnackBar(const SnackBar(content: Text('Something went wrong. Please try again.')));
         }
-      } else if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Something went wrong. Please try again.')));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -242,28 +289,27 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final isWide = constraints.maxWidth >= 1000;
-                final card = _AuthCard(
+final card = _AuthCard(
                   formKey: _formKey,
                   emailCtrl: _emailCtrl,
                   passwordCtrl: _passwordCtrl,
                   obscure: _obscure,
                   onToggleObscure: () => setState(() => _obscure = !_obscure),
-                  rememberMe: _rememberMe,
-                  onRememberChanged: (v) => setState(() => _rememberMe = v),
                   onSubmit: _signIn,
                   onForgotPassword: _resetPassword,
                   loading: _loading,
                   permissionsOk: _permissionsOk,
                   onFixPermissions: () async {
+                    final messenger = ScaffoldMessenger.of(context);
                     final ok = await PermissionService.requestCorePermissions();
                     await _refreshPermissions();
-                    if (!ok && mounted) {
+                    if (!ok) {
                       final list = _missing.isEmpty ? 'required permissions' : _missing.join(', ');
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      messenger.showSnackBar(
                         SnackBar(content: Text('Please grant $list to continue.')),
                       );
                     }
-                  },
+                   },
                   missing: _missing,
                 );
 
@@ -272,11 +318,16 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 540),
                       child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                        padding: EdgeInsets.only(
+                          left: 20,
+                          right: 20,
+                          top: 16,
+                          bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            const _BrandHeader(withCopy: true),
+                            const _BrandHeader(withCopy: false),
                             const Gap(12),
                             card,
                           ],
@@ -323,7 +374,7 @@ class _BrandHeader extends StatelessWidget {
     final bool small = w < 600;
     final bool medium = w >= 600 && w < 1000;
     final double pad = small ? 8 : (medium ? 24 : 40);
-    final double logoSize = small ? 240 : (medium ? 340 : 450);
+  final double logoSize = small ? 280 : (medium ? 380 : 500);
   final double bottomPad = small ? 0 : (medium ? 0 : 2);
   final double copyGap = small ? 2 : (medium ? 4 : 6);
     final double copyMaxWidth = small ? 520 : 560;
@@ -336,7 +387,7 @@ class _BrandHeader extends StatelessWidget {
     child: Builder(builder: (context) {
   // Primary login logo is always Nirmad (app brand)
   const asset = 'assets/logo.png';
-  return Image.asset(asset, fit: BoxFit.contain);
+  return Image.asset(asset, fit: BoxFit.contain, filterQuality: FilterQuality.high, cacheWidth: 1000);
     }),
       ),
     ).animate().fadeIn(duration: 250.ms).moveY(begin: 6, end: 0);
@@ -388,14 +439,12 @@ class _AuthCard extends StatelessWidget {
     required this.passwordCtrl,
     required this.obscure,
     required this.onToggleObscure,
-    required this.rememberMe,
-    required this.onRememberChanged,
     required this.onSubmit,
     required this.onForgotPassword,
     required this.loading,
-  required this.permissionsOk,
-  required this.onFixPermissions,
-  required this.missing,
+    required this.permissionsOk,
+    required this.onFixPermissions,
+    required this.missing,
   });
 
   final GlobalKey<FormState> formKey;
@@ -403,8 +452,6 @@ class _AuthCard extends StatelessWidget {
   final TextEditingController passwordCtrl;
   final bool obscure;
   final VoidCallback onToggleObscure;
-  final bool rememberMe;
-  final ValueChanged<bool> onRememberChanged;
   final Future<void> Function() onSubmit;
   final Future<void> Function() onForgotPassword;
   final bool loading;
@@ -462,11 +509,22 @@ class _AuthCard extends StatelessWidget {
                 icon: Icons.mail_outline,
                 controller: emailCtrl,
                 keyboardType: TextInputType.emailAddress,
+                maxLength: 254, // RFC 5321 email length limit
+                inputFormatters: [
+                  // Prevent paste of invalid characters and enforce email format
+                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9@._-]')),
+                  LengthLimitingTextInputFormatter(254),
+                ],
                 validator: (v) {
                   final s = (v ?? '').trim();
                   if (s.isEmpty) return 'Email is required';
-                  final re = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+                  if (s.length < 5) return 'Email too short';
+                  if (s.length > 254) return 'Email too long';
+                  // Enhanced email validation
+                  final re = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
                   if (!re.hasMatch(s)) return 'Enter a valid email';
+                  // Prevent common injection patterns
+                  if (s.contains(RegExp(r'[<>"\\;]'))) return 'Invalid characters in email';
                   return null;
                 },
               ),
@@ -476,55 +534,35 @@ class _AuthCard extends StatelessWidget {
                 icon: Icons.lock_outline,
                 controller: passwordCtrl,
                 obscureText: obscure,
+                maxLength: 128, // Reasonable password length limit
+                inputFormatters: [
+                  // Prevent paste of dangerous characters while allowing strong passwords
+                  FilteringTextInputFormatter.deny(RegExp(r'[<>"\\;\x00-\x1F\x7F]')),
+                  LengthLimitingTextInputFormatter(128),
+                ],
                 trailing: IconButton(
                   icon:
                       Icon(obscure ? Icons.visibility_off : Icons.visibility),
                   onPressed: onToggleObscure,
                 ),
-                validator: (v) =>
-                    (v == null || v.length < 6) ? 'Minimum 6 characters' : null,
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'Password is required';
+                  if (v.length < 6) return 'Minimum 6 characters';
+                  if (v.length > 128) return 'Password too long';
+                  // Prevent common injection patterns
+                  if (v.contains(RegExp(r'[<>"\\;\x00-\x1F\x7F]'))) return 'Invalid characters in password';
+                  return null;
+                },
               ),
         const Gap(8),
-              LayoutBuilder(builder: (context, c) {
-                final narrow = c.maxWidth < 460;
-                if (narrow) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Checkbox(
-                              value: rememberMe,
-                              onChanged: (v) => onRememberChanged(v ?? true)),
-                          const Gap(4),
-                          const Text('Remember me'),
-                        ],
-                      ),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: onForgotPassword,
-                          child: const Text('Forgot password?'),
-                        ),
-                      ),
-                    ],
-                  );
-                }
-                return Row(
-                  children: [
-                    Checkbox(
-                        value: rememberMe,
-                        onChanged: (v) => onRememberChanged(v ?? true)),
-                    const Gap(4),
-                    const Text('Remember me'),
-                    const Spacer(),
-                    TextButton(
-                        onPressed: onForgotPassword,
-                        child: const Text('Forgot password?')),
-                  ],
-                );
-              }),
-        const Gap(8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: onForgotPassword,
+                  child: const Text('Forgot password?'),
+                ),
+              ),
+              const Gap(8),
               FilledButton.icon(
                 onPressed: loading ? null : onSubmit,
                 icon: loading
@@ -567,6 +605,8 @@ class _LabeledField extends StatelessWidget {
     this.keyboardType,
     this.obscureText = false,
     this.validator,
+    this.maxLength,
+    this.inputFormatters,
   });
 
   final String label;
@@ -576,6 +616,8 @@ class _LabeledField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool obscureText;
   final String? Function(String?)? validator;
+  final int? maxLength;
+  final List<TextInputFormatter>? inputFormatters;
 
   @override
   Widget build(BuildContext context) {
@@ -584,11 +626,14 @@ class _LabeledField extends StatelessWidget {
       obscureText: obscureText,
       keyboardType: keyboardType,
       validator: validator,
-  textAlignVertical: TextAlignVertical.center,
+      maxLength: maxLength,
+      inputFormatters: inputFormatters,
+      textAlignVertical: TextAlignVertical.center,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
         suffixIcon: trailing,
+        counterText: '', // Hide character counter
       ),
     );
   }

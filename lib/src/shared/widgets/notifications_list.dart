@@ -61,7 +61,7 @@ class NotificationsList extends ConsumerWidget {
   final cacheKey = 'updates:$roleKey:$scopeKey';
 
     // Helper wrapper to unify streamed and cached docs
-  List<_NotifDoc> _applyClientFilters(List<_NotifDoc> docs) {
+  List<_NotifDoc> applyClientFilters(List<_NotifDoc> docs) {
       var filtered = docs;
       // Sort order only (newest/oldest)
       final newestFirst = ref.watch(_notifSortNewestFirstProvider);
@@ -85,49 +85,51 @@ class NotificationsList extends ConsumerWidget {
       return filtered;
     }
 
-  Widget _buildList(List<_NotifDoc> docs) {
-      final hadAnyBeforeSearch = docs.isNotEmpty || ref.watch(_notifSearchProvider).trim().isEmpty;
-      if (docs.isEmpty) {
-        final searching = ref.watch(_notifSearchProvider).trim().isNotEmpty;
-        if (searching && hadAnyBeforeSearch) {
-          return const NoData(message: 'No matching updates', asset: 'assets/search_projects.svg');
-        }
-        return const NoData(message: 'No updates', asset: 'assets/no_updates.svg');
-      }
-  final updatesRepo = ref.read(updatesRepositoryProvider);
-        final brightness = Theme.of(context).brightness;
-        return AnimatedSwitcher(
-          duration: const Duration(milliseconds: 150),
-          switchInCurve: Curves.easeIn,
-          switchOutCurve: Curves.easeOut,
-          child: KeyedSubtree(
-            key: ValueKey('updates-theme-$brightness'),
-            child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          children: [
-            // Compact search + sort (newest/oldest) actions row
-            Row(children: [
-              Expanded(
-                child: CupertinoSearchTextField(
-                  padding: const EdgeInsetsDirectional.fromSTEB(8, 10, 8, 10),
-                  placeholder: 'Search updates',
-                  onChanged: (v) => ref.read(_notifSearchProvider.notifier).state = v,
-                ),
-              ),
-              const SizedBox(width: 8),
-              _SortToggle(newestFirst: ref.watch(_notifSortNewestFirstProvider), onChanged: (v) {
-                if (kDebugMode) debugPrint('updates: sort newestFirst=$v');
-                ref.read(_notifSortNewestFirstProvider.notifier).state = v;
-              }),
-            ]),
-            const SizedBox(height: 8),
-            Expanded(
-              child: ListView.separated(
-                itemCount: docs.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 6),
-                itemBuilder: (context, i) {
-                  final d = docs[i];
+  Widget buildList(List<_NotifDoc> docs) {
+      final updatesRepo = ref.read(updatesRepositoryProvider);
+      final brightness = Theme.of(context).brightness;
+      final q = ref.watch(_notifSearchProvider).trim();
+      final isSearching = q.isNotEmpty;
+      return AnimatedSwitcher(
+        duration: const Duration(milliseconds: 150),
+        switchInCurve: Curves.easeIn,
+        switchOutCurve: Curves.easeOut,
+        child: KeyedSubtree(
+          key: ValueKey('updates-theme-$brightness'),
+          child: Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Column(
+              children: [
+                // Search + sort stays visible at all times
+                Row(children: [
+                  Expanded(
+                    child: CupertinoSearchTextField(
+                      padding: const EdgeInsetsDirectional.fromSTEB(8, 10, 8, 10),
+                      placeholder: 'Search updates',
+                      onChanged: (v) => ref.read(_notifSearchProvider.notifier).state = v,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _SortToggle(
+                    newestFirst: ref.watch(_notifSortNewestFirstProvider),
+                    onChanged: (v) {
+                      if (kDebugMode) debugPrint('updates: sort newestFirst=$v');
+                      ref.read(_notifSortNewestFirstProvider.notifier).state = v;
+                    },
+                  ),
+                ]),
+                const SizedBox(height: 8),
+Expanded(
+                  child: docs.isEmpty
+                      ? NoData(
+                          message: isSearching ? 'No matching updates' : 'No updates',
+                          asset: isSearching ? 'assets/search_projects.svg' : 'assets/no_updates.svg',
+                        )
+                      : ListView.separated(
+                          itemCount: docs.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 6),
+                          itemBuilder: (context, i) {
+                            final d = docs[i];
                   final data = d.data;
                   final title = (data['title'] as String?) ?? 'Update';
                   final body = (data['body'] as String?) ?? '';
@@ -141,7 +143,7 @@ class NotificationsList extends ConsumerWidget {
                   final notifType = data['type'] as String?; // request | financial | status | event | comment
                   // final triageStatus = data['triageStatus'] as String?; // ack | done (no longer shown)
                   final cs = Theme.of(context).colorScheme;
-                  IconData _iconForType(String? t) {
+                  IconData iconForType(String? t) {
                     switch (t) {
                       case 'financial':
                         return Icons.currency_rupee;
@@ -157,7 +159,7 @@ class NotificationsList extends ConsumerWidget {
                         return CupertinoIcons.bell_fill;
                     }
                   }
-                  final leadingIcon = _iconForType(notifType);
+                  final leadingIcon = iconForType(notifType);
                   final brightness = Theme.of(context).brightness;
                   final expanded = ref.watch(_commentExpandedProvider(d.id));
           final tile = AnimatedContainer(
@@ -177,13 +179,13 @@ class NotificationsList extends ConsumerWidget {
                       child: InkWell(
                         borderRadius: BorderRadius.circular(12),
                         onTap: () async {
+                          final navigator = Navigator.of(context);
                           if (isUnread && uid != null) {
                             if (kDebugMode) debugPrint('updates: mark read ${d.id}');
                             await updatesRepo.markAsRead(d.ref, uid: uid, targetedToUser: targetedToUser);
                           }
                           if (projectId != null) {
-                            // ignore: use_build_context_synchronously
-                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: Project(id: projectId, name: data['projectName'] ?? '', ownerId: data['ownerId'] ?? '', blockId: data['blockId'] ?? '', villageId: '', createdAt: DateTime.now(), updatedAt: DateTime.now()))));
+                            navigator.push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: Project(id: projectId, name: data['projectName'] ?? '', ownerId: data['ownerId'] ?? '', blockId: data['blockId'] ?? '', villageId: '', createdAt: DateTime.now(), updatedAt: DateTime.now()))));
                           }
                         },
                         child: Padding(
@@ -391,7 +393,9 @@ class NotificationsList extends ConsumerWidget {
                                   if (isUnread && uid != null) {
                                     await updatesRepo.markAsRead(d.ref, uid: uid, targetedToUser: targetedToUser);
                                   }
-                                  Navigator.of(context).push(
+                                  if (!context.mounted) return;
+                                  final navigator = Navigator.of(context);
+                                  await navigator.push(
                                     MaterialPageRoute(
                                       builder: (_) => ProjectDetailPage(
                                         project: Project(
@@ -479,14 +483,14 @@ class NotificationsList extends ConsumerWidget {
     return updatesStream.when(
       loading: () {
         if (cachedDocs.isNotEmpty) {
-          return _buildList(_applyClientFilters(cachedDocs));
+          return buildList(applyClientFilters(cachedDocs));
         }
         return const Center(child: CircularProgressIndicator());
       },
       error: (e, st) {
         // Show cache if present; otherwise soft empty state
         if (cachedDocs.isNotEmpty) {
-          return _buildList(_applyClientFilters(cachedDocs));
+          return buildList(applyClientFilters(cachedDocs));
         }
         // If Firestore requires an index, log the URL to console for quick creation
         try {
@@ -498,11 +502,8 @@ class NotificationsList extends ConsumerWidget {
             print('Firestore index required (Updates): $url');
           }
         } catch (_) {}
-        return const NoData(
-          title: 'Can\'t load updates',
-          message: 'Please check your connection or try again shortly.',
-          asset: 'assets/server_down.svg',
-        );
+        // Keep UI (search/actions) visible even on error by showing an empty results area
+        return buildList(const <_NotifDoc>[]);
       },
       data: (snap) {
         final docsSnap = snap.docs;
@@ -518,8 +519,8 @@ class NotificationsList extends ConsumerWidget {
         final wrapped = docsSnap
             .map((d) => _NotifDoc(d.id, d.data(), d.reference))
             .toList(growable: false);
-        final filtered = _applyClientFilters(wrapped);
-        return _buildList(filtered);
+        final filtered = applyClientFilters(wrapped);
+        return buildList(filtered);
       },
     );
   }

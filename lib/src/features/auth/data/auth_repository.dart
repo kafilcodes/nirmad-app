@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../../data/auth/session_service.dart';
 import '../../../services/functions_service.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -20,7 +21,14 @@ class AuthRepository {
   final SharedPreferences _prefs;
 
   late final SessionService _session = SessionService(_auth, _db);
-  AuthRepository(this._auth, this._db, this._prefs);
+  AuthRepository(this._auth, this._db, this._prefs) {
+    // Ensure persistent login on Web (LOCAL persistence). Mobile already persists sessions by default.
+    if (kIsWeb) {
+      // Best-effort: do not throw if not supported in some environments
+      // ignore: unawaited_futures
+      _auth.setPersistence(fb.Persistence.LOCAL).catchError((_) {});
+    }
+  }
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sessionWatchSub;
   String? _currentWatchedSessionId;
@@ -105,11 +113,13 @@ class AuthRepository {
         final id = await _ensureDeviceSessionId();
         final ok = await _session.canUseCurrentDevice(id);
         if (!ok) {
-          // Revert sign-in and surface an error
+          // Another active session: revert and surface conflict
           await _auth.signOut();
           throw StateError('This account is already active on another device. Please log out there first.');
         }
+        // Safe to claim session
         await _session.registerSession(id);
+        _startSessionWatch(id);
       } catch (e) {
         rethrow;
       }
@@ -133,8 +143,8 @@ class AuthRepository {
   await _auth.signOut();
     await _prefs.remove('auth_cache');
     // Clear per-user local drafts and caches
-    try { await _prefs.remove('profile_draft'); } catch (_) {}
-    try { await _prefs.remove('project_creation_draft'); } catch (_) {}
+  try { await _prefs.remove('profile_draft'); } catch (_) {}
+  try { await _prefs.remove('project_creation_draft'); } catch (_) {}
   // Riverpod provider invalidations (filters/search) executed via container if available
   // This repository does not own a ref, so UI layers should listen to authStateProvider null and clear UI state.
   }

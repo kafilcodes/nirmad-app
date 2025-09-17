@@ -1,7 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import '../../features/projects/domain/project.dart';
+import '../utils/date_parse.dart';
 
 class ProjectCard extends StatelessWidget {
   final Project project;
@@ -14,8 +14,8 @@ class ProjectCard extends StatelessWidget {
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [
-        cs.primary.withValues(alpha: 0.20),
-        cs.primaryContainer.withValues(alpha: 0.60),
+        cs.primary.withValues(alpha: 0.55),
+        cs.primary.withValues(alpha: 0.85),
       ],
     );
     return InkWell(
@@ -23,17 +23,17 @@ class ProjectCard extends StatelessWidget {
       child: Card(
         elevation: 0,
         clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         child: Ink(
           decoration: BoxDecoration(gradient: gradient),
           child: Padding(
-            padding: const EdgeInsets.all(12.0),
+            padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 10.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Icon(CupertinoIcons.building_2_fill, color: cs.onPrimaryContainer, size: 38),
-                const SizedBox(height: 10),
+                Icon(CupertinoIcons.building_2_fill, color: cs.onPrimaryContainer, size: 34),
+                const SizedBox(height: 8),
                 Text(
                   project.name,
                   style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
@@ -45,17 +45,9 @@ class ProjectCard extends StatelessWidget {
                 Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70), overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 10),
                 _buildChips(context),
-                const SizedBox(height: 8),
-                // Centered location row (moved from footer)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(CupertinoIcons.location_solid, size: 14, color: Colors.white70),
-                    const SizedBox(width: 4),
-                    Flexible(child: Text(project.blockId, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70), overflow: TextOverflow.ellipsis)),
-                  ],
-                ),
+                const SizedBox(height: 6),
+                // Location hierarchy (Block → GP → Gram)
+                _LocationHierarchy(project: project),
               ],
             ),
           ),
@@ -88,6 +80,60 @@ class ProjectCard extends StatelessWidget {
         if (deadlineVal != null)
           StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', inverted: true, color: isLate ? Colors.redAccent : Colors.white70, icon: CupertinoIcons.calendar),
       ],
+    );
+  }
+}
+
+class _LocationHierarchy extends StatelessWidget {
+  final Project project;
+  const _LocationHierarchy({required this.project});
+  @override
+  Widget build(BuildContext context) {
+    final gp = project.preliminaryDescription.gramPanchayat?.trim();
+    final gram = project.villageId.trim().isEmpty ? null : project.villageId.trim();
+    final entries = <_LocPart>[
+      _LocPart(icon: CupertinoIcons.location_solid, label: project.blockId),
+      if (gp != null && gp.isNotEmpty) _LocPart(icon: CupertinoIcons.building_2_fill, label: gp),
+      if (gram != null && gram.isNotEmpty) _LocPart(icon: CupertinoIcons.house_fill, label: gram),
+    ];
+    return LayoutBuilder(builder: (context, c) {
+      final maxPer = c.maxWidth;
+      return Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        alignment: WrapAlignment.center,
+        children: entries.map((e) => ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxPer / 1.2),
+          child: _LocPill(icon: e.icon, label: e.label),
+        )).toList(),
+      );
+    });
+  }
+}
+
+class _LocPart { final IconData icon; final String label; const _LocPart({required this.icon, required this.label}); }
+
+class _LocPill extends StatelessWidget {
+  final IconData icon; final String label; const _LocPill({required this.icon, required this.label});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: Colors.white),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ]),
     );
   }
 }
@@ -130,49 +176,15 @@ class StatusChip extends StatelessWidget {
 
 String _fmtDeadline(dynamic v) {
   if (v == null) return '';
-  try {
-    if (v is Timestamp) {
-      final d = v.toDate();
-      return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
-    }
-    if (v is DateTime) {
-      return '${v.year}-${v.month.toString().padLeft(2,'0')}-${v.day.toString().padLeft(2,'0')}';
-    }
-    if (v is String) {
-      final d = DateTime.tryParse(v);
-      if (d != null) return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
-    }
-    if (v is Map && v['seconds'] != null) {
-      final secs = (v['seconds'] as num).toInt();
-      final d = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
-      return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
-    }
-  } catch (_) {}
-  return '';
+  final d = parseAnyDate(v);
+  if (d == null) return '';
+  return fmtYmd(d);
 }
 
 bool _isLate(dynamic v) {
-  try {
-    if (v == null) {
-      return false;
-    }
-    DateTime? d;
-    if (v is Timestamp) {
-      d = v.toDate();
-    } else if (v is DateTime) {
-      d = v;
-    } else if (v is String) {
-      d = DateTime.tryParse(v);
-    }
-    else if (v is Map && v['seconds'] != null) {
-      final secs = (v['seconds'] as num).toInt();
-      d = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
-    }
-    if (d == null) {
-      return false;
-    }
-    final today = DateTime.now();
-    final startOfToday = DateTime(today.year, today.month, today.day);
-    return d.isBefore(startOfToday);
-  } catch (_) { return false; }
+  final d = parseAnyDate(v);
+  if (d == null) return false;
+  final today = DateTime.now();
+  final startOfToday = DateTime(today.year, today.month, today.day);
+  return d.isBefore(startOfToday);
 }

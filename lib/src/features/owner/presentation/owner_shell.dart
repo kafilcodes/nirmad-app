@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:nirmadapp/src/shared/widgets/required_label.dart';
+import '../../../shared/utils/date_parse.dart';
+import '../../../shared/widgets/required_label.dart';
 import 'package:flutter/cupertino.dart';
 // SidebarX removed; using cupertino_sidebar via AppSidebar
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 // Theme toggle moved to Profile page per spec
 import '../../../shared/widgets/app_sidebar.dart';
+import 'package:nirmadapp/src/shared/utils/amount_in_words.dart';
+import '../../../shared/widgets/project_card.dart';
 import '../../projects/data/project_repository.dart';
 import '../../projects/presentation/project_detail_page.dart';
 // geo_providers kept for other views but not used in Create form anymore
@@ -15,12 +18,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:nirmadapp/src/shared/widgets/app_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_storage/firebase_storage.dart' as fs;
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
+// Removed unused import: app_wizard_stepper
 import 'dart:ui' as ui;
 // Image compression utility
 import '../../../utils/image_utils.dart' as image_utils;
@@ -59,12 +63,11 @@ class _SchemeItem {
 final projectsSearchQueryProvider = StateProvider.autoDispose<String>((ref) => '');
 final projectsGridViewProvider = StateProvider<bool>((ref) {
   try {
-    final prefs = ref.read(sharedPrefsProvider);
-    return prefs.getBool('projectsGrid') ?? true;
+    return ref.read(sharedPrefsProvider).getBool('projectsGrid') ?? true;
   } catch (_) {
     return true;
   }
-}); // true=grid, false=list
+});
 
 class OwnerShell extends ConsumerStatefulWidget {
   const OwnerShell({super.key});
@@ -73,58 +76,44 @@ class OwnerShell extends ConsumerStatefulWidget {
 }
 
 class _OwnerShellState extends ConsumerState<OwnerShell> {
-  int _index = 0;
   bool _sidebarOpen = true;
   bool _autoManageSidebar = true;
-  // Success overlay state (after creating a project)
-  Project? _successProject;
+  int _index = 0;
+  Project? _successProject; // shown in overlay after creation
   String? _successProjectCode;
 
   @override
-  void initState() {
-    super.initState();
-    // Default sidebar behavior by screen size: collapsed on phones/small web, open on large screens
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final w = MediaQuery.of(context).size.width;
-      final shouldOpen = w >= 900; // breakpoint for tablets/desktops
-      if (_sidebarOpen != shouldOpen && mounted) {
-        setState(() => _sidebarOpen = shouldOpen);
-      }
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-  // Hard guard: only Project Owners may access this shell
-  final userAsync = ref.watch(authStateProvider);
-  if (!userAsync.hasValue) {
-    return const Scaffold(body: Center(child: CircularProgressIndicator()));
-  }
-  final user = userAsync.value;
-  if (user == null) {
-    return const Scaffold(body: Center(child: CircularProgressIndicator()));
-  }
-  if (user.role != UserRole.projectOwner) {
-    // Defer navigation to the next frame to avoid build-time setState
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
-        context.go('/dashboard');
-      }
-    });
-    return const Scaffold(body: Center(child: CircularProgressIndicator()));
-  }
-  // Adapt sidebar when resizing, unless user has manually toggled it
-  final screenW = MediaQuery.of(context).size.width;
-  final desiredOpen = screenW >= 900;
-  final overlaySidebar = screenW < 900; // use overlay on phones/tablets to avoid content squeeze
-  if (_autoManageSidebar && _sidebarOpen != desiredOpen) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      setState(() => _sidebarOpen = desiredOpen);
-    });
-  }
-  final pages = <Widget>[
-    _ProjectsPage(
+    // Hard guard: only Project Owners may access this shell
+    final userAsync = ref.watch(authStateProvider);
+    if (!userAsync.hasValue) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    final user = userAsync.value;
+    if (user == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (user.role != UserRole.projectOwner) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+          context.go('/dashboard');
+        }
+      });
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final screenW = MediaQuery.of(context).size.width;
+    final desiredOpen = screenW >= 900;
+    final overlaySidebar = screenW < 900;
+    if (_autoManageSidebar && _sidebarOpen != desiredOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _sidebarOpen = desiredOpen);
+      });
+    }
+
+    final pages = <Widget>[
+      _ProjectsPage(
         openDrawer: null,
         onOpenProject: (Project p) {
           Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: p)));
@@ -133,23 +122,22 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
           setState(() => _index = 1);
         },
       ),
-    _ProjectCreatePage(
-      onCreated: (project, {String? projectCode}) {
-        setState(() {
-          _successProject = project;
-          _successProjectCode = projectCode;
-        });
-      },
-    ),
-  _NotificationsPage(openDrawer: null),
-    const ProfilePage(),
+      _ProjectCreatePage(
+        onCreated: (project, {String? projectCode}) {
+          setState(() {
+            _successProject = project;
+            _successProjectCode = projectCode;
+          });
+        },
+      ),
+      _NotificationsPage(openDrawer: null),
+      const ProfilePage(),
     ];
-  final titles = ['My Projects', 'Create Project', 'Updates', 'Profile'];
+    final titles = ['My Projects', 'Create Project', 'Updates', 'Profile'];
 
     return Scaffold(
       body: Stack(
         children: [
-          // Main content always takes full width; sidebar overlays when on small screens
           Row(
             children: [
               if (!overlaySidebar)
@@ -169,7 +157,6 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                         )
                       : const SizedBox.shrink(),
                 ),
-              // Removed sidebar divider for flat, seamless design
               Expanded(
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 250),
@@ -184,12 +171,11 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                           title: titles[_index],
                           onMenu: () => setState(() {
                             _sidebarOpen = !_sidebarOpen;
-                            _autoManageSidebar = false; // user preference takes over
+                            _autoManageSidebar = false;
                           }),
                           child: pages[_index],
                         ),
                       ),
-                      // Project created success overlay
                       if (_successProject != null)
                         Positioned.fill(
                           child: Material(
@@ -244,34 +230,18 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                                             onPressed: () => setState(() => _successProject = null),
                                             icon: const Icon(CupertinoIcons.xmark_circle),
                                             label: const Text('Close'),
-                                            style: OutlinedButton.styleFrom(
-                                              alignment: Alignment.center,
-                                              textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                                    height: 1.0,
-                                                    leadingDistribution: TextLeadingDistribution.even,
-                                                    textBaseline: TextBaseline.alphabetic,
-                                                  ),
-                                            ),
                                           );
                                           final viewBtn = FilledButton.icon(
                                             onPressed: () {
                                               final p = _successProject!;
                                               setState(() {
                                                 _successProject = null;
-                                                _index = 0; // go to My Projects tab
+                                                _index = 0;
                                               });
                                               Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProjectDetailPage(project: p)));
                                             },
                                             icon: const Icon(CupertinoIcons.arrow_right_circle_fill),
                                             label: const Text('View Project'),
-                                            style: FilledButton.styleFrom(
-                                              alignment: Alignment.center,
-                                              textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                                    height: 1.0,
-                                                    leadingDistribution: TextLeadingDistribution.even,
-                                                    textBaseline: TextBaseline.alphabetic,
-                                                  ),
-                                            ),
                                           );
                                           if (wide) {
                                             return Row(
@@ -292,18 +262,19 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
                             ),
                           ),
                         ),
-                      // Details overlay removed: we now navigate to a dedicated page
                     ],
                   ),
                 ),
               ),
             ],
           ),
-          // Backdrop below, sidebar above
           if (overlaySidebar && _sidebarOpen)
             Positioned.fill(
               child: GestureDetector(
-                onTap: () => setState(() => _sidebarOpen = false),
+                onTap: () {
+                  FocusScope.of(context).unfocus();
+                  setState(() => _sidebarOpen = false);
+                },
                 child: Container(color: Colors.black.withValues(alpha: 0.32)),
               ),
             ),
@@ -316,38 +287,19 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
               bottom: 0,
               width: (screenW * 0.85).clamp(260, 320).toDouble(),
               child: SafeArea(
-                child: Shortcuts(
-                  shortcuts: <LogicalKeySet, Intent>{
-                    LogicalKeySet(LogicalKeyboardKey.escape): DismissIntent(),
-                  },
-                  child: Actions(
-                    actions: {
-                      DismissIntent: CallbackAction<DismissIntent>(
-                        onInvoke: (intent) {
-                          if (_sidebarOpen) setState(() => _sidebarOpen = false);
-                          return null;
-                        },
-                      ),
+                child: Material(
+                  elevation: 0,
+                  borderRadius: BorderRadius.circular(16),
+                  clipBehavior: Clip.antiAlias,
+                  child: AppSidebar(
+                    selectedIndex: _index,
+                    onSelect: (i) {
+                      FocusScope.of(context).unfocus();
+                      setState(() {
+                        _index = i;
+                        _sidebarOpen = false;
+                      });
                     },
-                    child: FocusScope(
-                      canRequestFocus: true,
-                      autofocus: true,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12.0),
-                        child: Material(
-                          elevation: 0,
-                          borderRadius: BorderRadius.circular(16),
-                          clipBehavior: Clip.antiAlias,
-                          child: AppSidebar(
-                            selectedIndex: _index,
-                            onSelect: (i) => setState(() {
-                              _index = i;
-                              _sidebarOpen = false; // auto close on selection on small screens
-                            }),
-                          ),
-                        ),
-                      ),
-                    ),
                   ),
                 ),
               ),
@@ -365,7 +317,7 @@ class _NotificationsPage extends ConsumerWidget {
   final VoidCallback? openDrawer;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-  return const Scaffold(body: NotificationsList());
+    return const Scaffold(body: NotificationsList());
   }
 }
 
@@ -377,318 +329,308 @@ class _ProjectsPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-  final cached = ref.watch(ownerProjectsDiskFirstProvider);
-  final projectsAsync = ref.watch(ownerProjectsProvider);
-  final query = ref.watch(projectsSearchQueryProvider);
-  return Scaffold(
-    body: SafeArea(
-      child: cached.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) {
-          // Log Firestore index URL (if present) to console for copy-paste and hide from UI
-          try {
-            final msg = e.toString();
-            final m = RegExp(r'https://console\.firebase\.google\.com[^\s\)]*').firstMatch(msg);
-            final url = m?.group(0);
-            if (url != null) {
-              // ignore: avoid_print
-              print('Firestore index required (Owner Projects): $url');
-            }
-          } catch (_) {}
-          return const NoData(
-            title: 'Something went wrong',
-            message: 'We couldn\'t load your projects right now.',
-            asset: 'assets/server_down.svg',
-          );
-        },
-        data: (cachedProjects) {
-          // If realtime stream has data, prefer it; else show cached
-          final allProjects = projectsAsync.asData?.value ?? cachedProjects;
-          final hadAny = allProjects.isNotEmpty;
-          final q = query.trim().toLowerCase();
-          var projects = allProjects;
-          if (q.isNotEmpty) {
-            projects = allProjects.where((p) {
-              final inId = p.id.toLowerCase().contains(q);
-              final inName = p.name.toLowerCase().contains(q);
-              final inAddr = (p.address ?? '').toLowerCase().contains(q);
-              final ld = p.landDetails;
-              final inBlock = ((ld['blockName'] ?? '') as String).toLowerCase().contains(q);
-              final inVillage = ((ld['villageName'] ?? '') as String).toLowerCase().contains(q);
-              return inId || inName || inAddr || inBlock || inVillage;
-            }).toList();
+    final projectsAsync = ref.watch(ownerProjectsProvider);
+    final cachedProjects = ref.watch(ownerProjectsDiskFirstProvider).maybeWhen(data: (v) => v, orElse: () => const <Project>[]);
+    final query = ref.watch(projectsSearchQueryProvider);
+
+    final allProjects = projectsAsync.asData?.value ?? cachedProjects;
+    final hadAny = allProjects.isNotEmpty;
+    final q = query.trim().toLowerCase();
+    var projects = allProjects;
+    if (q.isNotEmpty) {
+      projects = allProjects.where((p) {
+        final inId = p.id.toLowerCase().contains(q);
+        final inName = p.name.toLowerCase().contains(q);
+        final inAddr = (p.address ?? '').toLowerCase().contains(q);
+        final ld = p.landDetails;
+        final inBlock = ((ld['blockName'] ?? '') as String).toLowerCase().contains(q);
+        final inVillage = ((ld['villageName'] ?? '') as String).toLowerCase().contains(q);
+        return inId || inName || inAddr || inBlock || inVillage;
+      }).toList();
+    }
+    if (!hadAny && projectsAsync.isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (!hadAny) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const NoData(
+              title: 'No projects yet',
+              message: 'Create your first project to get started.',
+              asset: 'assets/no_projects.svg',
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: onCreateProject,
+              icon: const Icon(CupertinoIcons.add_circled),
+              label: const Text('Create Project'),
+            )
+          ],
+        ),
+      );
+    }
+    final total = projects.length;
+    final completed = projects.where((p) => p.status == ProjectStatus.completed).length;
+    final cancelled = projects.where((p) => p.status == ProjectStatus.cancelled).length;
+    final inProgress = total - completed - cancelled;
+
+    return LayoutBuilder(builder: (context, c) {
+      final isWide = c.maxWidth > 800;
+      final gap = isWide ? 12.0 : 8.0;
+      final cols = c.maxWidth > 1280 ? 4 : c.maxWidth > 960 ? 3 : c.maxWidth > 640 ? 2 : 1;
+
+      DateTime? deadlineOf(dynamic v) {
+        try {
+          if (v == null) return null;
+          if (v is Timestamp) return v.toDate();
+          if (v is DateTime) return v;
+          if (v is String) return DateTime.tryParse(v);
+          if (v is Map && v['seconds'] != null) {
+            final secs = (v['seconds'] as num).toInt();
+            return DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
           }
-          if (!hadAny) {
-            return const Center(
-              child: NoData(
-                title: 'No projects yet',
-                message: 'Create your first project to get started.',
-                asset: 'assets/no_projects.svg',
+        } catch (_) {}
+        return null;
+      }
+      int byUrgency(Project a, Project b) {
+        final ad = deadlineOf(a.financials['deadline']);
+        final bd = deadlineOf(b.financials['deadline']);
+        if (ad == null && bd == null) return b.updatedAt.compareTo(a.updatedAt);
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return ad.compareTo(bd);
+      }
+      final today = DateTime.now();
+      final startOfToday = DateTime(today.year, today.month, today.day);
+      final lateProjects = <Project>[];
+      final pendingProjects = <Project>[];
+      for (final p in projects) {
+        if (p.status == ProjectStatus.completed) continue;
+        final d = deadlineOf(p.financials['deadline']);
+        if (d != null && d.isBefore(startOfToday)) {
+          lateProjects.add(p);
+        } else {
+          pendingProjects.add(p);
+        }
+      }
+      lateProjects.sort(byUrgency);
+      pendingProjects.sort(byUrgency);
+
+      String greetFor(DateTime now) {
+        final ist = now.toUtc().add(const Duration(hours: 5, minutes: 30));
+        final h = ist.hour;
+        if (h < 12) return 'Good Morning';
+        if (h < 17) return 'Good Afternoon';
+        return 'Good Evening';
+      }
+      String firstNameFrom(String? displayName, String email) {
+        final n = (displayName ?? '').trim();
+        if (n.isNotEmpty) {
+          final parts = n.split(' ');
+          return parts.first;
+        }
+        final local = email.split('@').first;
+        return local;
+      }
+      final prof = ref.watch(currentUserProfileProvider);
+      final greetName = firstNameFrom(prof?.displayName, prof?.email ?? '');
+      final greetingPhrase = greetFor(DateTime.now());
+
+      return CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Builder(builder: (context) {
+                  final cs = Theme.of(context).colorScheme;
+                  return Text.rich(
+                    TextSpan(children: [
+                      TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
+                      TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                    ]),
+                  );
+                }),
               ),
-            );
-          }
-          final total = projects.length;
-          final completed = projects.where((p) => p.status == ProjectStatus.completed).length;
-          final cancelled = projects.where((p) => p.status == ProjectStatus.cancelled).length;
-          // Treat any non-completed/non-cancelled as in-progress for metrics (personalized expectation)
-          final inProgress = total - completed - cancelled;
-          // chart removed; percentage computation no longer needed
-          return LayoutBuilder(builder: (context, c) {
-            final isWide = c.maxWidth > 800;
-            final gap = isWide ? 12.0 : 8.0;
-            final cols = c.maxWidth > 1280 ? 4 : c.maxWidth > 960 ? 3 : c.maxWidth > 640 ? 2 : 1;
-
-            DateTime? deadlineOf(dynamic v) {
-              try {
-                if (v == null) return null;
-                if (v is Timestamp) return v.toDate();
-                if (v is DateTime) return v;
-                if (v is String) return DateTime.tryParse(v);
-                if (v is Map && v['seconds'] != null) {
-                  final secs = (v['seconds'] as num).toInt();
-                  return DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
-                }
-              } catch (_) {}
-              return null;
-            }
-            int byUrgency(Project a, Project b) {
-              final ad = deadlineOf(a.financials['deadline']);
-              final bd = deadlineOf(b.financials['deadline']);
-              if (ad == null && bd == null) return b.updatedAt.compareTo(a.updatedAt); // recent first
-              if (ad == null) return 1; // nulls last
-              if (bd == null) return -1;
-              return ad.compareTo(bd); // earlier first
-            }
-            final today = DateTime.now();
-            final startOfToday = DateTime(today.year, today.month, today.day);
-            final lateProjects = <Project>[];
-            final pendingProjects = <Project>[];
-            for (final p in projects) {
-              if (p.status == ProjectStatus.completed) continue;
-              final d = deadlineOf(p.financials['deadline']);
-              if (d != null && d.isBefore(startOfToday)) {
-                lateProjects.add(p);
-              } else {
-                pendingProjects.add(p);
-              }
-            }
-            lateProjects.sort(byUrgency);
-            pendingProjects.sort(byUrgency);
-
-            String greetFor(DateTime now) {
-              // Convert to IST (UTC+5:30)
-              final ist = now.toUtc().add(const Duration(hours: 5, minutes: 30));
-              final h = ist.hour;
-              if (h < 12) return 'Good Morning';
-              if (h < 17) return 'Good Afternoon';
-              return 'Good Evening';
-            }
-            String firstNameFrom(String? displayName, String email) {
-              final n = (displayName ?? '').trim();
-              if (n.isNotEmpty) {
-                final parts = n.split(' ');
-                return parts.first;
-              }
-              final local = email.split('@').first;
-              return local;
-            }
-            final prof = ref.watch(currentUserProfileProvider);
-            final greetName = firstNameFrom(prof?.displayName, prof?.email ?? '');
-            final greetingPhrase = greetFor(DateTime.now());
-
-            return CustomScrollView(
-              slivers: [
-                // Greeting above Your Projects (mobile-first spacing)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Builder(builder: (context) {
-                        final cs = Theme.of(context).colorScheme;
-                        return Text.rich(
-                          TextSpan(children: [
-                            TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
-                            TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                          ]),
-                        );
-                      }),
-                    ),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      children: [
-                        // Header row: search + view toggle
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 680),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: _ProjectsSearchBar(onChanged: (q) {
-                                    ref.read(projectsSearchQueryProvider.notifier).state = q;
-                                  }),
-                                ),
-                                const SizedBox(width: 8),
-                                SegmentedButton<bool>(
-                                  segments: const [
-                                    ButtonSegment(value: true, icon: Icon(CupertinoIcons.square_grid_2x2)),
-                                    ButtonSegment(value: false, icon: Icon(CupertinoIcons.list_bullet)),
-                                  ],
-                                  selected: {ref.watch(projectsGridViewProvider)},
-                                  onSelectionChanged: (s) {
-                                    final v = s.first;
-                                    ref.read(projectsGridViewProvider.notifier).state = v;
-                                    try { ref.read(sharedPrefsProvider).setBool('projectsGrid', v); } catch (_) {}
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const Gap(12),
-                        LayoutBuilder(builder: (context, cc) {
-                          final compact = cc.maxWidth < 720;
-                          final metrics = [
-                            _MetricData('Total', total, CupertinoIcons.folder, Colors.blue),
-                            _MetricData('In Progress', inProgress, CupertinoIcons.arrow_2_circlepath, Colors.orange),
-                            _MetricData('Completed', completed, CupertinoIcons.check_mark_circled, Colors.green),
-                          ];
-                          return Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: [
-                              for (final m in metrics)
-                                SizedBox(
-                                  width: compact ? (cc.maxWidth) : (cc.maxWidth - 24) / 3,
-                                  child: _metricCard(context, m),
-                                ),
-                            ],
-                          );
-                        }),
-                        const Gap(12),
-                        // Pie chart removed per spec to keep the page focused and clean.
-                      ],
-                    ),
-                  ),
-                ),
-                // No-results state for search without blanking the whole page
-                if (q.isNotEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: NoData(
-                        title: 'No projects found',
-                        message: 'Try a different search term or clear the filter.',
-                        asset: 'assets/search_projects.svg',
-                      ),
-                    ),
-                  ),
-                if (q.isEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: NoData(
-                        title: 'No projects',
-                        message: 'Projects will appear here once created.',
-                        asset: 'assets/no_projects.svg',
-                      ),
-                    ),
-                  ),
-                if (lateProjects.isNotEmpty)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Late (${lateProjects.length})', style: Theme.of(context).textTheme.titleMedium),
-                      ),
-                    ),
-                  ),
-                if (lateProjects.isNotEmpty)
-                  SliverPadding(
-                    padding: const EdgeInsets.all(12.0),
-                    sliver: ref.watch(projectsGridViewProvider)
-                        ? SliverGrid(
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: cols,
-                              crossAxisSpacing: gap,
-                              mainAxisSpacing: gap,
-                              // Slightly taller cards reduce vertical overflow risk on small widths
-                              childAspectRatio: 1.2,
-                            ),
-                            delegate: SliverChildBuilderDelegate(
-                              (context, index) {
-                                final p = lateProjects[index];
-                                return _ProjectCard(project: p, onOpen: () => onOpenProject(p));
-                              },
-                              childCount: lateProjects.length,
-                            ),
-                          )
-                        : SliverList.builder(
-                            itemBuilder: (context, index) {
-                              final p = lateProjects[index];
-                              return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
-                            },
-                            itemCount: lateProjects.length,
-                          ),
-                  ),
-                if (pendingProjects.isNotEmpty)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 680),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text('Your projects (${pendingProjects.length})', style: Theme.of(context).textTheme.titleMedium),
+                          Expanded(
+                            child: _ProjectsSearchBar(onChanged: (q) {
+                              ref.read(projectsSearchQueryProvider.notifier).state = q;
+                            }),
+                          ),
+                          const SizedBox(width: 8),
+                          SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: true, icon: Icon(CupertinoIcons.square_grid_2x2)),
+                              ButtonSegment(value: false, icon: Icon(CupertinoIcons.list_bullet)),
+                            ],
+                            selected: {ref.watch(projectsGridViewProvider)},
+                            onSelectionChanged: (s) {
+                              final v = s.first;
+                              ref.read(projectsGridViewProvider.notifier).state = v;
+                              try { ref.read(sharedPrefsProvider).setBool('projectsGrid', v); } catch (_) {}
+                            },
                           ),
                         ],
                       ),
                     ),
                   ),
-                if (pendingProjects.isNotEmpty)
-                  SliverPadding(
-                    padding: const EdgeInsets.all(12.0),
-                    sliver: ref.watch(projectsGridViewProvider)
-                        ? SliverGrid(
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: cols,
-                              crossAxisSpacing: gap,
-                              mainAxisSpacing: gap,
-                              // Slightly taller cards reduce vertical overflow risk on small widths
-                              childAspectRatio: 1.2,
-                            ),
-                            delegate: SliverChildBuilderDelegate(
-                              (context, index) {
-                                final p = pendingProjects[index];
-                                return _ProjectCard(project: p, onOpen: () => onOpenProject(p));
-                              },
-                              childCount: pendingProjects.length,
-                            ),
-                          )
-                        : SliverList.builder(
-                            itemBuilder: (context, index) {
-                              final p = pendingProjects[index];
-                              return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
-                            },
-                            itemCount: pendingProjects.length,
+                  const Gap(12),
+                  LayoutBuilder(builder: (context, cc) {
+                    final compact = cc.maxWidth < 720;
+                    final metrics = [
+                      _MetricData('Total', total, CupertinoIcons.folder, Colors.blue),
+                      _MetricData('In Progress', inProgress, CupertinoIcons.arrow_2_circlepath, Colors.orange),
+                      _MetricData('Completed', completed, CupertinoIcons.check_mark_circled, Colors.green),
+                    ];
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final m in metrics)
+                          SizedBox(
+                            width: compact ? (cc.maxWidth) : (cc.maxWidth - 24) / 3,
+                            child: _metricCard(context, m),
                           ),
-                  ),
-              ],
-            );
-          });
-        },
-      ),
-    ),
-  );
+                      ],
+                    );
+                  }),
+                  const Gap(12),
+                ],
+              ),
+            ),
+          ),
+          if (q.isNotEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: NoData(
+                  title: 'No projects found',
+                  message: 'Try a different search term or clear the filter.',
+                  asset: 'assets/search_projects.svg',
+                ),
+              ),
+            ),
+          if (q.isEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const NoData(
+                      title: 'No projects',
+                      message: 'Projects will appear here once created.',
+                      asset: 'assets/no_projects.svg',
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: onCreateProject,
+                      icon: const Icon(CupertinoIcons.add_circled),
+                      label: const Text('Create Project'),
+                    )
+                  ],
+                ),
+              ),
+            ),
+          if (lateProjects.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Late (${lateProjects.length})', style: Theme.of(context).textTheme.titleMedium),
+                ),
+              ),
+            ),
+          if (lateProjects.isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.all(12.0),
+              sliver: ref.watch(projectsGridViewProvider)
+                  ? SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: cols,
+                        crossAxisSpacing: gap,
+                        mainAxisSpacing: gap,
+                        childAspectRatio: 1.2,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final p = lateProjects[index];
+                          return ProjectCard(project: p, onOpen: () => onOpenProject(p));
+                        },
+                        childCount: lateProjects.length,
+                      ),
+                    )
+                  : SliverList.builder(
+                      itemBuilder: (context, index) {
+                        final p = lateProjects[index];
+                        return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
+                      },
+                      itemCount: lateProjects.length,
+                    ),
+            ),
+          if (pendingProjects.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Your projects (${pendingProjects.length})', style: Theme.of(context).textTheme.titleMedium),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (pendingProjects.isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.all(12.0),
+              sliver: ref.watch(projectsGridViewProvider)
+                  ? SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: cols,
+                        crossAxisSpacing: gap,
+                        mainAxisSpacing: gap,
+                        childAspectRatio: 1.2,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                        final p = pendingProjects[index];
+                        return ProjectCard(project: p, onOpen: () => onOpenProject(p));
+                        },
+                        childCount: pendingProjects.length,
+                      ),
+                    )
+                  : SliverList.builder(
+                      itemBuilder: (context, index) {
+                        final p = pendingProjects[index];
+                        return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
+                      },
+                      itemCount: pendingProjects.length,
+                    ),
+            ),
+        ],
+      );
+    });
   }
-
 }
 
 class _MetricData {
@@ -736,6 +678,8 @@ class _ProjectCreatePage extends ConsumerStatefulWidget {
 }
 
 class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
+  final _scrollController = ScrollController();
+  final _topAnchorKey = GlobalKey();
   final _formKey = GlobalKey<FormState>();
   // Focus nodes for validation autofocus
   final _fnName = FocusNode();
@@ -757,6 +701,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   final _fnAccountNumber = FocusNode();
   final _fnBranch = FocusNode();
   final _fnIFSC = FocusNode();
+  final _fnAccountHolder = FocusNode();
+  final _fnAadhaar = FocusNode();
   final _nameCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
@@ -802,6 +748,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   final _branchCtrl = TextEditingController();
   final _ifscCtrl = TextEditingController();
   final _bankNameCtrl = TextEditingController();
+  final _accountHolderCtrl = TextEditingController();
+  final _aadhaarCtrl = TextEditingController();
   String? _selectedBankName;
   // Optional installments visibility
   bool _showInstallment2 = false;
@@ -814,6 +762,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   // New: Project deadline
   final _deadlineCtrl = TextEditingController();
   WorkStage? _selectedWorkStage;
+
+  // Collapsible flags for each major section in the Stepper
+  // Collapsible flags removed as sections are always expanded in this design
   ApramStatus? _selectedApramStatus;
   String? _selectedGramPanchayatName;
   int _currentStep = 0;
@@ -826,6 +777,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   // Section 2 specific files
   final _techApprovalDoc = <XFile>[]; // allow max 1
   final _techApprovalPhotos = <XFile>[]; // allow up to 3, <=7MB each
+
+  // Helpers (scoped to state) defined earlier in build or shared area
   final _adminApprovalDocs = <XFile>[]; // min 1 required
   // Section 4 categorized work documents
   final _mbDocs = <XFile>[]; // Measurement Books
@@ -835,7 +788,10 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   // Offline draft media store
   DraftMediaStore? _mediaStore;
   final _mapKey = GlobalKey();
-  final MapController _mapController = MapController();
+final MapController _mapController = MapController();
+  // Map drag UX: disabled by default to avoid swallowing vertical scroll; short-lived enable on demand
+  bool _mapDragEnabled = false;
+  Timer? _mapDragTimer;
   bool _saving = false;
   // Upload progress state
   int _totalUploads = 0;
@@ -902,6 +858,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
 
   @override
   void dispose() {
+    _mapDragTimer?.cancel();
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _addressCtrl.dispose();
@@ -944,6 +901,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     _accountNumberCtrl.dispose();
     _branchCtrl.dispose();
     _ifscCtrl.dispose();
+  _accountHolderCtrl.dispose();
+  _aadhaarCtrl.dispose();
   _bankNameCtrl.dispose();
   _startDateCtrl.dispose();
   _endDateCtrl.dispose();
@@ -968,23 +927,137 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     }
   }
 
+  // Check if scroll-to-top button should be shown
+  bool _shouldShowScrollToTop() {
+    if (!_scrollController.hasClients) return false;
+    return _scrollController.offset > 500; // Show after scrolling down 500px
+  }
+
+  // Mobile-first input decoration with responsive typography and vertical centering
+  InputDecoration _mobileInputDecoration(String label, {Widget? prefixIcon, Widget? suffixIcon, bool required = false}) {
+    final theme = Theme.of(context);
+    final isCompact = R.isCompact(context);
+    
+    // Responsive font sizes - smaller on mobile, larger on desktop
+    final labelStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontSize: isCompact ? 14.0 : 16.0,
+      height: 1.2, // Consistent line height for vertical centering
+    );
+    
+    final hintStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontSize: isCompact ? 14.0 : 16.0,
+      color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+      height: 1.2,
+    );
+    
+    final errorStyle = theme.textTheme.bodySmall?.copyWith(
+      fontSize: isCompact ? 12.0 : 13.0,
+      color: theme.colorScheme.error,
+    );
+    
+    final helperStyle = theme.textTheme.bodySmall?.copyWith(
+      fontSize: isCompact ? 12.0 : 13.0,
+      color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+    );
+    
+    return InputDecoration(
+      labelText: required ? '$label *' : label,
+      labelStyle: labelStyle,
+      hintStyle: hintStyle,
+      errorStyle: errorStyle,
+      helperStyle: helperStyle,
+      prefixIcon: prefixIcon,
+      suffixIcon: suffixIcon,
+      // Ensure proper vertical centering
+      alignLabelWithHint: true,
+      // Responsive content padding - more compact on mobile
+      contentPadding: EdgeInsets.symmetric(
+        horizontal: isCompact ? 12.0 : 16.0,
+        vertical: isCompact ? 12.0 : 16.0,
+      ),
+      // Consistent border styling
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8.0),
+        borderSide: BorderSide(
+          color: theme.colorScheme.outline.withValues(alpha: 0.5),
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8.0),
+        borderSide: BorderSide(
+          color: theme.colorScheme.primary,
+          width: 2.0,
+        ),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8.0),
+        borderSide: BorderSide(
+          color: theme.colorScheme.error,
+        ),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8.0),
+        borderSide: BorderSide(
+          color: theme.colorScheme.error,
+          width: 2.0,
+        ),
+      ),
+    );
+  }
+
+  // Convenience method for required fields (will replace existing _req method)
+
+  // Check if draft should be shown - only when forms have actual content
+  bool _shouldShowDraft() {
+    if (!(_didRestoreDraft || (_drafts?.hasDraft() ?? false))) {
+      return false;
+    }
+    
+    // Check if any form fields have content
+    final hasTextContent = _draftControllers.any((controller) => controller.text.trim().isNotEmpty);
+    
+    // Check if any selections have been made
+    final hasSelections = _selectedBlockId?.isNotEmpty == true ||
+        _selectedVillageName?.isNotEmpty == true ||
+        _selectedSanctioningDepartmentName?.isNotEmpty == true ||
+        _selectedSchemeName?.isNotEmpty == true ||
+        _selectedItemName?.isNotEmpty == true ||
+        _selectedPlanHeadName?.isNotEmpty == true ||
+        _selectedBankName?.isNotEmpty == true ||
+        _selectedWorkStage != null;
+    
+    // Check if location has been set
+    final hasLocation = _lat != null && _lng != null;
+    
+    // Check if any media has been added
+    final hasMedia = (_mediaStore?.list().isNotEmpty ?? false);
+    
+    return hasTextContent || hasSelections || hasLocation || hasMedia;
+  }
+
   // Responsive helpers: stack on narrow screens, two-up on wide screens
+  // Enhanced with better mobile spacing and typography
   Widget _pair(Widget left, Widget right) {
     return LayoutBuilder(builder: (context, c) {
       final narrow = c.maxWidth < 640; // phones and small tablets
+      final veryNarrow = c.maxWidth < 400; // very small phones
+      
       if (narrow) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             left,
-            const SizedBox(height: 8),
+            SizedBox(height: veryNarrow ? 12 : 10), // More spacing on very small screens
             right,
           ],
         );
       }
       return Row(children: [
         Expanded(child: left),
-        const SizedBox(width: 12),
+        const SizedBox(width: 16), // Increased spacing for better visual separation
         Expanded(child: right),
       ]);
     });
@@ -1065,8 +1138,13 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       _accountNumberCtrl,
       _branchCtrl,
       _ifscCtrl,
+  _accountHolderCtrl,
+  _aadhaarCtrl,
   _bankNameCtrl,
   ];
+    // Validation touch tracking for sanction dates
+    _technicalApprovalDateCtrl.addListener(() { if (_technicalApprovalDateCtrl.text.isNotEmpty) { _sanctionTouched.add('techDate'); setState((){}); } });
+    _adminApprovalDateCtrl.addListener(() { if (_adminApprovalDateCtrl.text.isNotEmpty) { _sanctionTouched.add('adminDate'); setState((){}); } });
     // Initialize local draft service and restore any draft
     try {
       final prefs = ref.read(sharedPrefsProvider);
@@ -1075,6 +1153,11 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     } catch (_) {
       // sharedPrefsProvider not overridden; skip drafts silently
     }
+
+    // Add scroll listener for scroll-to-top button
+    _scrollController.addListener(() {
+      setState(() {}); // Rebuild to show/hide scroll-to-top button
+    });
     // Debounced autosave on edits
     for (final c in _draftControllers) {
       c.addListener(_scheduleAutosave);
@@ -1152,6 +1235,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     _accountNumberCtrl.text = (d['accountNumber'] as String?) ?? _accountNumberCtrl.text;
     _branchCtrl.text = (d['branch'] as String?) ?? _branchCtrl.text;
     _ifscCtrl.text = (d['ifsc'] as String?) ?? _ifscCtrl.text;
+  _accountHolderCtrl.text = (d['accountHolderName'] as String?) ?? _accountHolderCtrl.text;
+  _aadhaarCtrl.text = (d['aadhaarNumber'] as String?) ?? _aadhaarCtrl.text;
     // Work
   _startDateCtrl.text = (d['workStartDate'] as String?) ?? _startDateCtrl.text;
   _endDateCtrl.text = (d['workEndDate'] as String?) ?? _endDateCtrl.text;
@@ -1246,6 +1331,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   'accountNumber': _accountNumberCtrl.text.trim(),
   'branch': _branchCtrl.text.trim(),
   'ifsc': _ifscCtrl.text.trim(),
+  'accountHolderName': _accountHolderCtrl.text.trim(),
+  'aadhaarNumber': _aadhaarCtrl.text.trim(),
   // Work
   'workStartDate': _startDateCtrl.text.trim(),
   'workEndDate': _endDateCtrl.text.trim(),
@@ -1264,11 +1351,165 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
 
   // _pickVideos removed per requirements
 
-  // Render a label with required indicator
-  InputDecoration _req(String label, {Widget? prefixIcon}) => InputDecoration(
-        label: RequiredLabel(label),
-        prefixIcon: prefixIcon,
-      );
+  // Mobile-first required field decoration with responsive typography
+  InputDecoration _req(String label, {Widget? prefixIcon, Widget? suffixIcon}) {
+    return _mobileInputDecoration(label, prefixIcon: prefixIcon, suffixIcon: suffixIcon, required: true);
+  }
+
+  // --- Sanction validation state tracking ---
+  final Set<String> _sanctionTouched = <String>{};
+  final bool _sanctionAttemptedNext = false;
+  // Preliminary validation tracking
+  final Set<String> _prelimTouched = <String>{};
+  final bool _prelimAttemptedNext = false;
+  // Allotment validation tracking
+  final Set<String> _allotTouched = <String>{};
+  final bool _allotAttemptedNext = false;
+  // Work validation tracking
+  final Set<String> _workTouched = <String>{};
+  final bool _workAttemptedNext = false;
+
+  bool _prelimFieldValid(String k) {
+    switch (k) {
+      case 'gp': return _gramPanchayatCtrl.text.trim().isNotEmpty;
+      case 'village': return (_selectedVillageName?.trim().isNotEmpty ?? false);
+      case 'sarpanchName': return _sarpanchNameCtrl.text.trim().isNotEmpty;
+      case 'sarpanchMobile': return _sarpanchMobileCtrl.text.trim().length == 10;
+      case 'secretaryName': return _secretaryNameCtrl.text.trim().isNotEmpty;
+      case 'secretaryMobile': return _secretaryMobileCtrl.text.trim().length == 10;
+      case 'subEngName': return _subEngineerNameCtrl.text.trim().isNotEmpty;
+      case 'subEngMobile': return _subEngineerMobileCtrl.text.trim().length == 10;
+    }
+    return true;
+  }
+  bool _showPrelimError(String k) => !_prelimFieldValid(k) && (_prelimAttemptedNext || _prelimTouched.contains(k));
+  Widget _prelimSuffix(String k) {
+    final valid = _prelimFieldValid(k);
+    final show = _showPrelimError(k);
+    Widget? icon;
+    if (valid) {
+      icon = Icon(CupertinoIcons.check_mark_circled_solid, key: const ValueKey('ok'), size: 20, color: Theme.of(context).colorScheme.primary);
+    } else if (show) {
+      icon = const Icon(Icons.error_outline, key: ValueKey('err'), size: 20, color: Colors.red);
+    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 160),
+      transitionBuilder: (c,a)=>ScaleTransition(scale: CurvedAnimation(parent:a,curve:Curves.easeOutBack),child:FadeTransition(opacity:a,child:c)),
+      child: icon ?? const SizedBox(key: ValueKey('none'), width: 20),
+    );
+  }
+
+  bool _allotFieldValid(String k) {
+    switch (k) {
+      case 'approved': return _approvedAmountCtrl.text.trim().isNotEmpty;
+      case 'inst1Amt': return _installment1AmountCtrl.text.trim().isNotEmpty;
+      case 'inst1Date': return _installment1DateCtrl.text.trim().isNotEmpty;
+      case 'bankName': return _bankNameCtrl.text.trim().isNotEmpty;
+      case 'accountHolder': return _accountHolderCtrl.text.trim().isNotEmpty;
+      case 'aadhaar': return _aadhaarCtrl.text.trim().length == 12;
+      case 'accountNumber': return _accountNumberCtrl.text.trim().length >= 6;
+      case 'branch': return _branchCtrl.text.trim().isNotEmpty;
+      case 'ifsc': return _ifscCtrl.text.trim().length == 11;
+      case 'inst1RecvAmt': return _installment1Status == 'Received' ? _installment1ReceivedAmountCtrl.text.trim().isNotEmpty : true;
+      case 'inst1RecvDate': return _installment1Status == 'Received' ? _installment1ReceivedDateCtrl.text.trim().isNotEmpty : true;
+    }
+    return true;
+  }
+  bool _showAllotError(String k) => !_allotFieldValid(k) && (_allotAttemptedNext || _allotTouched.contains(k));
+  Widget _allotSuffix(String k) {
+    final valid = _allotFieldValid(k);
+    final show = _showAllotError(k);
+    Widget? icon;
+    if (valid) {
+      icon = Icon(CupertinoIcons.check_mark_circled_solid, key: const ValueKey('ok'), size: 20, color: Theme.of(context).colorScheme.primary);
+    } else if (show) {
+      icon = const Icon(Icons.error_outline, key: ValueKey('err'), size: 20, color: Colors.red);
+    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 160),
+      transitionBuilder: (c,a)=>ScaleTransition(scale: CurvedAnimation(parent:a,curve:Curves.easeOutBack),child:FadeTransition(opacity:a,child:c)),
+      child: icon ?? const SizedBox(key: ValueKey('none'), width: 20),
+    );
+  }
+
+  bool _workFieldValid(String k) {
+    switch (k) {
+      case 'start': return _startDateCtrl.text.trim().isNotEmpty;
+      case 'end': return _endDateCtrl.text.trim().isNotEmpty;
+      case 'deadline': return _endDateCtrl.text.trim().isEmpty || _deadlineCtrl.text.trim().isNotEmpty; // optional until end set
+    }
+    return true;
+  }
+  bool _showWorkError(String k) => !_workFieldValid(k) && (_workAttemptedNext || _workTouched.contains(k));
+  Widget _workSuffix(String k) {
+    final valid = _workFieldValid(k);
+    final show = _showWorkError(k);
+    Widget? icon;
+    if (valid) {
+      icon = Icon(CupertinoIcons.check_mark_circled_solid, key: const ValueKey('ok'), size: 20, color: Theme.of(context).colorScheme.primary);
+    } else if (show) {
+      icon = const Icon(Icons.error_outline, key: ValueKey('err'), size: 20, color: Colors.red);
+    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 160),
+      transitionBuilder: (c,a)=>ScaleTransition(scale: CurvedAnimation(parent:a,curve:Curves.easeOutBack),child:FadeTransition(opacity:a,child:c)),
+      child: icon ?? const SizedBox(key: ValueKey('none'), width: 20),
+    );
+  }
+  
+    
+
+  bool _sanctionFieldValid(String key) {
+    switch (key) {
+      case 'dept': return _sanctioningDepartmentCtrl.text.trim().isNotEmpty;
+      case 'scheme': return (_selectedSchemeName?.isNotEmpty ?? false) || _schemeCtrl.text.trim().isNotEmpty;
+      case 'item': return _itemCtrl.text.trim().isNotEmpty;
+      case 'plan': return _planHeadCtrl.text.trim().isNotEmpty;
+      case 'techNo': return _technicalApprovalNoCtrl.text.trim().isNotEmpty;
+      case 'techDate': return _technicalApprovalDateCtrl.text.trim().isNotEmpty;
+      case 'adminNo': return _adminApprovalNoCtrl.text.trim().isNotEmpty;
+      case 'adminDate': return _adminApprovalDateCtrl.text.trim().isNotEmpty;
+      case 'techAttachments': {
+        final techDocCnt = _mediaStore?.list(category: 'sanction_tech_doc').length ?? 0;
+        final techPhotoCnt = _mediaStore?.list(category: 'sanction_tech_photo').length ?? 0;
+        return techDocCnt > 0 || (techPhotoCnt > 0 && techPhotoCnt <= 3);
+      }
+      case 'adminAttachments': {
+        final adminDocCnt = _mediaStore?.list(category: 'sanction_admin_doc').length ?? 0;
+        return adminDocCnt > 0;
+      }
+    }
+    return true;
+  }
+
+  bool _isSanctionValid() {
+    const keys = [
+      'dept','scheme','item','plan','techNo','techDate','adminNo','adminDate','techAttachments','adminAttachments'
+    ];
+    for (final k in keys) { if (!_sanctionFieldValid(k)) return false; }
+    return true;
+  }
+
+  bool _showSanctionErrorFor(String key) {
+    if (_sanctionFieldValid(key)) return false;
+    return _sanctionAttemptedNext || _sanctionTouched.contains(key);
+  }
+
+  Widget _sanctionSuffix(String key) {
+    final valid = _sanctionFieldValid(key);
+    final showError = _showSanctionErrorFor(key);
+    Widget? icon;
+    if (valid) {
+      icon = Icon(CupertinoIcons.check_mark_circled_solid, key: const ValueKey('ok'), color: Theme.of(context).colorScheme.primary, size: 20);
+    } else if (showError) {
+      icon = const Icon(Icons.error_outline, key: ValueKey('err'), color: Colors.red, size: 20);
+    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      transitionBuilder: (child, anim) => ScaleTransition(scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack), child: FadeTransition(opacity: anim, child: child)),
+      child: icon ?? const SizedBox(key: ValueKey('none'), width: 20),
+    );
+  }
 
   // Section 3: received status options
   static const receivedStatusOptions = <String>['Received', 'Not Received', 'Not Applicable'];
@@ -1288,28 +1529,10 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     final o = n % 10;
     return _tens[t] + (o > 0 ? '-${_ones[o]}' : '');
   }
-  String _threeDigits(int n) {
-    final h = n ~/ 100;
-    final r = n % 100;
-    if (h == 0) return _twoDigits(r);
-    final head = '${_ones[h]} hundred';
-    if (r == 0) return head;
-    return '$head ${_twoDigits(r)}';
+String _toIndianWords(int n) {
+    return AmountInWords.toRupees(n);
   }
-  String _toIndianWords(int n) {
-    if (n == 0) return 'zero';
-    final parts = <String>[];
-    final crore = n ~/ 10000000;
-    final lakh = (n % 10000000) ~/ 100000;
-    final thousand = (n % 100000) ~/ 1000;
-    final hundred = n % 1000;
-    // Use three-digits for crores to support values >= 100 crores safely
-    if (crore > 0) parts.add('${crore < 100 ? _twoDigits(crore) : _threeDigits(crore)} crore');
-    if (lakh > 0) parts.add('${_twoDigits(lakh)} lakh');
-    if (thousand > 0) parts.add('${_twoDigits(thousand)} thousand');
-    if (hundred > 0) parts.add(_threeDigits(hundred));
-    return parts.join(' ');
-  }
+
 
   // Sanitize file names for Storage: allow letters, numbers, dot, underscore, hyphen; replace others with '_'
   String _safeName(String s) => s.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
@@ -1434,13 +1657,15 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     bool required = false,
     FocusNode? focusNode,
     String? Function(String?)? extraValidator,
+    Widget? validationSuffix,
   }) {
     // Max allowed amount: 50 crores (₹50,00,00,000)
     const maxRupees = 500000000; // 50 * 1 crore (10,000,000)
     final words = _amountToWordsString(controller.text);
-    final decoration = required
-        ? _req(label, prefixIcon: const Icon(Icons.currency_rupee))
-        : const InputDecoration(labelText: null).copyWith(labelText: label, prefixIcon: const Icon(Icons.currency_rupee));
+  final base = required
+    ? _req(label, prefixIcon: const Icon(Icons.currency_rupee))
+    : const InputDecoration(labelText: null).copyWith(labelText: label, prefixIcon: const Icon(Icons.currency_rupee));
+  final decoration = base.copyWith(suffixIcon: validationSuffix != null ? Padding(padding: const EdgeInsets.only(right:4), child: validationSuffix) : base.suffixIcon);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1482,23 +1707,26 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
 
   Future<void> _clearDraftLocally() async {
     await _drafts?.clearDraft();
+    // Avoid programmatic scrolling/focus to prevent sticky scroll locks after clearing draft
+    if (mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // intentionally no animateTo/ensureVisible/requestFocus here
+      });
+    }
   }
 
   // Removed _focusFirstInvalidInCurrentStep() as Next no longer runs global validation.
 
-  // After changing step, focus the first field in that step to guide data entry
+  // After changing step, only request focus without forcing scroll
+  // ignore: unused_element
   void _focusFirstFieldInStep(int step) {
-    Future<void> focus(FocusNode n) async {
-      n.requestFocus();
-      final ctx = n.context;
-      if (ctx != null) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-        Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300));
-      }
+    void focus(FocusNode n) {
+      if (!mounted) return;
+      FocusScope.of(context).requestFocus(n);
     }
     switch (step) {
       case 0:
-  focus(_fnSarpanchMobile);
+        focus(_fnSarpanchMobile);
         break;
       case 1:
         focus(_fnSanctionDept);
@@ -1507,8 +1735,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         focus(_fnBankName);
         break;
       case 3:
-  // Focus the Work section's first field (start date) to avoid jumping back to Basic Details
-  focus(_fnStartDate);
+        focus(_fnStartDate);
+        break;
+      default:
         break;
     }
   }
@@ -1516,37 +1745,26 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   Future<void> _getLocation() async {
   // messenger removed; using toastification for user feedback
     setState(() => _locating = true);
+    final messenger = ScaffoldMessenger.maybeOf(context);
     try {
       final perm = await Geolocator.requestPermission();
       if (perm == LocationPermission.deniedForever || perm == LocationPermission.denied) {
-        if (mounted) {
-          toastification.show(
-            context: context,
-            title: const Text('Location permission denied'),
-            type: ToastificationType.warning,
-            style: ToastificationStyle.fillColored,
-            autoCloseDuration: const Duration(seconds: 3),
-            showProgressBar: false,
-            icon: const Icon(CupertinoIcons.location_slash),
-          );
-        }
-        return;
-      }
+messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied')));
+         return;
+       }
   final pos = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
   // Enforce location within Chhattisgarh bounds (approx): lat 17.78..24.10, lng 80.22..84.40
   const cgMinLat = 17.78, cgMaxLat = 24.10, cgMinLng = 80.22, cgMaxLng = 84.40;
   final lat = pos.latitude, lng = pos.longitude;
   final inCG = lat >= cgMinLat && lat <= cgMaxLat && lng >= cgMinLng && lng <= cgMaxLng;
   if (!inCG) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please capture a location within Chhattisgarh.')));
-    }
-  } else {
-    setState(() {
-      _lat = lat;
-      _lng = lng;
-    });
-  }
+    messenger?.showSnackBar(const SnackBar(content: Text('Please capture a location within Chhattisgarh.')));
+   } else {
+     setState(() {
+       _lat = lat;
+       _lng = lng;
+     });
+   }
       // Recenter map view when coordinates update
       try {
         if (_lat != null && _lng != null) {
@@ -1556,21 +1774,18 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   // autosave location
   await _saveDraftLocally();
     } catch (e) {
-      if (mounted) {
-        toastification.show(
-          context: context,
-          title: const Text('Location error'),
-          description: Text('$e'),
-          type: ToastificationType.error,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 4),
-          showProgressBar: true,
-          icon: const Icon(CupertinoIcons.exclamationmark_triangle),
-        );
-      }
-    } finally {
+      messenger?.showSnackBar(SnackBar(content: Text('Location error: $e')));
+      
+     } finally {
       if (mounted) setState(() => _locating = false);
-    }
+     }
+  }
+
+  // ignore: unused_element
+  void _enableMapDragTemporarily([Duration duration = const Duration(seconds: 5)]) {
+    // legacy helper no longer used; keep for compatibility
+    // ignore: unused_element_parameter
+    final _ = duration;
   }
 
   Future<void> _pickPhotos() async {
@@ -1581,7 +1796,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     }
     final picker = ImagePicker();
     final imgs = await picker.pickMultiImage(imageQuality: 85);
-    if (!mounted) return;
+    if (!context.mounted) return;
     // Allow jpg/jpeg/png/heic up to 5MB each, cap list to 5
     const maxBytes = 5 * 1024 * 1024;
     final allowed = {'jpg','jpeg','png','heic','heif'};
@@ -1598,10 +1813,11 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       _photoProgress[id] = 0.0;
       remaining--;
     }
-    if (mounted) setState(() {});
+    if (context.mounted) setState(() {});
   }
 
   Future<void> _pickDocs() async {
+    final messenger = ScaffoldMessenger.of(context);
     if (_mediaStore == null || !_mediaStore!.ready) {
       final store = ref.read(draftMediaStoreProvider);
       await store.init();
@@ -1612,50 +1828,50 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       withReadStream: !kIsWeb,
       withData: kIsWeb,
       type: FileType.custom,
-    // Support PDF, Excel, and Office docs (Google exported as Office)
-    allowedExtensions: const ['pdf','xls','xlsx','csv','doc','docx'],
+      // Support PDF, Excel, and Office docs (Google exported as Office)
+      allowedExtensions: const ['pdf','xls','xlsx','csv','doc','docx'],
     );
-  if (res == null) return;
-  if (!mounted) return;
+    if (res == null) return;
+    if (!mounted) return;
     for (final f in res.files) {
       if (f.size > 10 * 1024 * 1024) {
-        toastification.show(
-          context: context,
-      title: Text('Skipping ${f.name}: >10MB'),
-          type: ToastificationType.info,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 2),
-          showProgressBar: false,
-          icon: const Icon(CupertinoIcons.info),
+        messenger.showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+            content: Text('Skipping ${f.name}: >10MB'),
+          ),
         );
         continue;
       }
       final name = f.name;
       final ext = name.split('.').last.toLowerCase();
-    const allowed = ['pdf','xls','xlsx','csv','doc','docx'];
+      const allowed = ['pdf','xls','xlsx','csv','doc','docx'];
       if (!allowed.contains(ext)) {
-        toastification.show(
-          context: context,
-          title: Text('Skipping ${f.name}'),
-      description: const Text('Use PDF/Excel/Doc only'),
-          type: ToastificationType.info,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 2),
-          showProgressBar: false,
-          icon: const Icon(CupertinoIcons.info),
+        messenger.showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+            content: Text('Skipping ${f.name}. Use PDF/Excel/Doc only'),
+          ),
         );
         continue;
       }
       // Add to offline store under generic work docs
-  // On Web, use in-memory bytes; on Mobile, use XFile via path
-  final id = await _mediaStore!.addFromPlatformFile(f, category: 'work_doc', maxBytes: 10 * 1024 * 1024);
-  _docStatus[id] = 'pending';
-  _docProgress[id] = 0.0;
+      // On Web, use in-memory bytes; on Mobile, use XFile via path
+      final id = await _mediaStore!.addFromPlatformFile(
+        f,
+        category: 'work_doc',
+        maxBytes: 10 * 1024 * 1024,
+      );
+      _docStatus[id] = 'pending';
+      _docProgress[id] = 0.0;
     }
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _pickTechApprovalDoc() async {
+    final messenger = ScaffoldMessenger.of(context);
     if (_mediaStore == null || !_mediaStore!.ready) {
       final store = ref.read(draftMediaStoreProvider);
       await store.init();
@@ -1666,29 +1882,30 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       withReadStream: !kIsWeb,
       withData: kIsWeb,
       type: FileType.custom,
-  // Restrict to PDF only as per rules
-  allowedExtensions: const ['pdf'],
+      // Restrict to PDF only as per rules
+      allowedExtensions: const ['pdf'],
     );
     if (res == null) return;
     if (!mounted) return;
     final f = res.files.first;
     if (f.size > StorageService.maxDocBytes) {
-      toastification.show(
-        context: context,
-        title: const Text('Document too large'),
-        description: const Text('Must be <= 20MB'),
-        type: ToastificationType.warning,
-        style: ToastificationStyle.fillColored,
-        autoCloseDuration: const Duration(seconds: 3),
-        showProgressBar: false,
-  icon: const Icon(CupertinoIcons.doc_plaintext),
+      messenger.showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+          content: Text('Document too large. Must be <= 20MB'),
+        ),
       );
       return;
     }
-  // Allow both PDF and Photos together; do not clear other category
-  final id = await _mediaStore!.addFromPlatformFile(f, category: 'sanction_tech_doc', maxBytes: StorageService.maxDocBytes);
-  _docStatus[id] = 'pending';
-  _docProgress[id] = 0.0;
+    // Allow both PDF and Photos together; do not clear other category
+    final id = await _mediaStore!.addFromPlatformFile(
+      f,
+      category: 'sanction_tech_doc',
+      maxBytes: StorageService.maxDocBytes,
+    );
+    _docStatus[id] = 'pending';
+    _docProgress[id] = 0.0;
     if (mounted) setState(() {});
   }
 
@@ -1701,15 +1918,19 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     final picker = ImagePicker();
     final imgs = await picker.pickMultiImage(imageQuality: 85);
     if (!mounted) return;
-  const maxBytes = 5 * 1024 * 1024; // 5MB per photo
-  // Allow both PDF and Photos together; do not clear other category
+    const maxBytes = 5 * 1024 * 1024; // 5MB per photo
+    // Allow both PDF and Photos together; do not clear other category
     int added = 0;
     for (final x in imgs) {
       if (added >= 3) break;
       final ext = x.name.split('.').last.toLowerCase();
       if (!{'jpg','jpeg','png','heic','heif'}.contains(ext)) continue;
       if (await x.length() > maxBytes) continue;
-      final id = await _mediaStore!.addFromXFile(x, category: 'sanction_tech_photo', maxBytes: maxBytes);
+      final id = await _mediaStore!.addFromXFile(
+        x,
+        category: 'sanction_tech_photo',
+        maxBytes: maxBytes,
+      );
       _photoStatus[id] = 'pending';
       _photoProgress[id] = 0.0;
       added++;
@@ -1718,6 +1939,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   }
 
   Future<void> _pickAdminApprovalDocs() async {
+    final messenger = ScaffoldMessenger.of(context);
     if (_mediaStore == null || !_mediaStore!.ready) {
       final store = ref.read(draftMediaStoreProvider);
       await store.init();
@@ -1728,32 +1950,35 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       withReadStream: !kIsWeb,
       withData: kIsWeb,
       type: FileType.custom,
-  // Restrict to PDF only as per rules
-  allowedExtensions: const ['pdf'],
+      // Restrict to PDF only as per rules
+      allowedExtensions: const ['pdf'],
     );
     if (res == null) return;
     if (!mounted) return;
-  for (final f in res.files) {
+    for (final f in res.files) {
       if (f.size > StorageService.maxDocBytes) {
-        toastification.show(
-          context: context,
-          title: Text('Skipping ${f.name} (>20MB)'),
-          type: ToastificationType.info,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 2),
-          showProgressBar: false,
-          icon: const Icon(CupertinoIcons.info),
+        messenger.showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+            content: Text('Skipping ${f.name} (>20MB)'),
+          ),
         );
         continue;
       }
-  final id = await _mediaStore!.addFromPlatformFile(f, category: 'sanction_admin_doc', maxBytes: StorageService.maxDocBytes);
-  _docStatus[id] = 'pending';
-  _docProgress[id] = 0.0;
+      final id = await _mediaStore!.addFromPlatformFile(
+        f,
+        category: 'sanction_admin_doc',
+        maxBytes: StorageService.maxDocBytes,
+      );
+      _docStatus[id] = 'pending';
+      _docProgress[id] = 0.0;
     }
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _pickGenericDocsCategory(String category) async {
+    final messenger = ScaffoldMessenger.of(context);
     if (_mediaStore == null || !_mediaStore!.ready) {
       final store = ref.read(draftMediaStoreProvider);
       await store.init();
@@ -1764,45 +1989,44 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       withReadStream: !kIsWeb,
       withData: kIsWeb,
       type: FileType.custom,
-    allowedExtensions: const ['pdf','xls','xlsx','csv','doc','docx'],
+      allowedExtensions: const ['pdf','xls','xlsx','csv','doc','docx'],
     );
     if (res == null) return;
     if (!mounted) return;
-    // Using toastification for feedback
+    // Using SnackBar for feedback
     for (final f in res.files) {
       if (f.size > 10 * 1024 * 1024) {
-        toastification.show(
-          context: context,
-      title: Text('Skipping ${f.name}: >10MB'),
-          type: ToastificationType.info,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 2),
-          showProgressBar: false,
-          icon: const Icon(CupertinoIcons.info),
+        messenger.showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+            content: Text('Skipping ${f.name}: >10MB'),
+          ),
         );
         continue;
       }
       final name = f.name;
       final ext = name.split('.').last.toLowerCase();
-    const allowed = ['pdf','xls','xlsx','csv','doc','docx'];
+      const allowed = ['pdf','xls','xlsx','csv','doc','docx'];
       if (!allowed.contains(ext)) {
-        toastification.show(
-          context: context,
-          title: Text('Skipping ${f.name}'),
-      description: const Text('Use PDF/Excel/Doc only'),
-          type: ToastificationType.info,
-          style: ToastificationStyle.fillColored,
-          autoCloseDuration: const Duration(seconds: 2),
-          showProgressBar: false,
-          icon: const Icon(CupertinoIcons.info),
+        messenger.showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+            content: Text('Skipping ${f.name}. Use PDF/Excel/Doc only'),
+          ),
         );
         continue;
       }
-  final id = await _mediaStore!.addFromPlatformFile(f, category: category, maxBytes: 10 * 1024 * 1024);
-  _docStatus[id] = 'pending';
-  _docProgress[id] = 0.0;
+      final id = await _mediaStore!.addFromPlatformFile(
+        f,
+        category: category,
+        maxBytes: 10 * 1024 * 1024,
+      );
+      _docStatus[id] = 'pending';
+      _docProgress[id] = 0.0;
     }
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _pickMeasurementBooks() async => _pickGenericDocsCategory('work_mb');
@@ -1913,7 +2137,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     _currentStep = 0;
     _didRestoreDraft = false;
     await _clearDraftLocally();
-    if (!mounted) return;
+    if (!context.mounted) return;
     setState(() {});
   // Toast shown by caller if needed
   }
@@ -1923,7 +2147,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     (_gramPanchayatCtrl.text.trim().isNotEmpty) &&
     (_selectedVillageName?.isNotEmpty ?? false);
   final content = Column(children: [
-    const SizedBox(height: 8),
+    const SizedBox(height: 12), // Increased top spacing for better mobile layout
     _pair(
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
@@ -1934,20 +2158,20 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
             LengthLimitingTextInputFormatter(60),
           ],
-          decoration: _req('Sarpanch Name (सरपंच नाम)', prefixIcon: const Icon(CupertinoIcons.person)),
+          decoration: _req('Sarpanch Name (सरपंच नाम)', prefixIcon: const Icon(CupertinoIcons.person)).copyWith(suffixIcon: _prelimSuffix('sarpanchName')),
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
         ),
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSarpanchMobile,
           controller: _sarpanchMobileCtrl,
-          decoration: _req('Sarpanch Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 '),
+          decoration: _req('Sarpanch Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 ', suffixIcon: _prelimSuffix('sarpanchMobile')),
           keyboardType: TextInputType.phone,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(10)],
           validator: (v){ final s=(v??'').trim(); if(s.length!=10) return '10 digits'; return null; },
         ),
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 16), // Increased spacing between form pairs for mobile
       _pair(
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
@@ -1958,20 +2182,20 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
             LengthLimitingTextInputFormatter(60),
           ],
-          decoration: _req('Secretary Name (सचिव नाम)', prefixIcon: const Icon(CupertinoIcons.person)),
+          decoration: _req('Secretary Name (सचिव नाम)', prefixIcon: const Icon(CupertinoIcons.person)).copyWith(suffixIcon: _prelimSuffix('secretaryName')),
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
         ),
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSecretaryMobile,
           controller: _secretaryMobileCtrl,
-          decoration: _req('Secretary Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 '),
+          decoration: _req('Secretary Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 ', suffixIcon: _prelimSuffix('secretaryMobile')),
           keyboardType: TextInputType.phone,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(10)],
           validator: (v){ final s=(v??'').trim(); if(s.length!=10) return '10 digits'; return null; },
         ),
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 16), // Increased spacing between form pairs for mobile
       _pair(
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
@@ -1982,43 +2206,53 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
             LengthLimitingTextInputFormatter(60),
           ],
-          decoration: _req('Sub Engineer Name (उप-यंत्री)', prefixIcon: const Icon(CupertinoIcons.hammer)),
+          decoration: _req('Sub Engineer Name (उप-यंत्री)', prefixIcon: const Icon(CupertinoIcons.hammer)).copyWith(suffixIcon: _prelimSuffix('subEngName')),
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
         ),
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSubEngineerMobile,
           controller: _subEngineerMobileCtrl,
-          decoration: _req('Sub Engineer Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 '),
+          decoration: _req('Sub Engineer Mobile (मोबाइल)', prefixIcon: const Icon(CupertinoIcons.phone)) .copyWith(prefixText: '+91 ', suffixIcon: _prelimSuffix('subEngMobile')),
           keyboardType: TextInputType.phone,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(10)],
           validator: (v){ final s=(v??'').trim(); if(s.length!=10) return '10 digits'; return null; },
         ),
       ),
   ]);
-  return AbsorbPointer(absorbing: !basicValid, child: Opacity(opacity: basicValid ? 1 : 0.5, child: content));
+  return IgnorePointer(ignoring: !basicValid, child: Opacity(opacity: basicValid ? 1 : 0.5, child: content));
   }
 
   Widget _buildSanctionSection() {
+    // validation booleans will be recomputed centrally later
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const SizedBox(height: 8),
       _pair(
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           focusNode: _fnSanctionDept,
           controller: _sanctioningDepartmentCtrl,
-          decoration: _req('Sanctioning Department (स्वीकृत विभाग)', prefixIcon: const Icon(CupertinoIcons.checkmark_seal)),
+          decoration: _req('Sanctioning Department (स्वीकृत विभाग)', prefixIcon: const Icon(CupertinoIcons.checkmark_seal)).copyWith(suffixIcon: _sanctionSuffix('dept')),
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
             LengthLimitingTextInputFormatter(80),
           ],
-          onChanged: (_) { _selectedSanctioningDepartmentName = _sanctioningDepartmentCtrl.text.trim(); _saveDraftLocally(); },
+          onChanged: (_) { _selectedSanctioningDepartmentName = _sanctioningDepartmentCtrl.text.trim(); _sanctionTouched.add('dept'); setState((){}); _saveDraftLocally(); },
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Department' : null,
         ),
+        if (_showSanctionErrorFor('dept')) Padding(padding: const EdgeInsets.only(top:4), child: Text('Required', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red))),
+        ]),
         DropdownButtonFormField<String>(
           isExpanded: true,
-          decoration: const InputDecoration(labelText: 'Scheme (योजना)', prefixIcon: Icon(CupertinoIcons.square_grid_2x2)),
+          decoration: InputDecoration(
+            label: const RequiredLabel('Scheme (योजना)'),
+            prefixIcon: const Icon(CupertinoIcons.square_grid_2x2),
+            suffixIcon: _sanctionFieldValid('scheme')
+              ? Icon(CupertinoIcons.check_mark_circled_solid, color: Theme.of(context).colorScheme.primary)
+              : (_showSanctionErrorFor('scheme') ? const Icon(Icons.error_outline, color: Colors.red) : null),
+          ),
           initialValue: _selectedSchemeName?.isNotEmpty == true ? _selectedSchemeName : null,
           itemHeight: 56,
           menuMaxHeight: 420,
@@ -2046,6 +2280,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             setState(() {
               _selectedSchemeName = val;
               _schemeCtrl.text = val ?? '';
+              _sanctionTouched.add('scheme');
             });
             _saveDraftLocally();
           },
@@ -2054,48 +2289,58 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       ),
       const SizedBox(height: 8),
       _pair(
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           focusNode: _fnItem,
           controller: _itemCtrl,
-          decoration: _req('Sanctioned Work Name - entry', prefixIcon: const Icon(CupertinoIcons.doc_text)),
+          decoration: _req('Sanctioned Work Name (स्वीकृत कार्य नाम)', prefixIcon: const Icon(CupertinoIcons.doc_text)).copyWith(suffixIcon: _sanctionSuffix('item')),
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\s\-\,/\.\u0900-\u097F]")),
             LengthLimitingTextInputFormatter(120),
           ],
-          onChanged: (_) { _selectedItemName = _itemCtrl.text.trim(); _saveDraftLocally(); },
+          onChanged: (_) { _selectedItemName = _itemCtrl.text.trim(); _sanctionTouched.add('item'); setState((){}); _saveDraftLocally(); },
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Work Name' : null,
         ),
-        TextFormField(
-          textAlignVertical: TextAlignVertical.center,
-          focusNode: _fnPlanHead,
-          controller: _planHeadCtrl,
-          decoration: _req('Plan Head (योगना शीर्ष)', prefixIcon: const Icon(CupertinoIcons.list_bullet)),
-          textCapitalization: TextCapitalization.words,
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\s\-\,/\.\u0900-\u097F]")),
-            LengthLimitingTextInputFormatter(60),
-          ],
-          onChanged: (_) { _selectedPlanHeadName = _planHeadCtrl.text.trim(); _saveDraftLocally(); },
-          validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Plan Head' : null,
-        ),
+        if (_showSanctionErrorFor('item')) Padding(padding: const EdgeInsets.only(top:4), child: Text('Required', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red))),
+        ]),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
+          TextFormField(
+            textAlignVertical: TextAlignVertical.center,
+            focusNode: _fnPlanHead,
+            controller: _planHeadCtrl,
+            decoration: _req('Plan Head (योगना शीर्ष)', prefixIcon: const Icon(CupertinoIcons.list_bullet)).copyWith(suffixIcon: _sanctionSuffix('plan')),
+            textCapitalization: TextCapitalization.words,
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\s\-\,/\.\u0900-\u097F]")),
+              LengthLimitingTextInputFormatter(60),
+            ],
+            onChanged: (_) { _selectedPlanHeadName = _planHeadCtrl.text.trim(); _sanctionTouched.add('plan'); setState((){}); _saveDraftLocally(); },
+            validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Plan Head' : null,
+          ),
+          if (_showSanctionErrorFor('plan')) Padding(padding: const EdgeInsets.only(top:4), child: Text('Required', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red))),
+        ]),
       ),
       const SizedBox(height: 8),
       _pair(
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           focusNode: _fnTechApprovalNo,
           controller: _technicalApprovalNoCtrl,
-          decoration: _req('Technical Approval No. (तकनीकी स्वीकृति नंबर)', prefixIcon: const Icon(CupertinoIcons.number)),
+          decoration: _req('Technical Approval No. (तकनीकी स्वीकृति नंबर)', prefixIcon: const Icon(CupertinoIcons.number)).copyWith(suffixIcon: _sanctionSuffix('techNo')),
           inputFormatters: [LengthLimitingTextInputFormatter(32)],
           keyboardType: TextInputType.text,
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Technical Approval No.' : null,
         ),
+        if (_showSanctionErrorFor('techNo')) Padding(padding: const EdgeInsets.only(top:4), child: Text('Required', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red))),
+        ]),
         DateFormField(
           controller: _technicalApprovalDateCtrl,
-          label: 'Technical Approval Date (YYYY-MM-DD)',
+          label: 'Technical Approval Date (तकनीकी स्वीकृति तिथि) (YYYY-MM-DD)',
           required: true,
+          validationSuffix: _sanctionSuffix('techDate'),
           validator: (v){
             final s = (v ?? '').trim();
             if (s.isEmpty) return 'Required';
@@ -2108,19 +2353,23 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       ),
       const SizedBox(height: 8),
       _pair(
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           focusNode: _fnAdminApprovalNo,
           controller: _adminApprovalNoCtrl,
-          decoration: _req('Admin Approval No. (प्रशासनिक स्वीकृति नंबर)', prefixIcon: const Icon(CupertinoIcons.checkmark_shield)),
+          decoration: _req('Admin Approval No. (प्रशासनिक स्वीकृति नंबर)', prefixIcon: const Icon(CupertinoIcons.checkmark_shield)).copyWith(suffixIcon: _sanctionSuffix('adminNo')),
           inputFormatters: [LengthLimitingTextInputFormatter(32)],
           keyboardType: TextInputType.text,
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Admin Approval No.' : null,
         ),
+        if (_showSanctionErrorFor('adminNo')) Padding(padding: const EdgeInsets.only(top:4), child: Text('Required', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red))),
+        ]),
         DateFormField(
           controller: _adminApprovalDateCtrl,
-          label: 'Admin Approval Date (YYYY-MM-DD)',
+          label: 'Admin Approval Date (प्रशासनिक स्वीकृति तिथि) (YYYY-MM-DD)',
           required: true,
+          validationSuffix: _sanctionSuffix('adminDate'),
           validator: (v){
             final s = (v ?? '').trim();
             if (s.isEmpty) return 'Required';
@@ -2133,9 +2382,12 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       ),
   const SizedBox(height: 12),
       Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Technical Approval, Map & Outline Upload (तकनीकी स्वीकृति, मानचित्र और रूपरेखा अपलोड)', style: Theme.of(context).textTheme.titleSmall),
+          Expanded(
+            child: RequiredLabel('Technical Approval, Map & Outline Upload (तकनीकी स्वीकृति, मानचित्र और रूपरेखा अपलोड)', style: Theme.of(context).textTheme.titleSmall),
+          ),
+          const SizedBox(width: 8),
           Tooltip(
             message: 'Upload PDF (<=20MB) and/or 1–3 Photos (<=5MB each). You can attach both for technical approval.',
             child: const Icon(Icons.info_outline, size: 18),
@@ -2155,6 +2407,10 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           label: Text('Add Photos (1–3, <=5MB) • ${_mediaStore?.list(category: 'sanction_tech_photo').length ?? 0}'),
         ),
       ]),
+      if (_showSanctionErrorFor('techAttachments')) Padding(
+        padding: const EdgeInsets.only(top:4.0),
+        child: Text('Add at least 1 PDF OR 1–3 photos', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red)),
+      ),
       const SizedBox(height: 8),
       Builder(builder: (context) {
         final items = _mediaStore?.list(category: 'sanction_tech_doc') ?? const [];
@@ -2176,14 +2432,21 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       }),
       const SizedBox(height: 12),
       Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Admin Approval Documents (कम से कम 1)', style: Theme.of(context).textTheme.titleSmall),
+          Expanded(
+            child: RequiredLabel('Admin Approval Documents (कम से कम 1)', style: Theme.of(context).textTheme.titleSmall),
+          ),
+          const SizedBox(width: 8),
           const Tooltip(message: 'Upload one or more PDF files (<=20MB each).', child: Icon(Icons.info_outline, size: 18)),
         ],
       ),
       const SizedBox(height: 8),
       FilledButton.icon(onPressed: _pickAdminApprovalDocs, icon: const Icon(Icons.attach_file), label: Text('Add PDF (${_mediaStore?.list(category: 'sanction_admin_doc').length ?? 0})')),
+      if (_showSanctionErrorFor('adminAttachments')) Padding(
+        padding: const EdgeInsets.only(top:4.0),
+        child: Text('Add at least 1 Admin Approval PDF', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red)),
+      ),
       const SizedBox(height: 8),
       Builder(builder: (context) {
         final items = _mediaStore?.list(category: 'sanction_admin_doc') ?? const [];
@@ -2193,17 +2456,18 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           children: items.map((it) => _fileCard(it)).toList(),
         );
       }),
+      // Inline validation hints will appear beneath individual fields instead of chips.
     ]);
   }
 
   Widget _buildAllotmentSection() {
-    DateTime? _parse(String s) { final t=s.trim(); if(t.isEmpty) return null; try{ return DateTime.parse(t);}catch(_){return null;} }
+    DateTime? parseDateLocal(String s) { final t=s.trim(); if(t.isEmpty) return null; try{ return DateTime.parse(t);}catch(_){return null;} }
     String? sumErrorFor(String? _) {
-      num parseNum(String s){ final t=s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t) ?? 0; }
-      final approved = parseNum(_approvedAmountCtrl.text);
-      final a1 = parseNum(_installment1AmountCtrl.text);
-      final a2 = _showInstallment2 ? parseNum(_installment2AmountCtrl.text) : 0;
-      final a3 = _showInstallment3 ? parseNum(_installment3AmountCtrl.text) : 0;
+      num parseNumLocal(String s){ final t=s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t) ?? 0; }
+      final approved = parseNumLocal(_approvedAmountCtrl.text);
+      final a1 = parseNumLocal(_installment1AmountCtrl.text);
+      final a2 = _showInstallment2 ? parseNumLocal(_installment2AmountCtrl.text) : 0;
+      final a3 = _showInstallment3 ? parseNumLocal(_installment3AmountCtrl.text) : 0;
       if (approved <= 0) return null; // defer error to required validator
       if ((a1 + a2 + a3) > approved) {
         return 'Sum of installments exceeds Approved Amount / Total Project Cost';
@@ -2218,65 +2482,92 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           'Approved Amount / Total Project Cost (स्वीकृत राशि / कुल परियोजना लागत) *',
           required: true,
           extraValidator: sumErrorFor,
+          validationSuffix: _allotSuffix('approved'),
         ),
       ),
       const SizedBox(height: 8),
       _pair(
         _amountField(
           _installment1AmountCtrl,
-          'Installment 1 Amount *',
+          'Installment 1 Amount (किस्त 1 राशि) *',
           required: true,
           extraValidator: sumErrorFor,
+          validationSuffix: _allotSuffix('inst1Amt'),
         ),
         DateFormField(
           controller: _installment1DateCtrl,
-          label: 'Installment 1 Date (YYYY-MM-DD)',
+          label: 'Installment 1 Date (किस्त 1 तिथि) (YYYY-MM-DD)',
           required: true,
+          validationSuffix: _allotSuffix('inst1Date'),
         ),
       ),
       const SizedBox(height: 8),
       DropdownButtonFormField<String>(
-        value: _installment1Status ?? 'Not Received',
+        initialValue: _installment1Status ?? 'Not Received',
         items: const ['Received','Not Received']
             .map((e) => DropdownMenuItem(value: e, child: Text(e)))
             .toList(),
-        decoration: const InputDecoration(labelText: 'Installment 1 Received Status'),
+  decoration: const InputDecoration(labelText: 'Installment 1 Received Status (प्राप्ति स्थिति)'),
         onChanged: (v) => setState(() => _installment1Status = v),
       ),
       const SizedBox(height: 8),
       if (_installment1Status == 'Received')
         _pair(
-          _amountField(_installment1ReceivedAmountCtrl, 'Installment 1 Received Amount'),
-          DateFormField(controller: _installment1ReceivedDateCtrl, label: 'Installment 1 Received Date (YYYY-MM-DD)'),
+          _amountField(_installment1ReceivedAmountCtrl, 'Installment 1 Received Amount (प्राप्त राशि)', validationSuffix: _allotSuffix('inst1RecvAmt')),
+          DateFormField(
+            controller: _installment1ReceivedDateCtrl,
+            label: 'Installment 1 Received Date (प्राप्त तिथि) (YYYY-MM-DD)',
+            validationSuffix: _allotSuffix('inst1RecvDate'),
+            firstDate: (() { try { return DateTime.parse(_installment1DateCtrl.text.trim()); } catch(_){ return null; } })(),
+            lastDate: DateTime.now(),
+            validator: (v){
+              final s=(v??'').trim(); if(s.isEmpty) return 'Required';
+              final re=RegExp(r'^\d{4}-\d{2}-\d{2}$'); if(!re.hasMatch(s)) return 'Use YYYY-MM-DD';
+              try{ final d=DateTime.parse(s); if(d.isAfter(DateTime.now())) return 'No future date';
+                final decl=_installment1DateCtrl.text.trim(); if(decl.isNotEmpty){ final dd=DateTime.parse(decl); if(d.isBefore(dd)) return '>= Installment 1 Date'; }
+              }catch(_){ return 'Invalid'; }
+              return null; },
+          ),
         )
       else Align(alignment: Alignment.centerLeft, child: Text('Skipped: ${_installment1Status ?? 'Not Received'}', style: Theme.of(context).textTheme.bodySmall)),
       const SizedBox(height: 12),
     if (!_showInstallment2)
         Align(
           alignment: Alignment.centerLeft,
-          child: TextButton.icon(onPressed: () => setState(() => _showInstallment2 = true), icon: const Icon(CupertinoIcons.plus_circle), label: const Text('Add Installment 2')),
+      child: TextButton.icon(onPressed: () => setState(() => _showInstallment2 = true), icon: const Icon(CupertinoIcons.plus_circle), label: const Text('Add Installment 2 (किस्त 2 जोड़ें)')),
         ),
       if (_showInstallment2) ...[
         _pair(
-      _amountField(_installment2AmountCtrl, 'Installment 2 Amount', extraValidator: sumErrorFor),
+  _amountField(_installment2AmountCtrl, 'Installment 2 Amount (किस्त 2 राशि)', extraValidator: sumErrorFor),
           DateFormField(
             controller: _installment2DateCtrl,
-            label: 'Installment 2 Date (YYYY-MM-DD)',
-            firstDate: _parse(_installment1DateCtrl.text),
+            label: 'Installment 2 Date (किस्त 2 तिथि) (YYYY-MM-DD)',
+            firstDate: parseDateLocal(_installment1DateCtrl.text),
           ),
         ),
         const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          value: _installment2Status,
+      DropdownButtonFormField<String>(
+        initialValue: _installment2Status,
           items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-          decoration: const InputDecoration(labelText: 'Installment 2 Received Status'),
+          decoration: const InputDecoration(labelText: 'Installment 2 Received Status (प्राप्ति स्थिति)'),
           onChanged: (v) => setState(() => _installment2Status = v),
         ),
         const SizedBox(height: 8),
         if (_installment2Status == 'Received')
           _pair(
-            _amountField(_installment2ReceivedAmountCtrl, 'Installment 2 Received Amount'),
-            DateFormField(controller: _installment2ReceivedDateCtrl, label: 'Installment 2 Received Date (YYYY-MM-DD)'),
+            _amountField(_installment2ReceivedAmountCtrl, 'Installment 2 Received Amount (प्राप्त राशि)'),
+            DateFormField(
+              controller: _installment2ReceivedDateCtrl,
+              label: 'Installment 2 Received Date (प्राप्त तिथि) (YYYY-MM-DD)',
+              firstDate: (() { try { return DateTime.parse((_installment2DateCtrl.text.trim().isNotEmpty ? _installment2DateCtrl.text.trim() : _installment1DateCtrl.text.trim())); } catch(_){ return null; } })(),
+              lastDate: DateTime.now(),
+              validator: (v){ final s=(v??'').trim(); if(s.isEmpty) return 'Required';
+                final re=RegExp(r'^\d{4}-\d{2}-\d{2}$'); if(!re.hasMatch(s)) return 'Use YYYY-MM-DD';
+                try{ final d=DateTime.parse(s); if(d.isAfter(DateTime.now())) return 'No future date';
+                  for(final ctrl in [_installment1DateCtrl,_installment2DateCtrl]){ final t=ctrl.text.trim(); if(t.isNotEmpty){ final dd=DateTime.parse(t); if(d.isBefore(dd)) return '>= previous declared date'; break; } }
+                }catch(_){ return 'Invalid'; }
+                return null; },
+            ),
           ),
         Align(
           alignment: Alignment.centerLeft,
@@ -2293,7 +2584,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
               _saveDraftLocally();
             },
             icon: const Icon(CupertinoIcons.minus_circle),
-            label: const Text('Remove Installment 2'),
+            label: const Text('Remove Installment 2 (किस्त 2 हटाएँ)'),
           ),
         ),
         const SizedBox(height: 12),
@@ -2301,29 +2592,44 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
     if (!_showInstallment3)
         Align(
           alignment: Alignment.centerLeft,
-      child: TextButton.icon(onPressed: () => setState(() { if (!_showInstallment2) _showInstallment2 = true; _showInstallment3 = true; }), icon: const Icon(CupertinoIcons.plus_circle), label: const Text('Add Installment 3')),
+  child: TextButton.icon(onPressed: () => setState(() { if (!_showInstallment2) _showInstallment2 = true; _showInstallment3 = true; }), icon: const Icon(CupertinoIcons.plus_circle), label: const Text('Add Installment 3 (किस्त 3 जोड़ें)')),
         ),
       if (_showInstallment3) ...[
         _pair(
-      _amountField(_installment3AmountCtrl, 'Installment 3 Amount', extraValidator: sumErrorFor),
+  _amountField(_installment3AmountCtrl, 'Installment 3 Amount (किस्त 3 राशि)', extraValidator: sumErrorFor),
           DateFormField(
             controller: _installment3DateCtrl,
-            label: 'Installment 3 Date (YYYY-MM-DD)',
-            firstDate: _parse(_installment2DateCtrl.text) ?? _parse(_installment1DateCtrl.text),
+            label: 'Installment 3 Date (किस्त 3 तिथि) (YYYY-MM-DD)',
+            firstDate: parseDateLocal(_installment2DateCtrl.text) ?? parseDateLocal(_installment1DateCtrl.text),
           ),
         ),
         const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          value: _installment3Status,
+      DropdownButtonFormField<String>(
+        initialValue: _installment3Status,
           items: receivedStatusOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-          decoration: const InputDecoration(labelText: 'Installment 3 Received Status'),
+          decoration: const InputDecoration(labelText: 'Installment 3 Received Status (प्राप्ति स्थिति)'),
           onChanged: (v) => setState(() => _installment3Status = v),
         ),
         const SizedBox(height: 8),
         if (_installment3Status == 'Received')
           _pair(
-            _amountField(_installment3ReceivedAmountCtrl, 'Installment 3 Received Amount'),
-            DateFormField(controller: _installment3ReceivedDateCtrl, label: 'Installment 3 Received Date (YYYY-MM-DD)'),
+            _amountField(_installment3ReceivedAmountCtrl, 'Installment 3 Received Amount (प्राप्त राशि)'),
+            DateFormField(
+              controller: _installment3ReceivedDateCtrl,
+              label: 'Installment 3 Received Date (प्राप्त तिथि) (YYYY-MM-DD)',
+              firstDate: (() { 
+                // earliest is install3 declared date if set else install2 else 1
+                for(final ctrl in [_installment3DateCtrl,_installment2DateCtrl,_installment1DateCtrl]){ final t=ctrl.text.trim(); if(t.isNotEmpty){ try{ return DateTime.parse(t); }catch(_){ continue; } }
+                }
+                return null; })(),
+              lastDate: DateTime.now(),
+              validator: (v){ final s=(v??'').trim(); if(s.isEmpty) return 'Required';
+                final re=RegExp(r'^\d{4}-\d{2}-\d{2}$'); if(!re.hasMatch(s)) return 'Use YYYY-MM-DD';
+                try{ final d=DateTime.parse(s); if(d.isAfter(DateTime.now())) return 'No future date';
+                  for(final ctrl in [_installment3DateCtrl,_installment2DateCtrl,_installment1DateCtrl]){ final t=ctrl.text.trim(); if(t.isNotEmpty){ final dd=DateTime.parse(t); if(d.isBefore(dd)) return '>= previous declared date'; break; } }
+                }catch(_){ return 'Invalid'; }
+                return null; },
+            ),
           ),
         Align(
           alignment: Alignment.centerLeft,
@@ -2340,7 +2646,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
               _saveDraftLocally();
             },
             icon: const Icon(CupertinoIcons.minus_circle),
-            label: const Text('Remove Installment 3'),
+            label: const Text('Remove Installment 3 (किस्त 3 हटाएँ)'),
           ),
         ),
         const SizedBox(height: 12),
@@ -2350,23 +2656,48 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
       const SizedBox(height: 8),
       _pair(
         TextFormField(
-          focusNode: _fnBankName,
-          controller: _bankNameCtrl,
-          decoration: _req('Bank Name', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
+          focusNode: _fnAccountHolder,
+          controller: _accountHolderCtrl,
+          decoration: _req('Account Holder Name (खाता धारक नाम)', prefixIcon: const Icon(CupertinoIcons.person_crop_circle)).copyWith(suffixIcon: _allotSuffix('accountHolder')),
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
             LengthLimitingTextInputFormatter(80),
           ],
-          onChanged: (_) { _selectedBankName = _bankNameCtrl.text.trim(); _saveDraftLocally(); },
+          onChanged: (_) { _allotTouched.add('accountHolder'); setState((){}); },
+          validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+        ),
+        TextFormField(
+          focusNode: _fnAadhaar,
+          controller: _aadhaarCtrl,
+          decoration: _req('Aadhaar Number (आधार नंबर)', prefixIcon: const Icon(CupertinoIcons.number)).copyWith(suffixIcon: _allotSuffix('aadhaar')),
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(12)],
+          onChanged: (_) { _allotTouched.add('aadhaar'); setState((){}); },
+          validator: (v){ final s=(v??'').trim(); if(s.length!=12) return '12 digits'; return null; },
+        ),
+      ),
+      const SizedBox(height: 8),
+      _pair(
+        TextFormField(
+          focusNode: _fnBankName,
+          controller: _bankNameCtrl,
+          decoration: _req('Bank Name (बैंक नाम)', prefixIcon: const Icon(CupertinoIcons.building_2_fill)).copyWith(suffixIcon: _allotSuffix('bankName')),
+          textCapitalization: TextCapitalization.words,
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
+            LengthLimitingTextInputFormatter(80),
+          ],
+          onChanged: (_) { _selectedBankName = _bankNameCtrl.text.trim(); _allotTouched.add('bankName'); setState((){}); _saveDraftLocally(); },
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Bank' : null,
         ),
         TextFormField(
           focusNode: _fnAccountNumber,
           controller: _accountNumberCtrl,
-          decoration: _req('Account Number', prefixIcon: const Icon(CupertinoIcons.number)),
+          decoration: _req('Account Number (खाता संख्या)', prefixIcon: const Icon(CupertinoIcons.number)).copyWith(suffixIcon: _allotSuffix('accountNumber')),
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(18)],
+          onChanged: (_) { _allotTouched.add('accountNumber'); setState((){}); },
           validator: (v){ final s=(v??'').trim(); if(s.isEmpty) return 'Enter Account Number'; if(s.length<6) return 'Too short'; return null; },
         ),
       ),
@@ -2375,18 +2706,19 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         TextFormField(
           focusNode: _fnBranch,
           controller: _branchCtrl,
-          decoration: _req('Branch', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
+          decoration: _req('Branch (शाखा)', prefixIcon: const Icon(CupertinoIcons.building_2_fill)).copyWith(suffixIcon: _allotSuffix('branch')),
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z0-9\s\-\u0900-\u097F]")),
             LengthLimitingTextInputFormatter(80),
           ],
+          onChanged: (_) { _allotTouched.add('branch'); setState((){}); },
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter Branch' : null,
         ),
         TextFormField(
           focusNode: _fnIFSC,
           controller: _ifscCtrl,
-          decoration: _req('IFSC Code', prefixIcon: const Icon(CupertinoIcons.qrcode)),
+          decoration: _req('IFSC Code (आईएफएससी कोड)', prefixIcon: const Icon(CupertinoIcons.qrcode)).copyWith(suffixIcon: _allotSuffix('ifsc')),
           inputFormatters: [FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')), LengthLimitingTextInputFormatter(11)],
           onChanged: (_) { final t = _ifscCtrl.text.toUpperCase(); if (_ifscCtrl.text != t) { final sel = _ifscCtrl.selection; _ifscCtrl.value = TextEditingValue(text: t, selection: sel); } },
           validator: (v){ final s=(v??'').trim(); if(s.isEmpty) return 'Enter IFSC'; if(s.length!=11) return '11 characters'; return null; },
@@ -2409,7 +2741,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             DateFormField(
               focusNode: _fnStartDate,
               controller: _startDateCtrl,
-              label: 'Work Start Date (YYYY-MM-DD)',
+              label: 'Work Start Date (कार्य आरंभ तिथि) (YYYY-MM-DD)',
               lastDate: (() {
                 try {
                   final s = _endDateCtrl.text.trim();
@@ -2417,6 +2749,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                   return DateTime.parse(s);
                 } catch (_) { return null; }
               })(),
+              validationSuffix: _workSuffix('start'),
               validator: (v){
                 final s = (v ?? '').trim();
                 if (s.isEmpty) return 'Required';
@@ -2438,7 +2771,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             const SizedBox(height: 8),
             DateFormField(
               controller: _endDateCtrl,
-              label: 'Work End Date (YYYY-MM-DD)',
+              label: 'Work End Date (कार्य समाप्ति तिथि) (YYYY-MM-DD)',
               firstDate: (() {
                 try {
                   final s = _startDateCtrl.text.trim();
@@ -2446,6 +2779,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                   return DateTime.parse(s);
                 } catch (_) { return null; }
               })(),
+              validationSuffix: _workSuffix('end'),
               validator: (v){
                 final s = (v ?? '').trim();
                 if (s.isEmpty) return 'Required';
@@ -2467,25 +2801,71 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
             const SizedBox(height: 8),
             DateFormField(
               controller: _deadlineCtrl,
-              label: 'Project Deadline (YYYY-MM-DD) – max End Date',
-              lastDate: (() {
+              label: 'Project Deadline (परियोजना समयसीमा) (YYYY-MM-DD)',
+              enabled: _endDateCtrl.text.trim().isNotEmpty,
+              firstDate: (() {
                 try {
-                  final s = _endDateCtrl.text.trim();
-                  if (s.isEmpty) return null;
-                  return DateTime.parse(s);
+                  final se = _endDateCtrl.text.trim();
+                  if (se.isEmpty) return null;
+                  // deadline must be on/after end date
+                  return DateTime.parse(se);
                 } catch (_) { return null; }
               })(),
+              lastDate: (() {
+                try {
+                  final se = _endDateCtrl.text.trim();
+                  if (se.isEmpty) return null;
+                  final e = DateTime.parse(se);
+                  // Add 3 calendar months, preserving day when possible
+                  final m = e.month + 3;
+                  final y = e.year + (m - 1) ~/ 12;
+                  final nm = ((m - 1) % 12) + 1;
+                  final d = e.day;
+                  final lastDayNext = DateTime(y, nm + 1, 0).day; // day 0 of following month is last day of nm
+                  final safeDay = d > lastDayNext ? lastDayNext : d;
+                  return DateTime(y, nm, safeDay);
+                } catch (_) { return null; }
+              })(),
+              validationSuffix: _workSuffix('deadline'),
+              validator: (v) {
+                final endTxt = _endDateCtrl.text.trim();
+                if (endTxt.isEmpty) {
+                  if ((v ?? '').trim().isNotEmpty) return 'Set End Date first';
+                  return null; // field disabled
+                }
+                final s = (v ?? '').trim();
+                if (s.isEmpty) return 'Required';
+                final re = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+                if (!re.hasMatch(s)) return 'Use YYYY-MM-DD';
+                try {
+                  final d = DateTime.parse(s);
+                  final e = DateTime.parse(endTxt);
+                  if (d.isBefore(e)) return '>= End Date';
+                  // max end + 3 months already enforced by picker but double-check
+                  final m = e.month + 3;
+                  final y = e.year + (m - 1) ~/ 12;
+                  final nm = ((m - 1) % 12) + 1;
+                  final lastDayNext = DateTime(y, nm + 1, 0).day;
+                  final safeDay = e.day > lastDayNext ? lastDayNext : e.day;
+                  final max = DateTime(y, nm, safeDay, 23, 59, 59);
+                  if (d.isAfter(max)) return '≤ End + 3 months';
+                } catch (_) { return 'Invalid date'; }
+                return null;
+              },
             ),
           ],
         ),
         DropdownButtonFormField<WorkStage>(
           decoration: const InputDecoration(labelText: 'Current stage', prefixIcon: Icon(CupertinoIcons.chart_bar)),
           isExpanded: true,
-          initialValue: _selectedWorkStage,
-          items: WorkStage.values.map((e) => DropdownMenuItem(
-            value: e,
-            child: Row(children: [Icon(_stageIcon(e), size: 18), const SizedBox(width: 8), Flexible(child: Text(e.name))]),
-          )).toList(),
+          initialValue: _selectedWorkStage == WorkStage.completed ? WorkStage.finishing : _selectedWorkStage,
+          items: WorkStage.values
+              .where((e) => e != WorkStage.completed)
+              .map((e) => DropdownMenuItem(
+                    value: e,
+                    child: Row(children: [Icon(_stageIcon(e), size: 18), const SizedBox(width: 8), Flexible(child: Text(e.name))]),
+                  ))
+              .toList(),
           onChanged: (v) { setState(() => _selectedWorkStage = v); _saveDraftLocally(); },
         ),
       ),
@@ -2557,7 +2937,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         const SizedBox(height: 16),
         // Categorized documents
   Row(children: [
-    Text('Measurement Books (मेज़रमेंट बुक) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Text('Measurement Books (मेज़रमेंट बुक)', style: Theme.of(context).textTheme.bodySmall),
     const SizedBox(width: 6),
     const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
   ]),
@@ -2574,7 +2954,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         }),
         const SizedBox(height: 16),
   Row(children: [
-    Text('Test Reports (टेस्ट रिपोर्ट) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Text('Test Reports (टेस्ट रिपोर्ट)', style: Theme.of(context).textTheme.bodySmall),
     const SizedBox(width: 6),
     const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
   ]),
@@ -2591,7 +2971,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         }),
         const SizedBox(height: 16),
   Row(children: [
-    Text('Work Reports (कार्य रिपोर्ट) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Text('Work Reports (कार्य रिपोर्ट)', style: Theme.of(context).textTheme.bodySmall),
     const SizedBox(width: 6),
     const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
   ]),
@@ -2608,7 +2988,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
         }),
         const SizedBox(height: 16),
   Row(children: [
-    Text('Certificates (प्रमाण पत्र) • optional, <=20MB each', style: Theme.of(context).textTheme.bodySmall),
+  Text('Certificates (प्रमाण पत्र)', style: Theme.of(context).textTheme.bodySmall),
     const SizedBox(width: 6),
     const Tooltip(message: 'PDF, Excel, or Word up to 20MB.', child: Icon(Icons.info_outline, size: 16)),
   ]),
@@ -2701,7 +3081,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
               DropdownButtonFormField<String>(
                 isExpanded: true,
                 decoration: _req('Gram Panchayat (ग्राम पंचायत)', prefixIcon: const Icon(CupertinoIcons.building_2_fill)),
-                value: (_selectedGramPanchayatName?.isNotEmpty ?? false) ? _selectedGramPanchayatName : null,
+                initialValue: (_selectedGramPanchayatName?.isNotEmpty ?? false) ? _selectedGramPanchayatName : null,
                 items: gpNames.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
                 onChanged: (_selectedBlockId == null || gpLoading || gpItems.isEmpty)
                     ? null
@@ -2755,19 +3135,22 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
               ),
             const SizedBox(height: 12),
             _singleOrEmpty(
-              DropdownButtonFormField<String>(
-                isExpanded: true,
-                decoration: _req('Village / Gram (ग्राम)', prefixIcon: const Icon(CupertinoIcons.home)),
-                value: (_selectedVillageName?.isNotEmpty ?? false) ? _selectedVillageName : null,
-                items: villageOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-                onChanged: (v) {
-                  setState(() {
-                    _selectedVillageName = v;
-                    _villageCtrl.text = v ?? '';
-                  });
-                  _saveDraftLocally();
-                },
-                validator: (v) => (v == null || v.isEmpty) ? 'Select Village' : null,
+              KeyedSubtree(
+                key: ValueKey('village_${_selectedVillageName ?? ''}'),
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  decoration: _req('Village / Gram (ग्राम)', prefixIcon: const Icon(CupertinoIcons.home)),
+                  initialValue: (_selectedVillageName?.isNotEmpty ?? false) ? _selectedVillageName : null,
+                  items: villageOptions.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                  onChanged: (v) {
+                    setState(() {
+                      _selectedVillageName = v;
+                      _villageCtrl.text = v ?? '';
+                    });
+                    _saveDraftLocally();
+                  },
+                  validator: (v) => (v == null || v.isEmpty) ? 'Select Village' : null,
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -2797,47 +3180,39 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                         height: 220,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(12),
-                          child: FlutterMap(
-                            mapController: _mapController,
-                            options: MapOptions(
-                              // Default to Dhamtari, Chhattisgarh when no GPS available
+                          child: GestureDetector(
+                            onPanDown: (_) => setState(() => _mapDragEnabled = true),
+                            onPanEnd: (_) => setState(() => _mapDragEnabled = false),
+                            onPanCancel: () => setState(() => _mapDragEnabled = false),
+                            child: AppMap(
+                              controller: _mapController,
                               initialCenter: LatLng(_lat ?? 20.7072, _lng ?? 81.5480),
                               initialZoom: (_lat != null && _lng != null) ? 15 : 12,
-                              interactionOptions: const InteractionOptions(
-                                flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
-                              ),
+                              minZoom: 8,
+                              maxZoom: 19,
+                              flags: (MediaQuery.of(context).viewInsets.bottom > 0)
+                                  ? InteractiveFlag.none
+                                  : (_mapDragEnabled
+                                      ? (InteractiveFlag.all & ~InteractiveFlag.flingAnimation)
+                                      : (InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom | InteractiveFlag.scrollWheelZoom)),
+                              onTap: (tapPosition, point) {
+                                if (_mapDragEnabled) {
+                                  setState(() {
+                                    _lat = point.latitude;
+                                    _lng = point.longitude;
+                                  });
+                                  _saveDraftLocally();
+                                }
+                              },
+                              marker: (_lat != null && _lng != null) ? LatLng(_lat!, _lng!) : null,
+                              infoMessage: 'Tap and drag to pan. Pinch (or Ctrl/Cmd + scroll) to zoom.',
                             ),
-                            children: [
-                              TileLayer(
-                                urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-                                subdomains: const ['a','b','c','d'],
-                                userAgentPackageName: 'com.example.nirmadapp',
-                              ),
-                              if (_lat != null && _lng != null)
-                                MarkerLayer(markers: [
-                                  Marker(
-                                    point: LatLng(_lat!, _lng!),
-                                    width: 40,
-                                    height: 40,
-                                    alignment: Alignment.center,
-                                    child: const Icon(CupertinoIcons.location_solid, color: Colors.redAccent, size: 36),
-                                  )
-                                ]),
-                              if (!kIsWeb) const CurrentLocationLayer(),
-                              RichAttributionWidget(
-                                alignment: AttributionAlignment.bottomRight,
-                                attributions: const [
-                                  TextSourceAttribution('© OpenStreetMap contributors'),
-                                  TextSourceAttribution('© CARTO'),
-                                ],
-                              ),
-                            ],
                           ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text('Tip: Move the map and press the GPS button to capture accurate coordinates.', style: Theme.of(context).textTheme.bodySmall),
+                    const SizedBox(height: 6),
                   ],
                 ),
               ),
@@ -2852,15 +3227,48 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
   Widget build(BuildContext context) {
     // Dynamic form completion percentage (4 new sections)
   bool prelimDone = _sarpanchNameCtrl.text.trim().isNotEmpty && _secretaryNameCtrl.text.trim().isNotEmpty;
-  bool sanctionDone = _sanctioningDepartmentCtrl.text.trim().isNotEmpty && (_selectedSchemeName?.isNotEmpty == true || _schemeCtrl.text.trim().isNotEmpty);
+  // Sanction section completion (exclude Approved Amount which belongs to Allotment step)
+  final techDocCnt = _mediaStore?.list(category: 'sanction_tech_doc').length ?? 0;
+  final techPhotoCnt = _mediaStore?.list(category: 'sanction_tech_photo').length ?? 0;
+  final adminDocCnt = _mediaStore?.list(category: 'sanction_admin_doc').length ?? 0;
+  final techOk = techDocCnt > 0 || (techPhotoCnt > 0 && techPhotoCnt <= 3);
+  final adminOk = adminDocCnt > 0;
+  bool sanctionDone =
+      _sanctioningDepartmentCtrl.text.trim().isNotEmpty &&
+      (((_selectedSchemeName?.isNotEmpty) ?? false) || _schemeCtrl.text.trim().isNotEmpty) &&
+      _itemCtrl.text.trim().isNotEmpty &&
+      _planHeadCtrl.text.trim().isNotEmpty &&
+      _technicalApprovalNoCtrl.text.trim().isNotEmpty &&
+      _technicalApprovalDateCtrl.text.trim().isNotEmpty &&
+      _adminApprovalNoCtrl.text.trim().isNotEmpty &&
+      _adminApprovalDateCtrl.text.trim().isNotEmpty &&
+      techOk &&
+      adminOk;
   bool allotmentDone = _installment1AmountCtrl.text.trim().isNotEmpty && _bankNameCtrl.text.trim().isNotEmpty;
   bool workDone = _nameCtrl.text.trim().isNotEmpty && _addressCtrl.text.trim().isNotEmpty && _lat != null && _lng != null && _startDateCtrl.text.trim().isNotEmpty && _endDateCtrl.text.trim().isNotEmpty;
   int stepsCompleted = [prelimDone, sanctionDone, allotmentDone, workDone].where((e) => e).length;
     final pct = (stepsCompleted / 4).clamp(0, 1).toDouble();
     return Scaffold(
-      body: SingleChildScrollView(
-        padding: R.pagePadding(context),
-        child: Center(
+      floatingActionButton: _shouldShowScrollToTop() ? FloatingActionButton.small(
+        onPressed: () {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeInOut,
+          );
+        },
+        tooltip: 'Scroll to top',
+        child: const Icon(CupertinoIcons.chevron_up),
+      ) : null,
+      body: Scrollbar(
+        thumbVisibility: Theme.of(context).platform == TargetPlatform.android,
+        child: SingleChildScrollView(
+          key: _topAnchorKey,
+          controller: _scrollController,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          physics: const ClampingScrollPhysics(), // Better mobile scrolling
+          padding: R.pagePadding(context).add(EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 80)), 
+          child: Center(
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: R.maxContentWidth(context)),
             child: Column(
@@ -2882,32 +3290,29 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                if (_didRestoreDraft || (_drafts?.hasDraft() ?? false))
+                if (_shouldShowDraft())
                   Card(
                     elevation: 0,
-                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06),
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
                     child: Padding(
-                      padding: const EdgeInsets.all(12.0),
+                      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8.0),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          const Icon(CupertinoIcons.pencil, size: 18),
-                          const SizedBox(width: 8),
-                          const Expanded(child: Text('Draft available. Changes autosave locally.')),
+                          const Icon(CupertinoIcons.pencil, size: 16),
+                          const SizedBox(width: 6),
+                          const Expanded(child: Text('Draft active — autosaving', style: TextStyle(fontSize: 12))),
                           if (_showAutosaved)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8.0),
-                              child: Row(children: [
-                                const Icon(CupertinoIcons.check_mark_circled_solid, size: 16, color: Colors.green),
-                                const SizedBox(width: 4),
-                                Text('Autosaved', style: TextStyle(color: Colors.green, fontSize: 12)),
-                              ]),
-                            ),
-                          TextButton.icon(
+                            Row(children: [
+                              const Icon(CupertinoIcons.check_mark_circled_solid, size: 14, color: Colors.green),
+                              const SizedBox(width: 4),
+                              Text('Saved', style: TextStyle(color: Colors.green, fontSize: 11)),
+                            ]),
+                          const SizedBox(width: 6),
+                          TextButton(
                             onPressed: () async {
-                              // messenger removed; using toastification for user feedback
                               await _clearDraftLocally();
-                              if (!mounted) return;
+                              if (!context.mounted) return;
                               setState(() { _didRestoreDraft = false; });
                               toastification.show(
                                 context: context,
@@ -2919,8 +3324,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 icon: const Icon(CupertinoIcons.delete_solid),
                               );
                             },
-                            icon: const Icon(CupertinoIcons.delete),
-                            label: const Text('Clear draft', textAlign: TextAlign.center,),
+                            child: const Text('Clear', style: TextStyle(fontSize: 12)),
                           ),
                         ],
                       ),
@@ -2944,132 +3348,124 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                           secondaryAnimation: secondary,
                           child: child,
                         ),
-                        child: KeyedSubtree(
+child: KeyedSubtree(
                           key: ValueKey('stepper_$_currentStep'),
-                          child: Stepper(
-                    type: StepperType.vertical,
-                    currentStep: _currentStep,
-                    onStepTapped: (i) {
-                      int highest = 0;
-                      if (prelimDone) highest = 1;
-                      if (prelimDone && sanctionDone) highest = 2;
-                      if (prelimDone && sanctionDone && allotmentDone) highest = 3;
-                      if (i <= highest) {
-                        setState(() => _currentStep = i);
-                        _saveDraftLocally();
-                        // Move focus to first field in this section
-                        WidgetsBinding.instance.addPostFrameCallback((_) => _focusFirstFieldInStep(i));
-                      } else {
-                        toastification.show(
-                          context: context,
-                          title: const Text('Complete previous section first'),
-                          type: ToastificationType.info,
-                          style: ToastificationStyle.fillColored,
-                          autoCloseDuration: const Duration(seconds: 2),
-                          showProgressBar: false,
-                          icon: const Icon(CupertinoIcons.info),
-                        );
-                      }
-                    },
-                        controlsBuilder: (context, details) {
-                      bool currentStepValid() {
-                        // Run a focused validation for the current step's key fields
-                        switch (_currentStep) {
-                          case 0:
-          return (_gramPanchayatCtrl.text.trim().isNotEmpty &&
-            (_selectedVillageName?.trim().isNotEmpty ?? false) &&
-            _sarpanchNameCtrl.text.trim().isNotEmpty &&
-            _sarpanchMobileCtrl.text.trim().length == 10 &&
-            _secretaryNameCtrl.text.trim().isNotEmpty &&
-            _secretaryMobileCtrl.text.trim().length == 10 &&
-            _subEngineerNameCtrl.text.trim().isNotEmpty &&
-            _subEngineerMobileCtrl.text.trim().length == 10);
-                          case 1:
-          return (_sanctioningDepartmentCtrl.text.trim().isNotEmpty &&
-            (((_selectedSchemeName?.isNotEmpty) ?? false) || _schemeCtrl.text.trim().isNotEmpty) &&
-                                    _itemCtrl.text.trim().isNotEmpty &&
-                                    _planHeadCtrl.text.trim().isNotEmpty &&
-                                    _technicalApprovalNoCtrl.text.trim().isNotEmpty &&
-                                    _technicalApprovalDateCtrl.text.trim().isNotEmpty &&
-                                    _adminApprovalNoCtrl.text.trim().isNotEmpty &&
-                                    _adminApprovalDateCtrl.text.trim().isNotEmpty &&
-                                    _approvedAmountCtrl.text.trim().isNotEmpty);
-                          case 2:
-                            return (_bankNameCtrl.text.trim().isNotEmpty &&
-                                    _accountNumberCtrl.text.trim().length >= 6 &&
-                                    _branchCtrl.text.trim().isNotEmpty &&
-                                    _ifscCtrl.text.trim().length == 11);
-                          case 3:
-                            return (_nameCtrl.text.trim().isNotEmpty &&
-                                    _addressCtrl.text.trim().isNotEmpty &&
-                                    _lat != null && _lng != null &&
-                                    _startDateCtrl.text.trim().isNotEmpty &&
-                                    _endDateCtrl.text.trim().isNotEmpty);
-                          default:
-                            return true;
-                        }
-                      }
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 8.0),
-                        child: Row(
-                          children: [
-                            FilledButton(
-                              onPressed: currentStepValid()
-                                  ? () {
-                                      // Only step-level validation to advance; don't validate entire form here
-                                      if (_currentStep < 3) {
-                                        setState(() => _currentStep++);
-                                        _saveDraftLocally();
-                                        final next = _currentStep;
-                                        // Focus the first field in the next section
-                                        WidgetsBinding.instance.addPostFrameCallback((_) => _focusFirstFieldInStep(next));
-                                      }
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Original Flutter Stepper from temp.md
+                              Stepper(
+                                type: StepperType.vertical,
+                                currentStep: _currentStep,
+                                onStepTapped: (i) {
+                                  int highest = 0;
+                                  if (prelimDone) highest = 1;
+                                  if (prelimDone && sanctionDone) highest = 2;
+                                  if (prelimDone && sanctionDone && allotmentDone) highest = 3;
+                                  if (i <= highest) {
+                                    setState(() => _currentStep = i);
+                                    _saveDraftLocally();
+                                    // Move focus to first field in this section
+                                    WidgetsBinding.instance.addPostFrameCallback((_) => _focusFirstFieldInStep(i));
+                                  } else {
+                                    toastification.show(
+                                      context: context,
+                                      title: const Text('Complete previous section first'),
+                                      type: ToastificationType.info,
+                                      style: ToastificationStyle.fillColored,
+                                      autoCloseDuration: const Duration(seconds: 2),
+                                      showProgressBar: false,
+                                      icon: const Icon(CupertinoIcons.info),
+                                    );
+                                  }
+                                },
+                                controlsBuilder: (context, details) {
+                                  bool currentStepValid() {
+                                    switch (_currentStep) {
+                                      case 0:
+                                        return (_gramPanchayatCtrl.text.trim().isNotEmpty &&
+                                            (_selectedVillageName?.trim().isNotEmpty ?? false) &&
+                                            _sarpanchNameCtrl.text.trim().isNotEmpty &&
+                                            _sarpanchMobileCtrl.text.trim().length == 10 &&
+                                            _secretaryNameCtrl.text.trim().isNotEmpty &&
+                                            _secretaryMobileCtrl.text.trim().length == 10 &&
+                                            _subEngineerNameCtrl.text.trim().isNotEmpty &&
+                                            _subEngineerMobileCtrl.text.trim().length == 10);
+                                      case 1:
+                                        return _isSanctionValid();
+                                      case 2:
+                                        return (_bankNameCtrl.text.trim().isNotEmpty &&
+                                            _accountNumberCtrl.text.trim().length >= 6 &&
+                                            _branchCtrl.text.trim().isNotEmpty &&
+                                            _ifscCtrl.text.trim().length == 11);
+                                      case 3:
+                                        return (_nameCtrl.text.trim().isNotEmpty &&
+                                            _addressCtrl.text.trim().isNotEmpty &&
+                                            _lat != null && _lng != null &&
+                                            _startDateCtrl.text.trim().isNotEmpty &&
+                                            _endDateCtrl.text.trim().isNotEmpty);
+                                      default:
+                                        return true;
                                     }
-                                  : null,
-                              child: Text(_currentStep < 3 ? 'Next' : 'Done'),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              onPressed: () {
-                                if (_currentStep > 0) { setState(() => _currentStep--); _saveDraftLocally(); }
-                              },
-                              child: const Text('Back'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                    steps: [
-                      Step(
-                        title: const Text('Preliminary Description (प्रारंभिक विवरण)'),
-                        isActive: _currentStep >= 0,
-                        state: prelimDone ? StepState.complete : StepState.indexed,
-                        content: _buildPreliminarySection(),
-                      ),
-                      Step(
-                        title: const Text('Sanction & Compliance (स्वीकृति और अनुपालन)'),
-                        isActive: _currentStep >= 1,
-                        state: sanctionDone ? StepState.complete : StepState.indexed,
-                        content: _buildSanctionSection(),
-                      ),
-                      Step(
-                        title: const Text('Allotment Details (वितरण विवरण)'),
-                        isActive: _currentStep >= 2,
-                        state: allotmentDone ? StepState.complete : StepState.indexed,
-                        content: _buildAllotmentSection(),
-                      ),
-                      Step(
-                        title: const Text('Work Description (कार्य विवरण)'),
-                        isActive: _currentStep >= 3,
-                        state: workDone ? StepState.complete : StepState.indexed,
-                        content: _buildWorkSection(),
-                      ),
-                    ],
-                    onStepContinue: () {
-                      // Stepper host: we just scroll; save handled below
-                      // No internal state index maintained as Stepper shows all steps vertically
-                    },
-                    onStepCancel: () {},
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 8.0),
+                                    child: Row(
+                                      children: [
+                                        FilledButton(
+                                          onPressed: currentStepValid()
+                                              ? () {
+                                                  if (_currentStep < 3) {
+                                                    setState(() => _currentStep++);
+                                                    _saveDraftLocally();
+                                                    final next = _currentStep;
+                                                    WidgetsBinding.instance.addPostFrameCallback((_) => _focusFirstFieldInStep(next));
+                                                  }
+                                                }
+                                              : null,
+                                          child: Text(_currentStep < 3 ? 'Next' : 'Done'),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        TextButton(
+                                          onPressed: () {
+                                            if (_currentStep > 0) { setState(() => _currentStep--); _saveDraftLocally(); }
+                                          },
+                                          child: const Text('Back'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                                steps: [
+                                  Step(
+                                    title: const Text('Preliminary Description (प्रारंभिक विवरण)'),
+                                    isActive: _currentStep >= 0,
+                                    state: prelimDone ? StepState.complete : StepState.indexed,
+                                    content: _buildPreliminarySection(),
+                                  ),
+                                  Step(
+                                    title: const Text('Sanction & Compliance (स्वीकृति और अनुपालन)'),
+                                    isActive: _currentStep >= 1,
+                                    state: sanctionDone ? StepState.complete : StepState.indexed,
+                                    content: _buildSanctionSection(),
+                                  ),
+                                  Step(
+                                    title: const Text('Allotment Details (वितरण विवरण)'),
+                                    isActive: _currentStep >= 2,
+                                    state: allotmentDone ? StepState.complete : StepState.indexed,
+                                    content: _buildAllotmentSection(),
+                                  ),
+                                  Step(
+                                    title: const Text('Work Description (कार्य विवरण)'),
+                                    isActive: _currentStep >= 3,
+                                    state: workDone ? StepState.complete : StepState.indexed,
+                                    content: _buildWorkSection(),
+                                  ),
+                                ],
+                              ),
+
+                              const SizedBox(height: 8),
+                            ],
                           ),
                         ),
                       ),
@@ -3137,11 +3533,17 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                   final gpsOk = _lat != null && _lng != null;
                   final adminOk = adminDocCnt > 0;
                   final canCreate = textsOk && mobilesOk && blockOk && gpOk && villageOk && gpsOk && techOk && adminOk && !_saving;
-                  Future<T?> _showScrollSafeDialog<T>(Widget Function(BuildContext) builder) => showScrollSafeDialog<T>(context: context, builder: builder);
+                  // Consider the form empty if all required text fields are empty and no GPS/media selected
+                  final noneTexts = requiredCtrls.every((c) => c.text.trim().isEmpty);
+                  final noneMedia = (_mediaStore?.list(category: 'sanction_tech_doc').isEmpty ?? true) &&
+                      (_mediaStore?.list(category: 'sanction_tech_photo').isEmpty ?? true) &&
+                      (_mediaStore?.list(category: 'sanction_admin_doc').isEmpty ?? true);
+                  final isFormEmpty = noneTexts && (_lat == null && _lng == null) && noneMedia;
+                  Future<T?> showScrollSafeDialogLocal<T>(Widget Function(BuildContext) builder) => showScrollSafeDialog<T>(context: context, builder: builder);
 
                   final resetBtn = OutlinedButton.icon(
-                    onPressed: _saving ? null : () async {
-                        final confirmed = await _showScrollSafeDialog<bool>((ctx) => Column(
+                    onPressed: (_saving || isFormEmpty) ? null : () async {
+                        final confirmed = await showScrollSafeDialogLocal<bool>((ctx) => Column(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -3161,7 +3563,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                         ));
                         if (confirmed == true) {
                           await _resetForm();
-                          if (mounted) {
+                          if (context.mounted) {
                             toastification.show(
                               context: context,
                               title: const Text('Form reset'),
@@ -3177,11 +3579,12 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     icon: const Icon(CupertinoIcons.refresh),
                     label: const Text('Reset form'),
                   );
-                  Future<bool> _confirmCreateDisclaimer() async {
+                  Future<bool> confirmCreateDisclaimer() async {
                     final auth = await ref.read(authRepositoryProvider).currentUser();
                     if (auth == null) return false;
                     if (auth.role == UserRole.devAdmin) return true;
-                    final ok = await _showScrollSafeDialog<bool>((ctx) => Column(
+                    if (!context.mounted) return false;
+                    final ok = await showScrollSafeDialogLocal<bool>((ctx) => Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -3209,19 +3612,19 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                     onPressed: canCreate
                         ? () async {
                               // Non-admin confirmation disclaimer
-                              final ok = await _confirmCreateDisclaimer();
+                              final ok = await confirmCreateDisclaimer();
                               if (!ok) return;
                               // Using toastification for feedback
                               // Optional safety
-                              if (!mounted) return;
-                              if (!_formKey.currentState!.validate()) return;
+                                        if (!context.mounted) return;
+                                        if (!_formKey.currentState!.validate()) return;
                               // Allotment validation rules
-                              num _numParse(String s){ final t=s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t) ?? 0; }
-                              DateTime? _date(String s){ final t=s.trim(); if(t.isEmpty) return null; try{return DateTime.parse(t);}catch(_){return null;} }
-                              final approved = _numParse(_approvedAmountCtrl.text);
-                              final a1 = _numParse(_installment1AmountCtrl.text);
-                              final a2 = _showInstallment2 ? _numParse(_installment2AmountCtrl.text) : 0;
-                              final a3 = _showInstallment3 ? _numParse(_installment3AmountCtrl.text) : 0;
+                              num numParse(String s){ final t=s.trim().replaceAll(',', ''); return int.tryParse(t) ?? double.tryParse(t) ?? 0; }
+                              DateTime? date(String s){ final t=s.trim(); if(t.isEmpty) return null; try{return DateTime.parse(t);}catch(_){return null;} }
+                              final approved = numParse(_approvedAmountCtrl.text);
+                              final a1 = numParse(_installment1AmountCtrl.text);
+                              final a2 = _showInstallment2 ? numParse(_installment2AmountCtrl.text) : 0;
+                              final a3 = _showInstallment3 ? numParse(_installment3AmountCtrl.text) : 0;
                               if (a1 <= 0) {
                                 toastification.show(context: context, title: const Text('Enter Installment 1 amount'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
                                 return;
@@ -3230,9 +3633,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 toastification.show(context: context, title: const Text('Installments exceed Approved Amount'), description: const Text('Sum must be ≤ Approved Amount'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
                                 return;
                               }
-                              final d1 = _date(_installment1DateCtrl.text);
-                              final d2 = _date(_installment2DateCtrl.text);
-                              final d3 = _date(_installment3DateCtrl.text);
+                              final d1 = date(_installment1DateCtrl.text);
+                              final d2 = date(_installment2DateCtrl.text);
+                              final d3 = date(_installment3DateCtrl.text);
                               if (d1 == null) {
                                 toastification.show(context: context, title: const Text('Enter Installment 1 date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 3), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
                                 return;
@@ -3253,8 +3656,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                               }
                               // Received gating
                               if ((_installment1Status ?? 'Not Received') == 'Received') {
-                                final rAmt = _numParse(_installment1ReceivedAmountCtrl.text);
-                                final rDate = _date(_installment1ReceivedDateCtrl.text);
+                                final rAmt = numParse(_installment1ReceivedAmountCtrl.text);
+                                final rDate = date(_installment1ReceivedDateCtrl.text);
                                 if (rAmt <= 0 || rDate == null) {
                                   toastification.show(context: context, title: const Text('Fill I1 received amount and date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
                                   return;
@@ -3265,8 +3668,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 }
                               }
                               if (_showInstallment2 && _installment2Status == 'Received') {
-                                final rAmt = _numParse(_installment2ReceivedAmountCtrl.text);
-                                final rDate = _date(_installment2ReceivedDateCtrl.text);
+                                final rAmt = numParse(_installment2ReceivedAmountCtrl.text);
+                                final rDate = date(_installment2ReceivedDateCtrl.text);
                                 if (rAmt <= 0 || rDate == null) {
                                   toastification.show(context: context, title: const Text('Fill I2 received amount and date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
                                   return;
@@ -3277,8 +3680,8 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 }
                               }
                               if (_showInstallment3 && _installment3Status == 'Received') {
-                                final rAmt = _numParse(_installment3ReceivedAmountCtrl.text);
-                                final rDate = _date(_installment3ReceivedDateCtrl.text);
+                                final rAmt = numParse(_installment3ReceivedAmountCtrl.text);
+                                final rDate = date(_installment3ReceivedDateCtrl.text);
                                 if (rAmt <= 0 || rDate == null) {
                                   toastification.show(context: context, title: const Text('Fill I3 received amount and date'), type: ToastificationType.warning, style: ToastificationStyle.fillColored, autoCloseDuration: const Duration(seconds: 4), showProgressBar: false, icon: const Icon(CupertinoIcons.exclamationmark_triangle));
                                   return;
@@ -3371,7 +3774,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                 return;
                               }
                               // Final confirmation before creating (irreversible)
-                              final confirm = await _showScrollSafeDialog<bool>((ctx) {
+                              final confirm = await showScrollSafeDialogLocal<bool>((ctx) {
                                 final cs = Theme.of(ctx).colorScheme;
                                 final workPhotoCnt = _mediaStore?.list(category: 'work_photo').length ?? 0;
                                 final workDocCnt = _mediaStore?.list(category: 'work_doc').length ?? 0;
@@ -4012,7 +4415,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
 
                                 // inform if any uploads failed
                 final failed = photoFailures + docFailures;
-                                if (failed > 0 && mounted) {
+                                if (failed > 0 && context.mounted) {
                                   toastification.show(
                                     context: context,
                                     title: const Text('Saved with some issues'),
@@ -4025,7 +4428,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   );
                                 }
 
-                                if (!mounted) return;
+                                if (!context.mounted) return;
                                 // Clear local draft, media, and form on success
                                 await _clearDraftLocally();
                                 await _mediaStore?.clear();
@@ -4036,7 +4439,7 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
                                   projectCode: projectCode,
                                 );
           } catch (e) {
-                                if (mounted) {
+                                if (context.mounted) {
                                   toastification.show(
                                     context: context,
             title: const Text('Save failed'),
@@ -4085,8 +4488,9 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   // Find the first FormField with an error in the widget tree
   
@@ -4094,177 +4498,20 @@ class _ProjectCreatePageState extends ConsumerState<_ProjectCreatePage> {
 
 // _CreateProjectCard removed: creation handled via dedicated tab
 
-class _ProjectCard extends StatelessWidget {
-  final Project project;
-  final VoidCallback onOpen;
-  const _ProjectCard({required this.project, required this.onOpen});
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final gradient = LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [
-        cs.primary.withValues(alpha: 0.20),
-        cs.primaryContainer.withValues(alpha: 0.60),
-      ],
-    );
-    return InkWell(
-      onTap: onOpen,
-      child: Card(
-        elevation: 0,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: gradient,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(10.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.building_2_fill, color: cs.onPrimaryContainer, size: 36),
-                const SizedBox(height: 8),
-                Text(
-                  project.name,
-                  style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 6),
-                Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70), overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 6),
-                Builder(builder: (context) {
-                  final statusLabel = project.status.name;
-                  Color statusColor; IconData statusIcon;
-                  switch (project.status) {
-                    case ProjectStatus.completed:
-                      statusColor = Colors.green; statusIcon = CupertinoIcons.check_mark_circled_solid; break;
-                    case ProjectStatus.cancelled:
-                      statusColor = Colors.grey; statusIcon = CupertinoIcons.xmark_circle_fill; break;
-                    case ProjectStatus.in_progress:
-                      statusColor = Colors.amber; statusIcon = CupertinoIcons.clock_solid; break;
-                  }
-                  final deadlineVal = project.financials['deadline'];
-                  final isLate = _isLate(deadlineVal);
-                  return Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      _StatusChip(label: statusLabel, inverted: true, color: statusColor, icon: statusIcon),
-                      if (project.phase > 0) _StatusChip(label: 'Financial Phase ${project.phase}', inverted: true, color: Colors.white70, icon: CupertinoIcons.number),
-                      if (deadlineVal != null)
-                        _StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', inverted: true, color: isLate ? Colors.redAccent : Colors.white70, icon: CupertinoIcons.calendar),
-                    ],
-                  );
-                }),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
-class _StatusChip extends StatelessWidget {
-  final String label;
-  final bool inverted;
-  final Color? color;
-  final IconData? icon;
-  const _StatusChip({required this.label, this.inverted = false, this.color, this.icon});
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final base = color ?? (inverted ? Colors.white : cs.primary);
-    final bg = inverted ? Colors.white.withValues(alpha: 0.16) : base.withValues(alpha: 0.12);
-    final border = inverted ? Colors.white24 : base.withValues(alpha: 0.24);
-    final fg = inverted ? Colors.white : base;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 14, color: fg),
-            const SizedBox(width: 4),
-          ],
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: fg,
-                  height: 1.0,
-                  leadingDistribution: TextLeadingDistribution.even,
-                  textBaseline: TextBaseline.alphabetic,
-                ),
-            textHeightBehavior: const TextHeightBehavior(
-              applyHeightToFirstAscent: true,
-              applyHeightToLastDescent: true,
-              leadingDistribution: TextLeadingDistribution.even,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 String _fmtDeadline(dynamic v) {
-  if (v == null) return '';
-  try {
-    if (v is Timestamp) {
-      final d = v.toDate();
-      return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
-    }
-    if (v is DateTime) {
-      return '${v.year}-${v.month.toString().padLeft(2,'0')}-${v.day.toString().padLeft(2,'0')}';
-    }
-    if (v is String) {
-      final d = DateTime.tryParse(v);
-      if (d != null) return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
-    }
-    if (v is Map && v['seconds'] != null) {
-      final secs = (v['seconds'] as num).toInt();
-      final d = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
-      return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
-    }
-  } catch (_) {}
-  return '';
+  final d = parseAnyDate(v);
+  if (d == null) return '';
+  return fmtYmd(d);
 }
 
 bool _isLate(dynamic v) {
-  try {
-    if (v == null) {
-      return false;
-    }
-    DateTime? d;
-    if (v is Timestamp) {
-      d = v.toDate();
-    } else if (v is DateTime) {
-      d = v;
-    } else if (v is String) {
-      d = DateTime.tryParse(v);
-    }
-    else if (v is Map && v['seconds'] != null) {
-      final secs = (v['seconds'] as num).toInt();
-      d = DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true).toLocal();
-    }
-    if (d == null) {
-      return false;
-    }
-    final today = DateTime.now();
-    final startOfToday = DateTime(today.year, today.month, today.day);
-    return d.isBefore(startOfToday);
-  } catch (_) { return false; }
+  final d = parseAnyDate(v);
+  if (d == null) return false;
+  final today = DateTime.now();
+  final startOfToday = DateTime(today.year, today.month, today.day);
+  return d.isBefore(startOfToday);
 }
 
 class _ProjectListTile extends StatelessWidget {
@@ -4274,10 +4521,6 @@ class _ProjectListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final ld = project.landDetails;
-    final block = (ld['blockName'] ?? '') as String?;
-    final village = (ld['villageName'] ?? '') as String?;
-    final location = [block, village].where((e) => (e ?? '').toString().trim().isNotEmpty).join(' • ');
   final statusLabel = project.status.name;
     Color statusColor; IconData statusIcon;
     switch (project.status) {
@@ -4290,42 +4533,64 @@ class _ProjectListTile extends StatelessWidget {
     }
   final deadlineVal = project.financials['deadline'];
   final isLate = _isLate(deadlineVal);
+    // Gradient card to match grid view style
+    final gradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        cs.primary.withValues(alpha: 0.55),
+        cs.primary.withValues(alpha: 0.85),
+      ],
+    );
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        onTap: onOpen,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(color: cs.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
-          child: Icon(CupertinoIcons.building_2_fill, color: cs.primary),
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(project.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
-            ),
-            const SizedBox(width: 8),
-            Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall),
-          ],
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 6.0),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (location.isNotEmpty) Text(location, maxLines: 1, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 6),
-            Wrap(spacing: 6, runSpacing: 6, children: [
-              _StatusChip(label: statusLabel, color: statusColor, icon: statusIcon),
-              if (project.phase > 0) _StatusChip(label: 'Financial Phase ${project.phase}', color: Theme.of(context).colorScheme.primary, icon: CupertinoIcons.number),
-              if (deadlineVal != null) _StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', color: isLate ? Colors.redAccent : Theme.of(context).colorScheme.secondary, icon: CupertinoIcons.calendar),
-            ]),
-          ]),
-        ),
-        trailing: const Icon(CupertinoIcons.forward),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
       ),
-    );
+      child: Ink(
+        decoration: BoxDecoration(gradient: gradient, borderRadius: BorderRadius.circular(12)),
+        child: InkWell(
+          onTap: onOpen,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: cs.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+                child: Icon(CupertinoIcons.building_2_fill, color: cs.primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+Expanded(child: Text(project.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white))),
+                      const SizedBox(width: 8),
+Text('#${project.id}', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70)),
+                    ]),
+                    const SizedBox(height: 6),
+                    Wrap(spacing: 6, runSpacing: 6, children: [
+StatusChip(label: statusLabel, inverted: true, color: statusColor, icon: statusIcon),
+                      if (deadlineVal != null)
+                        StatusChip(label: 'Due ${_fmtDeadline(deadlineVal)}', inverted: true, color: isLate ? Colors.redAccent : Colors.white70, icon: CupertinoIcons.calendar),
+                    ]),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(CupertinoIcons.chevron_right, size: 18, color: Colors.white70),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
   }
 }
 
@@ -4385,7 +4650,10 @@ class _PageScaffold extends StatelessWidget {
             const SizedBox(width: 4),
             IconButton(
               icon: const Icon(CupertinoIcons.bars),
-              onPressed: onMenu,
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                onMenu();
+              },
               tooltip: 'Sidebar',
             ),
             if (Theme.of(context).platform == TargetPlatform.android)
