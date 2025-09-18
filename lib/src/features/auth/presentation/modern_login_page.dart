@@ -188,7 +188,9 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
                                 ? AppLoadingIndicator(
                                     size: 16,
                                     strokeWidth: 2.2,
-                                    color: Theme.of(context).colorScheme.onPrimary,
+                                    color: Theme.of(context).brightness == Brightness.dark
+                                        ? Theme.of(context).colorScheme.onPrimary
+                                        : Theme.of(context).colorScheme.onPrimaryContainer,
                                   )
                                 : const Icon(Icons.logout),
                             onPressed: submitting
@@ -376,7 +378,7 @@ class _BrandHeader extends StatelessWidget {
     final double copyMaxWidth = small ? 520 : 560;
 
   Widget logo = Padding(
-      padding: EdgeInsets.only(left: pad, right: pad, top: pad, bottom: bottomPad),
+      padding: EdgeInsets.only(left: pad, right: pad, top: pad, bottom: bottomPad + 50),
       child: SizedBox(
         width: logoSize,
         height: logoSize,
@@ -458,7 +460,6 @@ class _AuthCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = theme.colorScheme;
     final radius = 20.0;
     return Card(
       elevation: 0,
@@ -562,7 +563,13 @@ class _AuthCard extends StatelessWidget {
               FilledButton.icon(
                 onPressed: loading ? null : onSubmit,
                 icon: loading
-                    ? AppLoadingIndicator(size: 18, strokeWidth: 2, color: color.onPrimary)
+                    ? AppLoadingIndicator(
+                        size: 18,
+                        strokeWidth: 2,
+                        color: Theme.of(context).brightness == Brightness.dark
+                            ? Theme.of(context).colorScheme.onPrimary
+                            : Theme.of(context).colorScheme.onPrimaryContainer,
+                      )
                     : const Icon(Icons.login),
                 label: const Text('Sign in'),
                 style: FilledButton.styleFrom(

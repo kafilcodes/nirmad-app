@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../projects/domain/project.dart';
 import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider, gramPanchayatFilterProvider;
+import 'dart:math' as math;
 
 // Required charts for dashboard:
 // - Pie (outlined) of project count by block (left/top-left)
@@ -110,13 +111,19 @@ class ProjectsCharts extends ConsumerWidget {
       final isSmallWidth = c.maxWidth < 420;
       // Heights tuned for overlap prevention; pie is a bit smaller on small screens,
       // while radar/bars are larger on small Android for better readability/tap targets.
-      double pieHeight = isSmallWidth ? 220 : 280;
+      double pieHeight = isSmallWidth ? 206 : 272;
       double radarHeight = isSmallWidth ? 300 : 320;
       double barsHeight = veryNarrow ? 250 : 290;
       if (isAndroid && isSmallWidth) {
         // Favor larger analytical charts on small Android
         radarHeight += 30;
         barsHeight += 30;
+      }
+      // Equalize pie and radar heights on wide (desktop) layouts for visual balance
+      if (!narrow) {
+        final equal = math.max(pieHeight, radarHeight);
+        pieHeight = equal;
+        radarHeight = equal;
       }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -333,8 +340,10 @@ class _OutlinedPieByGroup extends ConsumerWidget {
           child: PieChart(
             PieChartData(
               startDegreeOffset: -90,
-              centerSpaceRadius: (small ? 44.0 : 54.0) - (isAndroid && small ? 6.0 : 0.0),
-              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 2 : (small ? 1 : 2),
+              centerSpaceRadius: (MediaQuery.of(context).size.width < 360)
+                  ? 30.0
+                  : (small ? 36.0 : 46.0) - (isAndroid && small ? 4.0 : 0.0),
+              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 3 : (small ? 2 : 2),
               borderData: FlBorderData(show: false),
               pieTouchData: PieTouchData(
                 enabled: true,
@@ -358,18 +367,20 @@ class _OutlinedPieByGroup extends ConsumerWidget {
                   PieChartSectionData(
                     value: entries[i].value.toDouble(),
                     color: colors[i % colors.length],
-                    radius: (small ? 48.0 : 56.0) - (isAndroid && small ? 4.0 : 0.0),
+                    radius: (MediaQuery.of(context).size.width < 360)
+                        ? 42.0
+                        : (small ? 46.0 : 54.0) - (isAndroid && small ? 4.0 : 0.0),
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
                     title: () {
                       final totalLocal = total == 0 ? 1 : total;
                       final pct = entries[i].value / totalLocal;
                       final veryNarrow = MediaQuery.of(context).size.width < 360;
                       // Hide tiny slice labels on very narrow screens to avoid overlaps
-                      if (veryNarrow && (pct < 0.12 || entries.length > 6)) return '';
+                      if (veryNarrow && (pct < 0.14 || entries.length > 5)) return '';
                       return '${(pct * 100).toStringAsFixed(0)}%';
                     }(),
                     titleStyle: TextStyle(
-                      fontSize: (MediaQuery.of(context).size.width < 360) ? 8 : (small ? 8 : 10),
+                      fontSize: (MediaQuery.of(context).size.width < 360) ? 7.5 : (small ? 8 : 10),
                       fontWeight: FontWeight.w600,
                       color: cs.onPrimary,
                     ),
@@ -433,8 +444,10 @@ class _OutlinedPieByBlock extends StatelessWidget {
           child: PieChart(
             PieChartData(
               startDegreeOffset: -90,
-              centerSpaceRadius: (small ? 44.0 : 54.0) - (isAndroid && small ? 6.0 : 0.0),
-              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 2 : (small ? 1 : 2),
+              centerSpaceRadius: (MediaQuery.of(context).size.width < 360)
+                  ? 30.0
+                  : (small ? 36.0 : 46.0) - (isAndroid && small ? 4.0 : 0.0),
+              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 3 : (small ? 2 : 2),
               borderData: FlBorderData(show: false),
               pieTouchData: PieTouchData(
                 enabled: onSelect != null,
@@ -450,10 +463,17 @@ class _OutlinedPieByBlock extends StatelessWidget {
                   PieChartSectionData(
                     value: blocks[i].value.toDouble(),
                     color: colors[i % colors.length],
-                    radius: (small ? 48.0 : 56.0) - (isAndroid && small ? 4.0 : 0.0),
+                    radius: (MediaQuery.of(context).size.width < 360)
+                        ? 42.0
+                        : (small ? 46.0 : 54.0) - (isAndroid && small ? 4.0 : 0.0),
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
-                    title: '${((blocks[i].value / total) * 100).toStringAsFixed(0)}%',
-                    titleStyle: TextStyle(fontSize: small ? 9 : 11, fontWeight: FontWeight.w600, color: cs.onPrimary),
+                    title: () {
+                      final veryNarrow = MediaQuery.of(context).size.width < 360;
+                      final pct = total == 0 ? 0 : (blocks[i].value / total);
+                      if (veryNarrow && (pct < 0.14 || blocks.length > 5)) return '';
+                      return '${(pct * 100).toStringAsFixed(0)}%';
+                    }(),
+                    titleStyle: TextStyle(fontSize: (MediaQuery.of(context).size.width < 360) ? 7.5 : (small ? 9 : 11), fontWeight: FontWeight.w600, color: cs.onPrimary),
                   ),
               ],
             ),
@@ -913,63 +933,66 @@ class _ChartsLoadingSkeleton extends StatelessWidget {
           ),
         );
       }
-      return SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 4),
-                if (!narrow) chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 5),
-                if (narrow)
-                  chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 5),
-                SizedBox(
-                  width: c.maxWidth,
-                  height: veryNarrow ? 260 : 300,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6.0),
-                    child: Card(
-                      elevation: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 6,
-                              children: List.generate(3, (i) => const _SkeletonBlock(height: 26, width: 110, radius: BorderRadius.all(Radius.circular(20)))).toList(),
-                            ),
-                            const SizedBox(height: 16),
-                            Expanded(
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  for (int i = 0; i < 3; i++) ...[
-                                    Expanded(
-                                      child: Align(
-                                        alignment: Alignment.bottomCenter,
-                                        child: _SkeletonBlock(height: (veryNarrow ? 180 : 200) * (0.4 + i * 0.2), width: 30, radius: BorderRadius.circular(8)),
-                                      ),
-                                    ),
-                                    if (i < 2) const SizedBox(width: 12),
-                                  ],
-                                ],
+      return Padding(
+        // extra space to avoid Android bottom gesture/nav bar crowding on small screens
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom + 8),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 4),
+                  if (!narrow) chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 5),
+                  if (narrow)
+                    chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 5),
+                  SizedBox(
+                    width: c.maxWidth,
+                    height: veryNarrow ? 260 : 300,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6.0),
+                      child: Card(
+                        elevation: 0,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 6,
+                                children: List.generate(3, (i) => const _SkeletonBlock(height: 26, width: 110, radius: BorderRadius.all(Radius.circular(20)))).toList(),
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 16),
+                              Expanded(
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    for (int i = 0; i < 3; i++) ...[
+                                      Expanded(
+                                        child: Align(
+                                          alignment: Alignment.bottomCenter,
+                                          child: _SkeletonBlock(height: (veryNarrow ? 180 : 200) * (0.4 + i * 0.2), width: 30, radius: BorderRadius.circular(8)),
+                                        ),
+                                      ),
+                                      if (i < 2) const SizedBox(width: 12),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
+                ],
+              ),
+            ],
+          ),),
+        );
     });
   }
 }
@@ -1026,8 +1049,8 @@ class _AdaptiveLegends extends StatelessWidget {
       return ConstrainedBox(
         constraints: BoxConstraints(maxWidth: c.maxWidth),
         child: Wrap(
-          spacing: (c.maxWidth < 360) ? 4 : 6,
-          runSpacing: (c.maxWidth < 360) ? 4 : 6,
+          spacing: (c.maxWidth < 360) ? 3 : 6,
+          runSpacing: (c.maxWidth < 360) ? 3 : 6,
           children: children,
         ),
       );

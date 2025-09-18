@@ -107,14 +107,15 @@ SizedBox(width: tileWidth, child: _tile(context, 'Delayed 60d', delayed60, Color
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 88),
+          // Slightly larger min height on Android to improve touch target
+          constraints: BoxConstraints(minHeight: Theme.of(context).platform == TargetPlatform.android ? 96 : 88),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 12),
             child: Row(
               children: [
                 Container(
-                  width: 40,
-                  height: 40,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
                   child: Icon(icon, size: 20, color: color),
                 ),
@@ -124,7 +125,7 @@ SizedBox(width: tileWidth, child: _tile(context, 'Delayed 60d', delayed60, Color
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('$value', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800, fontSize: 26)),
+                      Text('$value', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800, fontSize: 24)),
                       const SizedBox(height: 2),
                       Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
                     ],

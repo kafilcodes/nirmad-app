@@ -77,8 +77,8 @@ class NotificationsList extends ConsumerWidget {
       if (q.isNotEmpty) {
         filtered = filtered.where((d) {
           final m = d.data;
-          final title = (m['title'] as String?)?.toLowerCase() ?? '';
-          final body = (m['body'] as String?)?.toLowerCase() ?? '';
+          final title = ((m['title'] as String?) ?? '').replaceFirst(RegExp(r'^\s*\[(?:SYSTEM|System|system)\]\s*'), '').toLowerCase();
+          final body = ((m['body'] as String?) ?? '').replaceFirst(RegExp(r'^\s*\[(?:SYSTEM|System|system)\]\s*'), '').toLowerCase();
           final proj = (m['projectName'] as String?)?.toLowerCase() ?? '';
           return title.contains(q) || body.contains(q) || proj.contains(q);
         }).toList(growable: false);
@@ -91,6 +91,7 @@ class NotificationsList extends ConsumerWidget {
       final brightness = Theme.of(context).brightness;
       final q = ref.watch(_notifSearchProvider).trim();
       final isSearching = q.isNotEmpty;
+      String sanitize(String s) => s.replaceFirst(RegExp(r'^\s*\[(?:SYSTEM|System|system)\]\s*'), '');
       return AnimatedSwitcher(
         duration: const Duration(milliseconds: 150),
         switchInCurve: Curves.easeIn,
@@ -132,8 +133,8 @@ Expanded(
                           itemBuilder: (context, i) {
                             final d = docs[i];
                   final data = d.data;
-                  final title = (data['title'] as String?) ?? 'Update';
-                  final body = (data['body'] as String?) ?? '';
+                  final title = sanitize((data['title'] as String?) ?? 'Update');
+                  final body = sanitize((data['body'] as String?) ?? '');
                   final createdAt = (data['createdAt'] as Timestamp?)?.toDate();
                   final rel = _relativeTime(createdAt);
                   final targetedToUser = data['userId'] != null;

@@ -511,7 +511,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
   final isNodal = user != null && (isSuper == true || isSub == true);
   // Only Dev Admin can edit basic details. Nodal roles are read-only for basics.
   final canEditAll = (isDevAdmin == true);
-  final canEditLimited = isNodal; // may edit certain non-basic fields (e.g., stage/description)
+  final canEditLimited = (isSub == true); // sub_nodal may edit certain non-basic fields (e.g., stage/description)
     final blocks = ref.watch(blocksListProvider);
   final isOwner = user != null && user.role == UserRole.projectOwner && user.uid == _ownerId;
   final fieldsAll = canEditAll && !_saving;
@@ -649,7 +649,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                               prefixIcon: Icon(CupertinoIcons.text_justify),
                             ),
                             maxLines: 3,
-                            enabled: ((isDevAdmin) || isNodal || (isOwner && _ownerEditMode)) && !_saving,
+                            enabled: ((isDevAdmin) || (isSub == true) || (isOwner && _ownerEditMode)) && !_saving,
                             onChanged: (_) {
                               _dirty = true;
                               _dirtyN.value = true;
@@ -979,47 +979,47 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                   const SizedBox(height: 12),
 
                   // Native Flutter Stepper for consistency with Create Project page
-                  Stepper(
-                    type: StepperType.vertical,
-                    currentStep: _expWork ? 3 : (_expAllot ? 2 : (_expSanc ? 1 : 0)),
-                    onStepTapped: (i) {
-                      setState(() {
-                        _expPrelim = i == 0;
-                        _expSanc = i == 1;
-                        _expAllot = i == 2;
-                        _expWork = i == 3;
-                      });
-                    },
-                    controlsBuilder: (context, details) {
-                      return const SizedBox.shrink(); // No controls needed for edit page
-                    },
-                    steps: [
-                      Step(
-                        title: const Text('Preliminary Description (प्रारंभिक विवरण)'),
-                        isActive: _expPrelim,
-                        state: _expPrelim ? StepState.complete : StepState.indexed,
-                        content: const SizedBox.shrink(), // Content handled by ExpansionTiles below
-                      ),
-                      Step(
-                        title: const Text('Sanction & Compliance (स्वीकृति और अनुपालन)'),
-                        isActive: _expSanc,
-                        state: _expSanc ? StepState.complete : StepState.indexed,
-                        content: const SizedBox.shrink(),
-                      ),
-                      Step(
-                        title: const Text('Allotment Details (वितरण विवरण)'),
-                        isActive: _expAllot,
-                        state: _expAllot ? StepState.complete : StepState.indexed,
-                        content: const SizedBox.shrink(),
-                      ),
-                      Step(
-                        title: const Text('Work Description (कार्य विवरण)'),
-                        isActive: _expWork,
-                        state: _expWork ? StepState.complete : StepState.indexed,
-                        content: const SizedBox.shrink(),
-                      ),
-                    ],
-                  ),
+                  // Stepper(
+                  //   type: StepperType.vertical,
+                  //   currentStep: _expWork ? 3 : (_expAllot ? 2 : (_expSanc ? 1 : 0)),
+                  //   onStepTapped: (i) {
+                  //     setState(() {
+                  //       _expPrelim = i == 0;
+                  //       _expSanc = i == 1;
+                  //       _expAllot = i == 2;
+                  //       _expWork = i == 3;
+                  //     });
+                  //   },
+                  //   controlsBuilder: (context, details) {
+                  //     return const SizedBox.shrink(); // No controls needed for edit page
+                  //   },
+                  //   steps: [
+                  //     Step(
+                  //       title: const Text('Preliminary Description (प्रारंभिक विवरण)'),
+                  //       isActive: _expPrelim,
+                  //       state: _expPrelim ? StepState.complete : StepState.indexed,
+                  //       content: const SizedBox.shrink(), // Content handled by ExpansionTiles below
+                  //     ),
+                  //     Step(
+                  //       title: const Text('Sanction & Compliance (स्वीकृति और अनुपालन)'),
+                  //       isActive: _expSanc,
+                  //       state: _expSanc ? StepState.complete : StepState.indexed,
+                  //       content: const SizedBox.shrink(),
+                  //     ),
+                  //     Step(
+                  //       title: const Text('Allotment Details (वितरण विवरण)'),
+                  //       isActive: _expAllot,
+                  //       state: _expAllot ? StepState.complete : StepState.indexed,
+                  //       content: const SizedBox.shrink(),
+                  //     ),
+                  //     Step(
+                  //       title: const Text('Work Description (कार्य विवरण)'),
+                  //       isActive: _expWork,
+                  //       state: _expWork ? StepState.complete : StepState.indexed,
+                  //       content: const SizedBox.shrink(),
+                  //     ),
+                  //   ],
+                  // ),
 
                   // Section 1: Preliminary Description
                   ExpansionTile(
@@ -1793,7 +1793,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                   update.addAll({'status': _status.name});
                                 }
                                 // Description can be updated by dev_admin, nodal, or owner in edit mode
-                                if ((isOwner && _ownerEditMode) || isDevAdmin || isNodal) {
+                                if ((isOwner && _ownerEditMode) || isDevAdmin || (isSub == true)) {
                                   update['description'] = _desc.text.trim();
                                 }
 
@@ -1892,7 +1892,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                 }
 
                                 // Stage can be updated by dev_admin, nodal, or owner in edit mode even when not editing all
-                                if ((isDevAdmin || isNodal || (isOwner && _ownerEditMode)) && _workStage != null) {
+                                if ((isDevAdmin || (isSub == true) || (isOwner && _ownerEditMode)) && _workStage != null) {
                                   update['workDescription.stage'] = _workStage!.name;
                                 }
 

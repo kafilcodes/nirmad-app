@@ -226,6 +226,10 @@ class ProjectDetailPage extends ConsumerWidget {
           backgroundColor: Theme.of(context).colorScheme.surface,
           body: NestedScrollView(
             headerSliverBuilder: (context, innerScrolled) => [
+              if (snap.hasError)
+                SliverToBoxAdapter(child: _errorBanner(context)),
+              if (snap.connectionState == ConnectionState.waiting && (snap.data == null || snap.data!.data() == null))
+                SliverToBoxAdapter(child: _syncBanner(context)),
               SliverToBoxAdapter(child: header(pj)),
               SliverToBoxAdapter(
                 child: Padding(
@@ -301,6 +305,43 @@ class ProjectDetailPage extends ConsumerWidget {
 }
 
 // --- Dialog helpers (restored clean versions using ScrollSafeDialog) ---
+
+// --- Lightweight banners for live sync/error states ---
+Widget _syncBanner(BuildContext context) {
+  final theme = Theme.of(context);
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+    child: Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: ListTile(
+        dense: true,
+        leading: const AppLoadingIndicator(variant: AppLoadingVariant.inline),
+        title: Text('Syncing latest changes…', style: theme.textTheme.bodyMedium),
+        subtitle: Text('Showing saved info while we connect', style: theme.textTheme.bodySmall),
+      ),
+    ),
+  );
+}
+
+Widget _errorBanner(BuildContext context) {
+  final theme = Theme.of(context);
+  final Color danger = theme.colorScheme.error;
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+    child: Card(
+      elevation: 0,
+      color: danger.withValues(alpha: 0.08),
+      child: ListTile(
+        dense: true,
+        leading: Icon(CupertinoIcons.exclamationmark_triangle, color: danger),
+        title: Text('Live sync unavailable', style: theme.textTheme.bodyMedium?.copyWith(color: danger, fontWeight: FontWeight.w600)),
+        subtitle: Text('Working with saved info. Check your connection or firewall.', style: theme.textTheme.bodySmall?.copyWith(color: danger)),
+      ),
+    ),
+  );
+}
+
 Future<void> _confirmMarkAsDone(BuildContext context, WidgetRef ref, Project project, AppUser? user, {bool override = false}) async {
     if (project.status == ProjectStatus.completed) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Already completed')));
@@ -337,7 +378,7 @@ Future<void> _confirmMarkAsDone(BuildContext context, WidgetRef ref, Project pro
       });
       // Add audit update/system comment
       final actor = user?.uid ?? 'system';
-      final comment = '[SYSTEM] Project marked as completed by $actor${override ? ' (override)' : ''}';
+      final comment = 'Project marked as completed by $actor${override ? ' (override)' : ''}';
       await db.collection('projects').doc(project.id).collection('updates').add({
         'phase': 0,
         'comment': comment,
@@ -533,73 +574,7 @@ class _UpdatesTab extends ConsumerWidget {
                   final up = list[i];
                   final u = up.update;
                   final payload = up.payload ?? const <String, dynamic>{};
-                  return Card(
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(CupertinoIcons.bubble_left_bubble_right, size: 18),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(u.comment?.trim().isNotEmpty == true ? u.comment!.trim() : '(No comment)',
-                                style: const TextStyle(fontWeight: FontWeight.w500), maxLines: 4, overflow: TextOverflow.ellipsis),
-                            if (payload.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              if (payload['stage'] != null)
-                                _kv(
-                                  context,
-                                  CupertinoIcons.flag,
-                                  'Stage',
-                                  (() {
-                                    final ss = payload['stage'] as String?;
-                                    if (ss == null) return null;
-                                    try {
-                                      final st = WorkStage.values.firstWhere((e) => e.name == ss);
-                                      return _labelForStage(st);
-                                    } catch (_) {
-                                      return ss;
-                                    }
-                                  })(),
-                                ),
-                              if (payload['installment1'] != null)
-                                _installmentRow(
-                                  context,
-                                  'Installment 1',
-                                  Installment.fromMap((payload['installment1'] as Map).cast<String, dynamic>()),
-                                ),
-                              if (payload['installment2'] != null)
-                                _installmentRow(
-                                  context,
-                                  'Installment 2',
-                                  Installment.fromMap((payload['installment2'] as Map).cast<String, dynamic>()),
-                                ),
-                              if (payload['installment3'] != null)
-                                _installmentRow(
-                                  context,
-                                  'Installment 3',
-                                  Installment.fromMap((payload['installment3'] as Map).cast<String, dynamic>()),
-                                ),
-                            ],
-                            const SizedBox(height: 6),
-                            Wrap(spacing: 12, runSpacing: 4, children: [
-                              _metaChip(context, '#${u.phase}'),
-                              _metaChip(context, _fmtDateTime(u.createdAt) ?? '—'),
-                            ]),
-                          ]),
-                        ),
-                      ]),
-                    ),
-                  );
+                  return _updateTile(ctx, u, up.type, payload);
                 },
               );
             },
@@ -624,6 +599,282 @@ class _UpdatesTab extends ConsumerWidget {
       ],
     );
   }
+}
+
+Widget _updateTile(BuildContext context, ProjectUpdate u, String? type, Map<String, dynamic> payload) {
+  final cs = Theme.of(context).colorScheme;
+  final commentText = u.comment?.trim();
+
+  // Detect legacy [SYSTEM] tag and sanitize for display
+  final systemTagRe = RegExp(r'^\s*\[system\]\s*', caseSensitive: false);
+  final bool hasSystemTag = commentText != null && systemTagRe.hasMatch(commentText);
+  final String? sanitizedComment = commentText
+      ?.replaceFirst(systemTagRe, '')
+      .trim();
+
+  // Infer a type from comment text (works for legacy [SYSTEM] notes and new audit comments)
+  String? inferredType;
+  bool inferredCompletion = false;
+  final baseText = (sanitizedComment ?? commentText ?? '').trim();
+  final lc = baseText.toLowerCase();
+  if (lc.contains('completed')) {
+    inferredType = 'status';
+    inferredCompletion = true;
+  } else if (lc.contains('late installment') || lc.contains('installment')) {
+    inferredType = 'financial';
+  } else if (hasSystemTag) {
+    inferredType = 'system';
+  }
+ 
+  // Prefer explicit type, otherwise use inferred
+  final String? effType = type ?? inferredType;
+
+  final statusStr = (payload['status'] as String?)?.trim();
+  final bool isCompletion = (effType == 'status' && (statusStr == 'completed' || inferredCompletion));
+  final bool isSystem = effType == 'work' || effType == 'financial' || effType == 'status' || effType == 'request' || effType == 'details' || effType == 'system';
+
+  final IconData leadIcon = (() {
+    switch (effType) {
+      case 'work':
+        return CupertinoIcons.hammer;
+      case 'financial':
+        return Icons.currency_rupee;
+      case 'status':
+        return isCompletion ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.flag;
+      case 'request':
+        return CupertinoIcons.exclamationmark_bubble;
+      case 'details':
+        return CupertinoIcons.doc_text;
+      case 'system':
+        return CupertinoIcons.gear;
+      default:
+        return hasSystemTag ? CupertinoIcons.gear : CupertinoIcons.bubble_left_bubble_right;
+    }
+  })();
+  final Color leadTint = isCompletion ? Colors.green : (isSystem ? cs.primary : cs.secondary);
+
+  final String typeLabel = (() {
+    switch (effType) {
+      case 'work':
+        return 'Work Progress';
+      case 'financial':
+        return 'Financial';
+      case 'status':
+        return isCompletion ? 'Project Completed' : 'Status Change';
+      case 'request':
+        return 'Request';
+      case 'details':
+        return 'Details Change';
+      case 'system':
+        return 'System';
+      default:
+        return hasSystemTag ? 'System' : 'Comment';
+    }
+  })();
+
+  Widget statusPill(String s) {
+    IconData icon;
+    Color color;
+    String label;
+    switch (s) {
+      case 'completed':
+        icon = CupertinoIcons.check_mark_circled_solid;
+        color = Colors.green;
+        label = 'Completed';
+        break;
+      case 'cancelled':
+        icon = CupertinoIcons.xmark_circle_fill;
+        color = Colors.redAccent;
+        label = 'Cancelled';
+        break;
+      case 'in_progress':
+      default:
+        icon = CupertinoIcons.clock_solid;
+        color = Colors.amber;
+        label = 'In Progress';
+        break;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 6),
+        Text(label, style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color, fontWeight: FontWeight.w600)),
+      ]),
+    );
+  }
+
+  Widget? stageChip() {
+    final ss = payload['stage'] as String?;
+    if (ss == null) return null;
+    String label;
+    try {
+      final st = WorkStage.values.firstWhere((e) => e.name == ss);
+      label = _labelForStage(st);
+    } catch (_) {
+      label = ss;
+    }
+    return _metaChip(context, 'Stage: $label');
+  }
+
+  final String computedBody = (() {
+    if (!isSystem) return (sanitizedComment != null && sanitizedComment.isNotEmpty) ? sanitizedComment : '(No comment)';
+    if (effType == 'status') {
+      if (isCompletion) return 'Project marked as Completed';
+      return 'Project status updated';
+    }
+    if (effType == 'work' && payload['stage'] != null) {
+      return 'Work stage updated';
+    }
+    if (effType == 'financial') {
+      final lc = (sanitizedComment ?? '').toLowerCase();
+      if (lc.contains('late installment') || lc.contains('late installments')) return 'Late installments reported';
+      return 'Financial update recorded';
+    }
+    if (effType == 'details') {
+      return 'Project details updated';
+    }
+    if (effType == 'system') {
+      return (sanitizedComment != null && sanitizedComment.isNotEmpty) ? sanitizedComment : 'System update';
+    }
+    return (sanitizedComment != null && sanitizedComment.isNotEmpty) ? sanitizedComment : '(No comment)';
+  })();
+
+  return Card(
+    elevation: 0,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    color: isCompletion ? Colors.green.withValues(alpha: 0.06) : null,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: leadTint.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(leadIcon, size: 18, color: leadTint),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Wrap(spacing: 10, runSpacing: 6, children: [
+              _metaChip(context, '#${u.phase}'),
+              _metaChip(context, _fmtDateTime(u.createdAt) ?? '—'),
+              _metaChip(context, typeLabel),
+              if (stageChip() != null) stageChip()!,
+              if ((u.photos).isNotEmpty) _metaChip(context, '${u.photos.length} Photo${u.photos.length == 1 ? '' : 's'}'),
+              if ((u.documents).isNotEmpty) _metaChip(context, '${u.documents.length} Doc${u.documents.length == 1 ? '' : 's'}'),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        if ((effType == 'status' && (statusStr != null || isCompletion))) ...[
+          statusPill(statusStr ?? 'completed'),
+          const SizedBox(height: 10),
+        ],
+        Text(
+          computedBody,
+          style: const TextStyle(fontWeight: FontWeight.w500),
+          maxLines: 6,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (payload.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerLowest,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: cs.outlineVariant),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (payload['stage'] != null)
+                _kvSmall(
+                  context,
+                  CupertinoIcons.flag,
+                  'Stage',
+                  (() {
+                    final ss = payload['stage'] as String?;
+                    if (ss == null) return null;
+                    try {
+                      final st = WorkStage.values.firstWhere((e) => e.name == ss);
+                      return _labelForStage(st);
+                    } catch (_) {
+                      return ss;
+                    }
+                  })(),
+                ),
+              if (payload['installment1'] != null)
+                _installmentRow(
+                  context,
+                  'Installment 1',
+                  Installment.fromMap((payload['installment1'] as Map).cast<String, dynamic>()),
+                ),
+              if (payload['installment2'] != null)
+                _installmentRow(
+                  context,
+                  'Installment 2',
+                  Installment.fromMap((payload['installment2'] as Map).cast<String, dynamic>()),
+                ),
+              if (payload['installment3'] != null)
+                _installmentRow(
+                  context,
+                  'Installment 3',
+                  Installment.fromMap((payload['installment3'] as Map).cast<String, dynamic>()),
+                ),
+              if (type == 'financial') ...[
+                _kvSmall(context, Icons.currency_rupee, 'Expenditure', (payload['expenditure'] as String?)?.trim()),
+                _kvSmall(context, Icons.currency_rupee, 'Funds Received', (payload['fundsReceived'] as String?)?.trim()),
+              ],
+              if (type == 'status') ...[
+                _kvSmall(context, CupertinoIcons.flag, 'Status', (() {
+                  final s = (payload['status'] as String?)?.trim();
+                  switch (s) {
+                    case 'in_progress':
+                      return 'In Progress';
+                    case 'completed':
+                      return 'Completed';
+                    case 'cancelled':
+                      return 'Cancelled';
+                    default:
+                      return s;
+                  }
+                })()),
+              ],
+              if (type == 'request') ...[
+                _kvSmall(context, CupertinoIcons.text_bubble, 'Title', (payload['title'] as String?)?.trim()),
+                _kvSmall(context, CupertinoIcons.doc_text, 'Details', (payload['details'] as String?)?.trim()),
+              ],
+            ]),
+          ),
+        ],
+      ]),
+    ),
+  );
+}
+
+// Compact key-value row for payload area in updates tile
+Widget _kvSmall(BuildContext context, IconData icon, String key, String? value) {
+  if (value == null || value.trim().isEmpty) return const SizedBox.shrink();
+  final cs = Theme.of(context).colorScheme;
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4.0),
+    child: Row(children: [
+      Container(width: 22, height: 22, decoration: BoxDecoration(color: cs.primary.withValues(alpha: 0.10), shape: BoxShape.circle), child: Icon(icon, size: 12, color: cs.primary)),
+      const SizedBox(width: 8),
+      SizedBox(width: 80, child: Text(key, style: Theme.of(context).textTheme.labelSmall, overflow: TextOverflow.ellipsis)),
+      const SizedBox(width: 8),
+      Expanded(child: Text(value, style: Theme.of(context).textTheme.bodySmall, overflow: TextOverflow.ellipsis)),
+    ]),
+  );
 }
 
 Widget _metaChip(BuildContext context, String text) {
@@ -1427,16 +1678,16 @@ Widget _financialCard(BuildContext context, Project project) {
       PieChartSectionData(
         color: cs.primary, // accent for paid
         value: paid,
-        title: 'Paid',
-        radius: 38,
+        title: MediaQuery.of(context).size.width < 360 ? '' : 'Paid',
+        radius: MediaQuery.of(context).size.width < 360 ? 34 : 44,
         titleStyle: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
       ),
     if (remaining > 0)
       PieChartSectionData(
         color: Colors.grey, // grey for due
         value: remaining.toDouble(),
-        title: 'Due',
-        radius: 38,
+        title: MediaQuery.of(context).size.width < 360 ? '' : 'Due',
+        radius: MediaQuery.of(context).size.width < 360 ? 34 : 44,
         titleStyle: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
       ),
   ];
@@ -1531,13 +1782,14 @@ Widget _financialCard(BuildContext context, Project project) {
             ),
             child: bars(),
           );
+          final veryNarrow = c.maxWidth < 360;
           final piePane = SizedBox(
-            width: 220,
+            width: veryNarrow ? 180 : 220,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  height: 160,
+                  height: veryNarrow ? 140 : 160,
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     border: Border.all(color: cs.outlineVariant),
@@ -1548,8 +1800,8 @@ Widget _financialCard(BuildContext context, Project project) {
                       : PieChart(
                           PieChartData(
                             sections: sections,
-                            centerSpaceRadius: 42,
-                            sectionsSpace: 2,
+                            centerSpaceRadius: veryNarrow ? 30 : 40,
+                            sectionsSpace: veryNarrow ? 4 : 2,
                             pieTouchData: PieTouchData(enabled: true),
                           ),
                         ),
@@ -1997,7 +2249,7 @@ Future<void> _reportLateInstallments(BuildContext context, WidgetRef ref, Projec
       }
       return;
     }
-    final comment = '[SYSTEM] Late installments reported: ${parts.join(' | ')}';
+    final comment = 'Late installments reported: ${parts.join(' | ')}';
     await col.doc(docId).set({
       'phase': 0,
       'comment': comment,

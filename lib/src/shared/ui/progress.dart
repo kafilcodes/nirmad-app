@@ -7,7 +7,7 @@ enum AppLoadingVariant { inline, page, overlay }
 class AppLoadingIndicator extends StatelessWidget {
   const AppLoadingIndicator({
     super.key,
-    this.size = 20,
+    this.size = 22, // was 20
     this.strokeWidth = 2.0,
     this.color,
     this.backgroundColor,
@@ -27,10 +27,10 @@ class AppLoadingIndicator extends StatelessWidget {
         return size;
       case AppLoadingVariant.page:
         // Larger indicator for full-page loading states
-        return R.isCompact(context) ? 28 : 36;
+        return R.isCompact(context) ? 32 : 40; // was 28 : 36
       case AppLoadingVariant.overlay:
         // Slightly smaller than page, suitable for dialogs/overlays
-        return R.isCompact(context) ? 24 : 28;
+        return R.isCompact(context) ? 28 : 32; // was 24 : 28
     }
   }
 

@@ -262,24 +262,25 @@ class _NodalMetricsAndCharts extends ConsumerWidget {
             const SizedBox(height: 8),
           ],
           // Mobile-first: show greeting above stats for super nodal
-          if ((user?.role == UserRole.superNodal) && MediaQuery.of(context).size.width < 720) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Builder(builder: (context) {
-                  final cs = Theme.of(context).colorScheme;
-                  return Text.rich(
-                    TextSpan(children: [
-                      TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
-                      TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                    ]),
-                  );
-                }),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
+          // Show greeting above stats for Super Nodal on all screen sizes (web/desktop/mobile)
+          if (user?.role == UserRole.superNodal) ...[
+             Padding(
+               padding: const EdgeInsets.symmetric(horizontal: 12.0),
+               child: Align(
+                 alignment: Alignment.centerLeft,
+                 child: Builder(builder: (context) {
+                   final cs = Theme.of(context).colorScheme;
+                   return Text.rich(
+                     TextSpan(children: [
+                       TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
+                       TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                     ]),
+                   );
+                 }),
+               ),
+             ),
+             const SizedBox(height: 8),
+           ],
           MetricsTiles(
             query: scopedQuery,
             docs: docs,
@@ -310,22 +311,23 @@ class _NodalMetricsAndCharts extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           // Greeting after Stats section (desktop/web, or non-super-nodal)
-          if (!(user?.role == UserRole.superNodal && MediaQuery.of(context).size.width < 720))
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Builder(builder: (context) {
-                final cs = Theme.of(context).colorScheme;
-                return Text.rich(
-                  TextSpan(children: [
-                    TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
-                    TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                  ]),
-                );
-              }),
-            ),
-          ),
+          // For non-super-nodal roles, keep greeting after Stats
+          if (user?.role != UserRole.superNodal)
+             Padding(
+               padding: const EdgeInsets.symmetric(horizontal: 12.0),
+             child: Align(
+               alignment: Alignment.centerLeft,
+               child: Builder(builder: (context) {
+                 final cs = Theme.of(context).colorScheme;
+                 return Text.rich(
+                   TextSpan(children: [
+                     TextSpan(text: '$greetingPhrase, ', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: cs.primary)),
+                     TextSpan(text: greetName, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                   ]),
+                 );
+               }),
+             ),
+           ),
   LayoutBuilder(
             builder: (context, c) {
               final isWide = c.maxWidth > 900;

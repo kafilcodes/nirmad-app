@@ -322,6 +322,92 @@ class _NotificationsPage extends ConsumerWidget {
   }
 }
 
+enum OwnerSortBy { updatedDesc, updatedAsc, nameAsc, nameDesc, status }
+final ownerProjectsSortProvider = StateProvider<OwnerSortBy>((_) => OwnerSortBy.status);
+
+String ownerSortLabel(OwnerSortBy s) {
+  switch (s) {
+    case OwnerSortBy.updatedDesc:
+      return 'Newest';
+    case OwnerSortBy.updatedAsc:
+      return 'Oldest';
+    case OwnerSortBy.nameAsc:
+      return 'A–Z';
+    case OwnerSortBy.nameDesc:
+      return 'Z–A';
+    case OwnerSortBy.status:
+      return 'Status';
+  }
+}
+
+void _openOwnerSortSheet(BuildContext context, WidgetRef ref) {
+  final current = ref.read(ownerProjectsSortProvider);
+  showModalBottomSheet(
+    context: context,
+    useSafeArea: true,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text('Sort by', style: Theme.of(ctx).textTheme.titleMedium),
+          ),
+          _RadioGroup<OwnerSortBy>(
+            options: [for (final opt in OwnerSortBy.values) MapEntry(opt, ownerSortLabel(opt))],
+            groupValue: current,
+            onChanged: (v) {
+              if (v != null) {
+                ref.read(ownerProjectsSortProvider.notifier).state = v;
+              }
+              Navigator.of(ctx).pop();
+            },
+          ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    ),
+  );
+}
+
+class _RadioGroup<T> extends StatelessWidget {
+  final List<MapEntry<T, String>> options;
+  final T? groupValue;
+  final ValueChanged<T?> onChanged;
+  const _RadioGroup({required this.options, required this.groupValue, required this.onChanged});
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return RadioGroup<T>(
+      groupValue: groupValue,
+      onChanged: onChanged,
+      child: Column(
+        children: [
+          for (final e in options)
+            InkWell(
+              onTap: () => onChanged(e.key),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  children: [
+                    Radio<T>(
+                      value: e.key,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(e.value, style: Theme.of(context).textTheme.bodyMedium)),
+                    if (groupValue == e.key)
+                      Icon(CupertinoIcons.check_mark_circled_solid, size: 18, color: cs.primary),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ProjectsPage extends ConsumerWidget {
   const _ProjectsPage({required this.openDrawer, required this.onOpenProject, required this.onCreateProject});
   final VoidCallback? openDrawer;
@@ -420,9 +506,58 @@ class _ProjectsPage extends ConsumerWidget {
           pendingProjects.add(p);
         }
       }
-      lateProjects.sort(byUrgency);
-      pendingProjects.sort(byUrgency);
-      completedProjects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      // Apply selected sort
+      final sort = ref.watch(ownerProjectsSortProvider);
+      int byNameAsc(Project a, Project b) => a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      int byNameDesc(Project a, Project b) => -byNameAsc(a, b);
+      int byUpdatedDesc(Project a, Project b) => b.updatedAt.compareTo(a.updatedAt);
+      int byUpdatedAsc(Project a, Project b) => a.updatedAt.compareTo(b.updatedAt);
+      int statusRank(ProjectStatus s) {
+        switch (s) {
+          case ProjectStatus.in_progress:
+            return 0;
+          case ProjectStatus.completed:
+            return 1;
+          case ProjectStatus.cancelled:
+            return 2;
+        }
+      }
+      int byStatus(Project a, Project b) {
+        final r = statusRank(a.status).compareTo(statusRank(b.status));
+        if (r != 0) return r;
+        return byUpdatedDesc(a, b);
+      }
+
+      void sortList(List<Project> list) {
+        switch (sort) {
+          case OwnerSortBy.updatedDesc:
+            list.sort(byUpdatedDesc);
+            break;
+          case OwnerSortBy.updatedAsc:
+            list.sort(byUpdatedAsc);
+            break;
+          case OwnerSortBy.nameAsc:
+            list.sort(byNameAsc);
+            break;
+          case OwnerSortBy.nameDesc:
+            list.sort(byNameDesc);
+            break;
+          case OwnerSortBy.status:
+            list.sort(byStatus);
+            break;
+        }
+      }
+
+      // Default urgency sort when sort is status? keep urgency for late/pending group as a tiebreaker
+      if (sort == OwnerSortBy.updatedDesc || sort == OwnerSortBy.updatedAsc || sort == OwnerSortBy.nameAsc || sort == OwnerSortBy.nameDesc || sort == OwnerSortBy.status) {
+        sortList(lateProjects);
+        sortList(pendingProjects);
+        sortList(completedProjects);
+      } else {
+        lateProjects.sort(byUrgency);
+        pendingProjects.sort(byUrgency);
+        completedProjects.sort(byUpdatedDesc);
+      }
 
       String greetFor(DateTime now) {
         final ist = now.toUtc().add(const Duration(hours: 5, minutes: 30));
@@ -491,6 +626,12 @@ class _ProjectsPage extends ConsumerWidget {
                               ref.read(projectsGridViewProvider.notifier).state = v;
                               try { ref.read(sharedPrefsProvider).setBool('projectsGrid', v); } catch (_) {}
                             },
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => _openOwnerSortSheet(context, ref),
+                            icon: const Icon(CupertinoIcons.sort_down, size: 18),
+                            label: Text(ownerSortLabel(ref.watch(ownerProjectsSortProvider))),
                           ),
                         ],
                       ),
@@ -1449,7 +1590,7 @@ final MapController _mapController = MapController();
       case 'inst1Date': return _installment1DateCtrl.text.trim().isNotEmpty;
       case 'bankName': return _bankNameCtrl.text.trim().isNotEmpty;
       case 'accountHolder': return _accountHolderCtrl.text.trim().isNotEmpty;
-      case 'aadhaar': return _aadhaarCtrl.text.trim().length == 12;
+      case 'aadhaar': { final s = _aadhaarCtrl.text.trim(); return s.isEmpty || s.length == 12; }
       case 'accountNumber': return _accountNumberCtrl.text.trim().length >= 6;
       case 'branch': return _branchCtrl.text.trim().isNotEmpty;
       case 'ifsc': return _ifscCtrl.text.trim().length == 11;
@@ -2713,11 +2854,11 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
         TextFormField(
           focusNode: _fnAadhaar,
           controller: _aadhaarCtrl,
-          decoration: _req('Aadhaar Number (आधार नंबर)', prefixIcon: const Icon(CupertinoIcons.number)).copyWith(suffixIcon: _allotSuffix('aadhaar')),
+          decoration: _mobileInputDecoration('Aadhaar Number (आधार नंबर)', prefixIcon: const Icon(CupertinoIcons.number)).copyWith(suffixIcon: _allotSuffix('aadhaar')),
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(12)],
           onChanged: (_) { _allotTouched.add('aadhaar'); setState((){}); },
-          validator: (v){ final s=(v??'').trim(); if(s.length!=12) return '12 digits'; return null; },
+          validator: (v){ final s=(v??'').trim(); if(s.isEmpty) return null; if(s.length!=12) return '12 digits'; return null; },
         ),
       ),
       const SizedBox(height: 8),
@@ -3304,6 +3445,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
         child: const Icon(CupertinoIcons.chevron_up),
       ) : null,
       body: Scrollbar(
+        controller: _scrollController,
         thumbVisibility: Theme.of(context).platform == TargetPlatform.android,
         child: SingleChildScrollView(
           key: _topAnchorKey,
