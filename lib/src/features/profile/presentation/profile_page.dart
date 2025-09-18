@@ -14,6 +14,7 @@ import 'package:form_builder_validators/form_builder_validators.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../shared/ui/progress.dart';
 // Removed pickers: photo upload disabled; generated avatars are used by default
 // Cached image replaced by hash_cached_image in avatar
 // import 'package:image/image.dart' as img; // kept as reference if re-enabling uploads later
@@ -387,7 +388,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                   child: SizedBox(
                                     width: 28,
                                     height: 28,
-                                    child: CircularProgressIndicator(strokeWidth: 2.6),
+                                    child: AppLoadingIndicator(size: 28),
                                   ),
                                 ),
                               ),
@@ -711,7 +712,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                     ? null
                                     : _save,
                                 icon: _saving
-                                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                    ? const SizedBox(height: 16, width: 16, child: AppLoadingIndicator(size: 16))
                                     : const Icon(CupertinoIcons.checkmark_alt),
                                 label: Text(_saving ? 'Saving…' : 'Save changes'),
                               ),
@@ -741,7 +742,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                   ? null
                                   : _save,
                               icon: _saving
-                                  ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                  ? const SizedBox(height: 16, width: 16, child: AppLoadingIndicator(size: 16))
                                   : const Icon(CupertinoIcons.checkmark_alt),
                               label: Text(_saving ? 'Saving…' : 'Save changes'),
                             ),

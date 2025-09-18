@@ -1302,6 +1302,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.1"
+  load_it:
+    dependency: "direct main"
+    description:
+      name: load_it
+      sha256: d330ee4c3a62972cecbee8202c032b92234ce498416e047f2dd21fe43c2f3f2e
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.2"
   logger:
     dependency: "direct main"
     description:

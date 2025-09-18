@@ -320,7 +320,7 @@ class _PhaseUpdateStepperPageState extends ConsumerState<PhaseUpdateStepperPage>
                   FilledButton.icon(
                     onPressed: _locating ? null : _getLocation,
                     icon: const Icon(CupertinoIcons.location),
-                    label: Text(_locating ? 'Locating\u2026' : 'Use location'),
+                    label: Text(_locating ? 'Locating\u2026' : 'Use current location (वर्तमान स्थान)'),
                   ),
                 ],
               ),

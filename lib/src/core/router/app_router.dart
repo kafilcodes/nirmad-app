@@ -11,6 +11,7 @@ import '../../features/owner/presentation/owner_shell.dart';
 import 'package:go_transitions/go_transitions.dart';
 import '../../core/logging/app_logger.dart';
 import '../bootstrap/bootstrap_prefetch.dart';
+import '../../shared/ui/progress.dart';
 
 class _AuthNotifier extends ChangeNotifier {
   _AuthNotifier(Stream<dynamic> stream) {
@@ -121,6 +122,6 @@ class _SplashGate extends ConsumerWidget {
       AppLogger.i.d('SplashGate -> isLoggedIn: $isLoggedIn, cached: ${cached ?? '(none)'}, go: $target');
       if (context.mounted) context.go(target);
     });
-    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    return const Scaffold(body: Center(child: AppLoadingIndicator()));
   }
 }

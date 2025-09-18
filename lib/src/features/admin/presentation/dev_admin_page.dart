@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../services/functions_service.dart';
 import '../../../shared/ui/toast.dart';
+import '../../../shared/ui/progress.dart';
 
 class DevAdminPage extends ConsumerStatefulWidget {
   const DevAdminPage({super.key});
@@ -74,7 +75,7 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: _busy ? null : _assign,
-              icon: _busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.check_mark),
+              icon: _busy ? const SizedBox(width: 16, height: 16, child: AppLoadingIndicator(size: 16)) : const Icon(CupertinoIcons.check_mark),
               label: const Text('Set Claims'),
             ),
             const Divider(height: 32),
@@ -90,7 +91,7 @@ class _DevAdminPageState extends ConsumerState<DevAdminPage> {
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _busy ? null : _seed,
-              icon: _busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.person_crop_circle_badge_plus),
+              icon: _busy ? const SizedBox(width: 16, height: 16, child: AppLoadingIndicator(size: 16)) : const Icon(CupertinoIcons.person_crop_circle_badge_plus),
               label: const Text('Create Test Users'),
             ),
           ],

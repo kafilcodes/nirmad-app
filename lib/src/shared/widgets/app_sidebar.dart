@@ -14,6 +14,7 @@ import '../../core/ui/responsive_policies.dart';
 import '../../shared/data/blocks_provider.dart';
 import '../../core/prefs/shared_prefs.dart';
 import '../../services/draft_media_store.dart';
+import '../ui/progress.dart';
 
 typedef SidebarOnSelect = void Function(int index);
 
@@ -127,7 +128,7 @@ class AppSidebar extends ConsumerWidget {
             showDialog(
               context: context,
               barrierDismissible: false,
-              builder: (_) => const Center(child: CircularProgressIndicator()),
+              builder: (_) => const Center(child: AppLoadingIndicator()),
             );
             try {
               // IMPORTANT: signOut FIRST so session doc is cleared using existing device_session_id.

@@ -13,6 +13,7 @@ import '../../features/updates/state/updates_stream_provider.dart';
 import '../../features/updates/data/updates_repository.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
+import '../../shared/ui/progress.dart';
 
 // Lightweight wrapper to unify cached and streamed notification docs
 class _NotifDoc {
@@ -485,7 +486,7 @@ Expanded(
         if (cachedDocs.isNotEmpty) {
           return buildList(applyClientFilters(cachedDocs));
         }
-        return const Center(child: CircularProgressIndicator());
+        return const Center(child: AppLoadingIndicator());
       },
       error: (e, st) {
         // Show cache if present; otherwise soft empty state

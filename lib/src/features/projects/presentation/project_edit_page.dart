@@ -15,6 +15,7 @@ import 'dart:async';
 import 'package:nirmadapp/src/features/projects/data/project_repository.dart';
 import 'package:nirmadapp/src/services/storage_service.dart';
 import 'package:toastification/toastification.dart';
+import '../../../shared/ui/progress.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 // Removed unused imports: app_wizard_stepper and section_controller
 import '../../auth/data/auth_repository.dart';
@@ -588,7 +589,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
         builder: (context, snap) {
           if (!_seeded) {
             if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return const Center(child: AppLoadingIndicator());
             }
             // Not found or failed: show minimal fallback
             return Center(
@@ -934,7 +935,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                   ),
 
                   const SizedBox(height: 8),
-                  _sectionTitle(context, 'Location (स्थान)'),
+                  _sectionTitle(context, 'Location (स्थान) • Optional'),
                   Card(
                     elevation: 0,
                     child: Padding(
@@ -964,12 +965,12 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                           FilledButton.icon(
                             onPressed: fieldsAll ? _useMyLocation : null,
                             icon: const Icon(CupertinoIcons.location),
-                            label: const Text('Use my location'),
+                            label: const Text('Use current location (वर्तमान स्थान)'),
                           ),
                           OutlinedButton.icon(
                             onPressed: fieldsAll ? _pickOnMap : null,
                             icon: const Icon(CupertinoIcons.map_pin_ellipse),
-                            label: const Text('Pick on map'),
+                            label: const Text('Pick on map (मानचित्र पर चुनें)'),
                           ),
                         ]),
                       ]),
@@ -1733,7 +1734,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
         Positioned.fill(
           child: Container(
             color: Colors.black.withValues(alpha: 0.12),
-            child: const Center(child: CircularProgressIndicator()),
+            child: const Center(child: AppLoadingIndicator()),
           ),
         ),
       ]),
@@ -1913,7 +1914,7 @@ class _ProjectEditPageState extends ConsumerState<ProjectEditorPage> {
                                 if (mounted) setState(() => _saving = false);
                               }
                     },
-              icon: _saving ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white)) : const Icon(CupertinoIcons.floppy_disk),
+              icon: _saving ? const SizedBox(width: 24, height: 24, child: AppLoadingIndicator(size: 24)) : const Icon(CupertinoIcons.floppy_disk),
               label: Text(_saving ? 'Saving…' : 'Save'),
             )
             : const SizedBox.shrink(),

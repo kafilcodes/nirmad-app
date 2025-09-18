@@ -26,6 +26,7 @@ import '../domain/project_update.dart';
 // removed unused updates_repository import after refactor
 // storage_service is provided indirectly via provider in attachments tab usage
 import '../../../shared/widgets/attachment_button.dart';
+import '../../../shared/ui/progress.dart';
 import 'project_update_form_page.dart';
 // import '../../../core/widgets/branding_footer.dart';
 // import '../../../shared/ui/toast.dart';
@@ -216,9 +217,9 @@ class ProjectDetailPage extends ConsumerWidget {
   final pj = (snap.data != null && snap.data!.data() != null) ? Project.fromDoc(snap.data!) : project;
       // Unified scroll: header + stages + tabs scroll together; TabBar pinned
       final workCompleted = pj.workDescription.stage == WorkStage.completed;
-      final canUpdate = (user != null) && (pj.status != ProjectStatus.completed) && !workCompleted && (
-        (user.role == UserRole.devAdmin) || (user.role == UserRole.superNodal) || (user.role == UserRole.subNodal) || (user.role == UserRole.projectOwner && user.uid == pj.ownerId)
-      );
+      final canUpdate = (user != null) && (pj.status != ProjectStatus.completed) && !workCompleted &&
+          (user.role == UserRole.projectOwner && user.uid == pj.ownerId);
+
       return DefaultTabController(
         length: canUpdate ? 5 : 4,
         child: Scaffold(
@@ -243,7 +244,7 @@ class ProjectDetailPage extends ConsumerWidget {
                         const Tab(text: 'Details (विवरण)', icon: Icon(CupertinoIcons.doc_plaintext, size: 16)),
                         const Tab(text: 'Attachments (संलग्नक)', icon: Icon(CupertinoIcons.paperclip, size: 16)),
                         const Tab(text: 'Updates (टिप्पणियाँ)', icon: Icon(CupertinoIcons.bubble_left_bubble_right, size: 16)),
-                        if (canUpdate) const Tab(text: 'Update (अद्यतन)', icon: Icon(CupertinoIcons.pencil, size: 16)),
+                        if (canUpdate) const Tab(text: 'Project Update (अद्यतन)', icon: Icon(CupertinoIcons.tray_arrow_up, size: 16)),
                         const Tab(text: 'Owner (स्वामी)', icon: Icon(CupertinoIcons.person, size: 16)),
                       ],
                     ),
@@ -386,36 +387,68 @@ class _AttachmentsTab extends ConsumerWidget {
   addList('Work Reports', project.workDescription.workReportUrls);
   addList('Certificates', project.workDescription.certificateUrls);
 
-    return ListView(
-      key: const PageStorageKey('tab:attachments'),
-      padding: const EdgeInsets.all(12),
-      children: [
-        _sectionTitle(context, 'Attachments (संलग्नक)'),
-        const Gap(8),
-        if (files.isEmpty)
-          Card(
-            elevation: 0,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Text('No attachments uploaded', style: Theme.of(context).textTheme.bodyMedium),
-            ),
-          )
-        else
-          ...files.map((e) => Card(
+    return StreamBuilder<List<ProjectUpdate>>(
+      stream: ref.watch(projectRepositoryProvider).watchUpdates(project.id),
+      builder: (context, snap) {
+        final updates = snap.data ?? const <ProjectUpdate>[];
+        // Merge project-level attachments with update-level attachments, de-duplicated by path
+        final combined = <_AttachmentEntry>[];
+        final seen = <String>{};
+        void addPath(String label, String path) {
+          if (path.isEmpty) return;
+          if (seen.add(path)) combined.add(_AttachmentEntry(label: label, path: path));
+        }
+        void addList(String label, List<String>? list) {
+          if (list == null) return;
+          for (final p in list) {
+            addPath(label, p);
+          }
+        }
+        // Include pre-collected project-level files first (already filtered by non-empty)
+        for (final e in files) {
+          addPath(e.label, e.path);
+        }
+        // Then include update attachments, newest-first by createdAt
+        final sortedUpdates = List<ProjectUpdate>.of(updates)..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        for (final u in sortedUpdates) {
+          addList('Photos', u.photos);
+          addList('Documents', u.documents);
+        }
+
+        return ListView(
+          key: const PageStorageKey('tab:attachments'),
+          padding: const EdgeInsets.all(12),
+          children: [
+            _sectionTitle(context, 'Attachments (संलग्नक)'),
+            const Gap(8),
+            if (snap.connectionState == ConnectionState.waiting && combined.isEmpty)
+              const Center(child: AppLoadingIndicator())
+            else if (combined.isEmpty)
+              Card(
                 elevation: 0,
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  leading: _attachmentIcon(context, e.path),
-                  title: Text(e.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  // Removed subtitle (labels) per request
-                  trailing: AttachmentButton(
-                    fileName: e.fileName,
-                    resolveUrl: () async => storage.getDownloadURL(e.path),
-                  ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text('No attachments uploaded', style: Theme.of(context).textTheme.bodyMedium),
                 ),
-              )),
-        const Gap(80),
-      ],
+              )
+            else
+              ...combined.map((e) => Card(
+                    elevation: 0,
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      leading: _attachmentIcon(context, e.path),
+                      title: Text(e.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      // Removed subtitle (labels) per request
+                      trailing: AttachmentButton(
+                        fileName: e.fileName,
+                        resolveUrl: () async => storage.getDownloadURL(e.path),
+                      ),
+                    ),
+                  )),
+            const Gap(80),
+          ],
+        );
+      },
     );
   }
 }
@@ -480,12 +513,12 @@ class _UpdatesTab extends ConsumerWidget {
     return Column(
       children: [
         Expanded(
-          child: StreamBuilder<List<ProjectUpdate>>(
-            stream: repo.watchUpdates(project.id),
+          child: StreamBuilder<List<UpdateWithPayload>>(
+            stream: repo.watchUpdatesWithPayload(project.id),
             builder: (context, snap) {
-              final list = snap.data ?? const <ProjectUpdate>[];
+              final list = snap.data ?? const <UpdateWithPayload>[];
               if (snap.connectionState == ConnectionState.waiting && list.isEmpty) {
-                return const Center(child: CircularProgressIndicator());
+                return const Center(child: AppLoadingIndicator());
               }
               if (list.isEmpty) {
                 return Center(
@@ -497,7 +530,9 @@ class _UpdatesTab extends ConsumerWidget {
                 padding: const EdgeInsets.all(12),
                 itemCount: list.length,
                 itemBuilder: (ctx, i) {
-                  final u = list[i];
+                  final up = list[i];
+                  final u = up.update;
+                  final payload = up.payload ?? const <String, dynamic>{};
                   return Card(
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -518,6 +553,43 @@ class _UpdatesTab extends ConsumerWidget {
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Text(u.comment?.trim().isNotEmpty == true ? u.comment!.trim() : '(No comment)',
                                 style: const TextStyle(fontWeight: FontWeight.w500), maxLines: 4, overflow: TextOverflow.ellipsis),
+                            if (payload.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              if (payload['stage'] != null)
+                                _kv(
+                                  context,
+                                  CupertinoIcons.flag,
+                                  'Stage',
+                                  (() {
+                                    final ss = payload['stage'] as String?;
+                                    if (ss == null) return null;
+                                    try {
+                                      final st = WorkStage.values.firstWhere((e) => e.name == ss);
+                                      return _labelForStage(st);
+                                    } catch (_) {
+                                      return ss;
+                                    }
+                                  })(),
+                                ),
+                              if (payload['installment1'] != null)
+                                _installmentRow(
+                                  context,
+                                  'Installment 1',
+                                  Installment.fromMap((payload['installment1'] as Map).cast<String, dynamic>()),
+                                ),
+                              if (payload['installment2'] != null)
+                                _installmentRow(
+                                  context,
+                                  'Installment 2',
+                                  Installment.fromMap((payload['installment2'] as Map).cast<String, dynamic>()),
+                                ),
+                              if (payload['installment3'] != null)
+                                _installmentRow(
+                                  context,
+                                  'Installment 3',
+                                  Installment.fromMap((payload['installment3'] as Map).cast<String, dynamic>()),
+                                ),
+                            ],
                             const SizedBox(height: 6),
                             Wrap(spacing: 12, runSpacing: 4, children: [
                               _metaChip(context, '#${u.phase}'),

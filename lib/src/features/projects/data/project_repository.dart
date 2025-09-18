@@ -12,6 +12,14 @@ import '../../../data/firestore/query_spec.dart';
 import '../../../core/providers/firebase_providers.dart';
 import '../../auth/domain/app_user.dart';
 
+// Lightweight DTO to carry update along with its raw payload and type for richer UIs
+class UpdateWithPayload {
+  final ProjectUpdate update;
+  final String? type;
+  final Map<String, dynamic>? payload;
+  const UpdateWithPayload({required this.update, this.type, this.payload});
+}
+
 class ProjectRepository {
   ProjectRepository(this._db, {FirestoreDao? dao}) : _dao = dao ?? FirestoreDao(FirebaseFirestore.instance);
   final FirebaseFirestore _db;
@@ -98,6 +106,21 @@ class ProjectRepository {
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((s) => s.docs.map((d) => ProjectUpdate.fromDoc(projectId, d)).toList());
+  }
+
+  Stream<List<UpdateWithPayload>> watchUpdatesWithPayload(String projectId) {
+    return _updatesCol(projectId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map((d) {
+              final u = ProjectUpdate.fromDoc(projectId, d);
+              final data = d.data();
+              return UpdateWithPayload(
+                update: u,
+                type: data['type'] as String?,
+                payload: (data['payload'] as Map?)?.cast<String, dynamic>(),
+              );
+            }).toList());
   }
 
   Future<String> addUpdate(String projectId, ProjectUpdate update) async {

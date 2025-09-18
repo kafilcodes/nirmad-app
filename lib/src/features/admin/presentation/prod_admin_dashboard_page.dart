@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:csv/csv.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:pdf/widgets.dart' as pw;
+
 import 'package:printing/printing.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:animations/animations.dart';
@@ -23,6 +24,7 @@ import '../../projects/presentation/project_edit_page.dart' as editor;
 // Admin pages use the global app theme; removed custom AdminTheme for consistency
 import '../../../shared/widgets/no_data.dart';
 import '../../../shared/widgets/scroll_safe_dialog.dart';
+import '../../../shared/ui/progress.dart';
 
 class ProdAdminDashboardPage extends ConsumerStatefulWidget {
   const ProdAdminDashboardPage({super.key});
@@ -391,7 +393,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                   content: Padding(
                     padding: EdgeInsets.all(12.0),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(height: 20, width: 20, child: AppLoadingIndicator(size: 20)), 
                       SizedBox(width: 12),
                       Text('Deleting users…'),
                     ]),
@@ -426,7 +428,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
             stream: q.snapshots(),
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
+                return const Center(child: AppLoadingIndicator());
               }
               if (!snap.hasData) return const NoData(message: 'No data');
               var docs = (snap.data as QuerySnapshot<Map<String, dynamic>>).docs;
@@ -677,7 +679,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
                       }
                     },
                     child: creating
-                        ? const Row(mainAxisSize: MainAxisSize.min, children: [SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)), SizedBox(width: 8), Text('Creating…')])
+                        ? const Row(mainAxisSize: MainAxisSize.min, children: [SizedBox(height: 16, width: 16, child: AppLoadingIndicator(size: 16)), SizedBox(width: 8), Text('Creating…')])
                         : const Text('Create'),
                   ),
                   if (createdOk && genPass != null) ...[
@@ -815,7 +817,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
               content: Padding(
                 padding: EdgeInsets.all(12.0),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(height: 20, width: 20, child: AppLoadingIndicator(size: 20)), 
                   SizedBox(width: 12),
                   Text('Creating users…'),
                 ]),
@@ -923,7 +925,7 @@ class _UsersTabContentState extends State<_UsersTabContent> {
               content: Padding(
                 padding: EdgeInsets.all(12.0),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(height: 20, width: 20, child: AppLoadingIndicator(size: 20)), 
                   SizedBox(width: 12),
                   Text('Creating users…'),
                 ]),
@@ -1496,7 +1498,7 @@ class _UserDialogState extends State<_UserDialog> {
           content: Padding(
             padding: EdgeInsets.all(12.0),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(height: 20, width: 20, child: AppLoadingIndicator(size: 20)), 
               SizedBox(width: 12),
               Text('Deleting user…'),
             ]),
@@ -1628,7 +1630,7 @@ class _ProjectsTabContentState extends State<_ProjectsTabContent> {
             stream: q.snapshots(),
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
+                return const Center(child: AppLoadingIndicator());
               }
               if (!snap.hasData) return const NoData(message: 'No data');
               var docs = (snap.data as QuerySnapshot<Map<String, dynamic>>).docs;

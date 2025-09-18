@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/file_open_helper.dart';
+import '../ui/progress.dart';
 
 typedef UrlResolver = Future<String> Function();
 
@@ -63,7 +64,7 @@ class _DownloadButtonState extends State<DownloadButton> {
   Widget build(BuildContext context) {
     if (_downloading) {
       if (widget.iconOnly) {
-        return const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2));
+        return const SizedBox(width: 24, height: 24, child: AppLoadingIndicator(size: 24));
       }
       return SizedBox(
         width: 120,

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gap/gap.dart';
 import '../../../shared/widgets/scroll_safe_dialog.dart';
 import 'package:go_router/go_router.dart';
+import '../../../shared/ui/progress.dart';
 
 import '../data/auth_repository.dart';
 import '../domain/app_user.dart';
@@ -184,15 +185,10 @@ class _ModernLoginPageState extends ConsumerState<ModernLoginPage> {
                         builder: (context, setState) {
                           return FilledButton.icon(
                             icon: submitting
-                                ? SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.2,
-                                      valueColor: AlwaysStoppedAnimation(
-                                        Theme.of(context).colorScheme.onPrimary,
-                                      ),
-                                    ),
+                                ? AppLoadingIndicator(
+                                    size: 16,
+                                    strokeWidth: 2.2,
+                                    color: Theme.of(context).colorScheme.onPrimary,
                                   )
                                 : const Icon(Icons.logout),
                             onPressed: submitting
@@ -566,14 +562,7 @@ class _AuthCard extends StatelessWidget {
               FilledButton.icon(
                 onPressed: loading ? null : onSubmit,
                 icon: loading
-                    ? SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor:
-                                AlwaysStoppedAnimation(color.onPrimary)),
-                      )
+                    ? AppLoadingIndicator(size: 18, strokeWidth: 2, color: color.onPrimary)
                     : const Icon(Icons.login),
                 label: const Text('Sign in'),
                 style: FilledButton.styleFrom(

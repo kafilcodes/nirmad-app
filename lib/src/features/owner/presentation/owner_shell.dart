@@ -38,6 +38,7 @@ import '../../profile/presentation/profile_page.dart';
 import '../../../shared/widgets/notifications_list.dart';
 import '../../../shared/widgets/no_data.dart';
 import '../../../shared/widgets/illustrated_background.dart';
+import '../../../shared/ui/progress.dart';
 import '../../../shared/widgets/date_form_field.dart';
 import '../../../shared/widgets/scroll_safe_dialog.dart';
 import '../../auth/data/auth_repository.dart';
@@ -87,11 +88,11 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
     // Hard guard: only Project Owners may access this shell
     final userAsync = ref.watch(authStateProvider);
     if (!userAsync.hasValue) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: AppLoadingIndicator()));
     }
     final user = userAsync.value;
     if (user == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: AppLoadingIndicator()));
     }
     if (user.role != UserRole.projectOwner) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -99,7 +100,7 @@ class _OwnerShellState extends ConsumerState<OwnerShell> {
           context.go('/dashboard');
         }
       });
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: AppLoadingIndicator()));
     }
 
     final screenW = MediaQuery.of(context).size.width;
@@ -349,7 +350,7 @@ class _ProjectsPage extends ConsumerWidget {
       }).toList();
     }
     if (!hadAny && projectsAsync.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: AppLoadingIndicator());
     }
     if (!hadAny) {
       return Center(
@@ -406,8 +407,12 @@ class _ProjectsPage extends ConsumerWidget {
       final startOfToday = DateTime(today.year, today.month, today.day);
       final lateProjects = <Project>[];
       final pendingProjects = <Project>[];
+      final completedProjects = <Project>[];
       for (final p in projects) {
-        if (p.status == ProjectStatus.completed) continue;
+        if (p.status == ProjectStatus.completed) {
+          completedProjects.add(p);
+          continue;
+        }
         final d = deadlineOf(p.financials['deadline']);
         if (d != null && d.isBefore(startOfToday)) {
           lateProjects.add(p);
@@ -417,6 +422,7 @@ class _ProjectsPage extends ConsumerWidget {
       }
       lateProjects.sort(byUrgency);
       pendingProjects.sort(byUrgency);
+      completedProjects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
       String greetFor(DateTime now) {
         final ist = now.toUtc().add(const Duration(hours: 5, minutes: 30));
@@ -515,7 +521,7 @@ class _ProjectsPage extends ConsumerWidget {
               ),
             ),
           ),
-          if (q.isNotEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
+          if (q.isNotEmpty && lateProjects.isEmpty && pendingProjects.isEmpty && completedProjects.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
               child: Center(
@@ -526,7 +532,7 @@ class _ProjectsPage extends ConsumerWidget {
                 ),
               ),
             ),
-          if (q.isEmpty && lateProjects.isEmpty && pendingProjects.isEmpty)
+          if (q.isEmpty && lateProjects.isEmpty && pendingProjects.isEmpty && completedProjects.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
               child: Center(
@@ -625,6 +631,43 @@ class _ProjectsPage extends ConsumerWidget {
                         return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
                       },
                       itemCount: pendingProjects.length,
+                    ),
+            ),
+          if (completedProjects.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Completed (${completedProjects.length})', style: Theme.of(context).textTheme.titleMedium),
+                ),
+              ),
+            ),
+          if (completedProjects.isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.all(12.0),
+              sliver: ref.watch(projectsGridViewProvider)
+                  ? SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: cols,
+                        crossAxisSpacing: gap,
+                        mainAxisSpacing: gap,
+                        childAspectRatio: 1.2,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final p = completedProjects[index];
+                          return ProjectCard(project: p, onOpen: () => onOpenProject(p));
+                        },
+                        childCount: completedProjects.length,
+                      ),
+                    )
+                  : SliverList.builder(
+                      itemBuilder: (context, index) {
+                        final p = completedProjects[index];
+                        return _ProjectListTile(project: p, onOpen: () => onOpenProject(p));
+                      },
+                      itemCount: completedProjects.length,
                     ),
             ),
         ],
@@ -3111,7 +3154,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
                 padding: const EdgeInsets.only(top: 6.0),
                 child: Row(
                   children: const [
-                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                    SizedBox(width: 14, height: 14, child: AppLoadingIndicator(strokeWidth: 2)),
                     SizedBox(width: 8),
                     Text('Loading local Gram Panchayat list…'),
                   ],
@@ -4456,7 +4499,7 @@ child: KeyedSubtree(
                               }
               }
             : null,
-          icon: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.plus_circle_fill),
+          icon: _saving ? const SizedBox(width: 16, height: 16, child: AppLoadingIndicator(strokeWidth: 2)) : const Icon(CupertinoIcons.plus_circle_fill),
           label: const Text('Create Project', textAlign: TextAlign.center,),
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),

@@ -14,6 +14,7 @@ import '../../../shared/data/blocks_provider.dart';
 import '../../../shared/widgets/project_card.dart';
 import '../state/projects_snapshot_provider.dart';
 import '../../../shared/utils/date_parse.dart';
+import '../../../shared/ui/progress.dart';
 
 final nodalStatusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
 // Overdue-days filter (e.g., 30 or 60). Null means no overdue filter.
@@ -235,7 +236,7 @@ class NodalDashboardListPage extends ConsumerWidget {
                       final placeholder = ref.watch(_accumulatedProvider);
                       if (placeholder.isNotEmpty) return _buildList(context, ref, placeholder, isGrid, search);
                       if (diskFirst.isNotEmpty) return _buildList(context, ref, diskFirst, isGrid, search);
-                      return const Center(child: CircularProgressIndicator());
+                      return const Center(child: AppLoadingIndicator());
                     },
                     error: (_, __) {
                       final placeholder = ref.watch(_accumulatedProvider);

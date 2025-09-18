@@ -16,6 +16,7 @@ import '../state/projects_snapshot_provider.dart';
 import '../../../shared/data/blocks_provider.dart';
 import '../../projects/domain/project.dart';
 import 'nodal_dashboard_list_page.dart' show NodalDashboardListPage, nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider;
+import '../../../shared/ui/progress.dart';
 
 class NodalDashboardPage extends ConsumerStatefulWidget {
   const NodalDashboardPage({super.key});
@@ -69,11 +70,11 @@ class _NodalDashboardPageState extends ConsumerState<NodalDashboardPage> with Si
     final isCompact = MediaQuery.of(context).size.width < 900;
     final userAsync = ref.watch(authStateProvider);
     if (!userAsync.hasValue) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: AppLoadingIndicator()));
     }
     final user = userAsync.value;
     if (user == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: AppLoadingIndicator()));
     }
     if (user.role == UserRole.projectOwner) {
       // Owners should be on the owner shell instead
@@ -82,7 +83,7 @@ class _NodalDashboardPageState extends ConsumerState<NodalDashboardPage> with Si
           context.go('/owner');
         }
       });
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: AppLoadingIndicator()));
     }
     return Scaffold(
       body: SafeArea(

@@ -74,6 +74,7 @@ dependencies:
   tbib_downloader: ^2.4.0
   downloadsfolder: ^1.2.0
   awesome_notifications: ^0.10.1
+  load_it: ^0.0.2
 
 dev_dependencies:
   brand_forge:

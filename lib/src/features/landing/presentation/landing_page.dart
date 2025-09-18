@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/widgets/branding_footer.dart';
 import '../../auth/data/auth_repository.dart';
 import 'package:gap/gap.dart';
+import '../../../shared/ui/progress.dart';
 
 class LandingPage extends ConsumerWidget {
   const LandingPage({super.key});
@@ -14,7 +15,7 @@ class LandingPage extends ConsumerWidget {
     final auth = ref.watch(authStateProvider);
     if (auth.isLoading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: Center(child: AppLoadingIndicator()),
       );
     }
     return Scaffold(
