@@ -129,7 +129,7 @@ Expanded(
                         )
                       : ListView.separated(
                           itemCount: docs.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 6),
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
                           itemBuilder: (context, i) {
                             final d = docs[i];
                   final data = d.data;
@@ -210,164 +210,168 @@ Expanded(
                   const SizedBox(width: 10),
                               // Main content
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // Header: icon + title (and optional project name below)
-                                    Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        CircleAvatar(
-                                          radius: 16,
-                                          backgroundColor: cs.primary.withValues(alpha: 0.12),
-                                          child: Icon(leadingIcon, size: 16, color: cs.primary),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                title,
-                                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: cs.onSurface),
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                              if ((data['projectName'] as String?)?.isNotEmpty == true)
-                                                Padding(
-                                                  padding: const EdgeInsets.only(top: 2.0),
-                                                  child: Text(
-                                                    data['projectName'] as String,
-                                                    style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 6),
-                                    // Body (non-comment types only): show short preview
-                                    if (notifType != 'comment' && body.isNotEmpty)
-                                      Text(
-                                        body,
-                                        maxLines: MediaQuery.of(context).size.width < 420 ? 2 : 3,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                                      ),
-                                    // Comment (hidden by default; toggle to show without overflow)
-                                    if (notifType == 'comment' && body.isNotEmpty) ...[
-                                      if (!expanded)
-                                        Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: TextButton.icon(
-                                            onPressed: () => ref.read(_commentExpandedProvider(d.id).notifier).state = true,
-                                            icon: const Icon(CupertinoIcons.bubble_left_bubble_right, size: 16),
-                                            label: const Text('Show comment'),
-                                            style: TextButton.styleFrom(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                              visualDensity: VisualDensity.compact,
-                                            ),
-                                          ),
-                                        )
-                                      else
-                                        Padding(
-                                          padding: const EdgeInsets.only(top: 2.0, bottom: 2.0),
-                                          child: ClipRRect(
-                                            borderRadius: const BorderRadius.only(topRight: Radius.circular(6), bottomRight: Radius.circular(6)),
-                                            child: Stack(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      // Header: icon + title (and optional project name below)
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.center,
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        
+                                        children: [
+                                          Icon(leadingIcon, size: 30, color: cs.primary,),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                     
                                               children: [
-                                                // Background container without borders to avoid non-uniform border + radius issue
-                                                Container(
-                                                  width: double.infinity,
-                                                  color: cs.surfaceContainerLow,
-                                                  child: Padding(
-                                                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-                                                    child: Column(
-                                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                                      children: [
-                                                        Row(
-                                                          mainAxisSize: MainAxisSize.min,
-                                                          children: [
-                                                            Icon(Icons.format_quote, size: 14, color: cs.primary),
-                                                            const SizedBox(width: 4),
-                                                            Text('Comment', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.primary, fontWeight: FontWeight.w600)),
-                                                          ],
-                                                        ),
-                                                        const SizedBox(height: 2),
-                                                        Text(
-                                                          body,
-                                                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                                                color: cs.onSurface,
-                                                                fontStyle: FontStyle.italic,
-                                                              ),
-                                                        ),
-                                                        Align(
-                                                          alignment: Alignment.centerLeft,
-                                                          child: TextButton.icon(
-                                                            onPressed: () => ref.read(_commentExpandedProvider(d.id).notifier).state = false,
-                                                            icon: const Icon(CupertinoIcons.chevron_up, size: 14),
-                                                            label: const Text('Hide comment'),
-                                                            style: TextButton.styleFrom(
-                                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                              visualDensity: VisualDensity.compact,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ],
+                                                Text(
+                                                  title,
+                                                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: cs.onSurface),
+                                                  maxLines: 2,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                                if ((data['projectName'] as String?)?.isNotEmpty == true)
+                                                  Padding(
+                                                    padding: const EdgeInsets.only(top: 2.0),
+                                                    child: Text(
+                                                      data['projectName'] as String,
+                                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
                                                     ),
                                                   ),
-                                                ),
-                                                // Left accent bar as an overlay (no border used)
-                                                Positioned(
-                                                  left: 0,
-                                                  top: 0,
-                                                  bottom: 0,
-                                                  child: Container(width: 3, color: cs.primary),
-                                                ),
                                               ],
                                             ),
                                           ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      // Body (non-comment types only): show short preview
+                                      if (notifType != 'comment' && body.isNotEmpty)
+                                        Text(
+                                          body,
+                                          maxLines: MediaQuery.of(context).size.width < 420 ? 2 : 3,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant, fontStyle: FontStyle.italic),
+                                          
                                         ),
-                                    ],
-                                    const SizedBox(height: 6),
-                                    // Footer: time on left, action on right
-                                    Row(
-                                      children: [
-                                        if (rel.isNotEmpty)
-                                          Text(rel, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
-                                        const Spacer(),
-                                        if (projectId != null)
-                                          IconButton(
-                                            tooltip: 'Open project',
-                                            onPressed: () {
-                                              Navigator.of(context).push(
-                                                MaterialPageRoute(
-                                                  builder: (_) => ProjectDetailPage(
-                                                    project: Project(
-                                                      id: projectId,
-                                                      name: data['projectName'] ?? '',
-                                                      ownerId: data['ownerId'] ?? '',
-                                                      blockId: data['blockId'] ?? '',
-                                                      villageId: '',
-                                                      createdAt: DateTime.now(),
-                                                      updatedAt: DateTime.now(),
+                                      // Comment (hidden by default; toggle to show without overflow)
+                                      if (notifType == 'comment' && body.isNotEmpty) ...[
+                                        if (!expanded)
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: TextButton.icon(
+                                              onPressed: () => ref.read(_commentExpandedProvider(d.id).notifier).state = true,
+                                              icon: const Icon(CupertinoIcons.bubble_left_bubble_right, size: 16),
+                                              label: const Text('Show comment'),
+                                              style: TextButton.styleFrom(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                visualDensity: VisualDensity.compact,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 2.0, bottom: 2.0),
+                                            child: ClipRRect(
+                                              borderRadius: const BorderRadius.only(topRight: Radius.circular(6), bottomRight: Radius.circular(6)),
+                                              child: Stack(
+                                                children: [
+                                                  // Background container without borders to avoid non-uniform border + radius issue
+                                                  Container(
+                                                    width: double.infinity,
+                                                    color: cs.surfaceContainerLow,
+                                                    child: Padding(
+                                                      padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                                                      child: Column(
+                                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                                        children: [
+                                                          Row(
+                                                            mainAxisSize: MainAxisSize.min,
+                                                            children: [
+                                                              Icon(Icons.format_quote, size: 14, color: cs.primary),
+                                                              const SizedBox(width: 4),
+                                                              Text('Comment', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.primary, fontWeight: FontWeight.w600)),
+                                                            ],
+                                                          ),
+                                                          const SizedBox(height: 2),
+                                                          Text(
+                                                            body,
+                                                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                                  color: cs.onSurface,
+                                                                  fontStyle: FontStyle.italic,
+                                                                ),
+                                                          ),
+                                                          Align(
+                                                            alignment: Alignment.centerLeft,
+                                                            child: TextButton.icon(
+                                                              onPressed: () => ref.read(_commentExpandedProvider(d.id).notifier).state = false,
+                                                              icon: const Icon(CupertinoIcons.chevron_up, size: 14),
+                                                              label: const Text('Hide comment'),
+                                                              style: TextButton.styleFrom(
+                                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                                visualDensity: VisualDensity.compact,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
                                                     ),
                                                   ),
-                                                ),
-                                              );
-                                            },
-                                            icon: Icon(Icons.open_in_new_rounded, color: cs.primary),
-                                            iconSize: 18,
-                                            padding: const EdgeInsets.all(6),
-                                            visualDensity: VisualDensity.compact,
-                                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                                  // Left accent bar as an overlay (no border used)
+                                                  Positioned(
+                                                    left: 0,
+                                                    top: 0,
+                                                    bottom: 0,
+                                                    child: Container(width: 3, color: cs.primary),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
                                           ),
                                       ],
-                                    ),
-                                  ],
+                                      const SizedBox(height: 6),
+                                      // Footer: time on left, action on right
+                                      Row(
+                                        children: [
+                                          if (rel.isNotEmpty)
+                                            Text(rel, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
+                                          const Spacer(),
+                                          if (projectId != null)
+                                            IconButton(
+                                              tooltip: 'Open project',
+                                              onPressed: () {
+                                                Navigator.of(context).push(
+                                                  MaterialPageRoute(
+                                                    builder: (_) => ProjectDetailPage(
+                                                      project: Project(
+                                                        id: projectId,
+                                                        name: data['projectName'] ?? '',
+                                                        ownerId: data['ownerId'] ?? '',
+                                                        blockId: data['blockId'] ?? '',
+                                                        villageId: '',
+                                                        createdAt: DateTime.now(),
+                                                        updatedAt: DateTime.now(),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                              icon: Icon(Icons.open_in_new_rounded, color: cs.primary),
+                                              iconSize: 18,
+                                              padding: const EdgeInsets.all(6),
+                                              visualDensity: VisualDensity.compact,
+                                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                            ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
@@ -500,8 +504,9 @@ Expanded(
           final m = RegExp(r'https://console\.firebase\.google\.com[^\s\)]*').firstMatch(msg);
           final url = m?.group(0);
           if (url != null) {
-            // ignore: avoid_print
-            print('Firestore index required (Updates): $url');
+            if (kDebugMode) {
+              debugPrint('Firestore index required (Updates): $url');
+            }
           }
         } catch (_) {}
         // Keep UI (search/actions) visible even on error by showing an empty results area

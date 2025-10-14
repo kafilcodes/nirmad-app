@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
@@ -20,7 +21,7 @@ final dashboardProjectsStreamProvider = StreamProvider<QuerySnapshot<Map<String,
     case UserRole.subNodal:
       // Sub Nodal: filter strictly by block, but be alias-aware.
       final keys = blockQueryKeys(auth.blockId);
-  AppLogger.i.d('projects stream: sub_nodal keys=${keys.join(', ')}');
+      if (!kReleaseMode) AppLogger.i.d('projects stream: sub_nodal keys=${keys.join(', ')}');
       if (keys.isEmpty) {
         base = db.collection('projects').where('blockId', isEqualTo: '__none__');
       } else if (keys.length == 1) {

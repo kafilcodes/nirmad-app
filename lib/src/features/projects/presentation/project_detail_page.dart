@@ -1678,16 +1678,32 @@ Widget _financialCard(BuildContext context, Project project) {
       PieChartSectionData(
         color: cs.primary, // accent for paid
         value: paid,
-        title: MediaQuery.of(context).size.width < 360 ? '' : 'Paid',
-        radius: MediaQuery.of(context).size.width < 360 ? 34 : 44,
+        title: (() {
+          final w = MediaQuery.of(context).size.width;
+          final smallW = w <= 420;
+          final veryNarrowW = w < 360;
+          final totalLocal = ((paid + remaining) <= 0) ? 1.0 : (paid + remaining);
+          final pct = paid / totalLocal;
+          if (veryNarrowW || (smallW && pct < 0.16)) return '';
+          return 'Paid';
+        })(),
+        radius: MediaQuery.of(context).size.width < 360 ? 30 : 38,
         titleStyle: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
       ),
     if (remaining > 0)
       PieChartSectionData(
         color: Colors.grey, // grey for due
         value: remaining.toDouble(),
-        title: MediaQuery.of(context).size.width < 360 ? '' : 'Due',
-        radius: MediaQuery.of(context).size.width < 360 ? 34 : 44,
+        title: (() {
+          final w = MediaQuery.of(context).size.width;
+          final smallW = w <= 420;
+          final veryNarrowW = w < 360;
+          final totalLocal = ((paid + remaining) <= 0) ? 1.0 : (paid + remaining);
+          final pct = remaining / totalLocal;
+          if (veryNarrowW || (smallW && pct < 0.16)) return '';
+          return 'Due';
+        })(),
+        radius: MediaQuery.of(context).size.width < 360 ? 30 : 38,
         titleStyle: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
       ),
   ];
@@ -1795,13 +1811,16 @@ Widget _financialCard(BuildContext context, Project project) {
                     border: Border.all(color: cs.outlineVariant),
                     borderRadius: BorderRadius.circular(8),
                   ),
+                  clipBehavior: Clip.hardEdge,
                   child: (budget <= 0)
                       ? Center(child: Text('No budget', style: Theme.of(context).textTheme.labelSmall))
                       : PieChart(
                           PieChartData(
                             sections: sections,
-                            centerSpaceRadius: veryNarrow ? 30 : 40,
-                            sectionsSpace: veryNarrow ? 4 : 2,
+                            centerSpaceRadius: veryNarrow ? 20: 30,
+                            sectionsSpace: veryNarrow ? 4 : 3,
+                            startDegreeOffset: -90,
+                            borderData: FlBorderData(show: false),
                             pieTouchData: PieTouchData(enabled: true),
                           ),
                         ),

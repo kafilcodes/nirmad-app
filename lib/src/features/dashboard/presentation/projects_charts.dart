@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../projects/domain/project.dart';
 import 'nodal_dashboard_list_page.dart' show nodalOverdueDaysFilterProvider, nodalStatusFilterProvider, blockFilterProvider, nodalStageFilterProvider, gramPanchayatFilterProvider;
 import 'dart:math' as math;
+import '../../../core/ui/responsive_policies.dart';
 
 // Required charts for dashboard:
 // - Pie (outlined) of project count by block (left/top-left)
@@ -111,7 +112,7 @@ class ProjectsCharts extends ConsumerWidget {
       final isSmallWidth = c.maxWidth < 420;
       // Heights tuned for overlap prevention; pie is a bit smaller on small screens,
       // while radar/bars are larger on small Android for better readability/tap targets.
-      double pieHeight = isSmallWidth ? 206 : 272;
+      double pieHeight = isSmallWidth ? 220 : 272;
       double radarHeight = isSmallWidth ? 300 : 320;
       double barsHeight = veryNarrow ? 250 : 290;
       if (isAndroid && isSmallWidth) {
@@ -130,8 +131,8 @@ class ProjectsCharts extends ConsumerWidget {
         children: [
           // Uniform vertical spacing: each chart card gets symmetric vertical padding
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: R.chipSpacing(context),
+            runSpacing: R.runSpacing(context),
             children: [
               if (!isSubNodal) ...[
                 SizedBox(
@@ -225,8 +226,8 @@ class ProjectsCharts extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Wrap(
-                            spacing: 10,
-                            runSpacing: 6,
+                            spacing: R.chipSpacing(context),
+                            runSpacing: R.runSpacing(context),
                             children: [
                               _StatChip(
                                 color: Colors.green,
@@ -335,15 +336,16 @@ class _OutlinedPieByGroup extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
         Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         Expanded(
-          child: PieChart(
-            PieChartData(
+            child: ClipRect(
+              clipBehavior: Clip.none,
+              
+              child: PieChart(
+                PieChartData(
               startDegreeOffset: -90,
-              centerSpaceRadius: (MediaQuery.of(context).size.width < 360)
-                  ? 30.0
-                  : (small ? 36.0 : 46.0) - (isAndroid && small ? 4.0 : 0.0),
-              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 3 : (small ? 2 : 2),
+              centerSpaceRadius: R.pieCenterSpace(context, small: small, isAndroid: isAndroid),
+              sectionsSpace: R.pieSectionSpace(context, sectionCount: entries.length),
               borderData: FlBorderData(show: false),
               pieTouchData: PieTouchData(
                 enabled: true,
@@ -367,34 +369,37 @@ class _OutlinedPieByGroup extends ConsumerWidget {
                   PieChartSectionData(
                     value: entries[i].value.toDouble(),
                     color: colors[i % colors.length],
-                    radius: (MediaQuery.of(context).size.width < 360)
-                        ? 42.0
-                        : (small ? 46.0 : 54.0) - (isAndroid && small ? 4.0 : 0.0),
+                    radius: R.pieSectionRadius(context, small: small, isAndroid: isAndroid) - 5 ,
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
                     title: () {
                       final totalLocal = total == 0 ? 1 : total;
                       final pct = entries[i].value / totalLocal;
                       final veryNarrow = MediaQuery.of(context).size.width < 360;
-                      // Hide tiny slice labels on very narrow screens to avoid overlaps
-                      if (veryNarrow && (pct < 0.14 || entries.length > 5)) return '';
-                      return '${(pct * 100).toStringAsFixed(0)}%';
+                      final smallW = MediaQuery.sizeOf(context).width <= 420;
+                      // Hide tiny slice labels more aggressively on small/very-narrow to avoid overlaps
+                      if ((veryNarrow && (pct < 0.20 || entries.length > 5)) ||
+                          (smallW && (pct < 0.16 || entries.length > 6))) {
+                        return '';
+                      }
+                       return '${(pct * 100).toStringAsFixed(0)}%';
                     }(),
                     titleStyle: TextStyle(
-                      fontSize: (MediaQuery.of(context).size.width < 360) ? 7.5 : (small ? 8 : 10),
+                      fontSize: R.pieLabelFontSize(context, small: small),
                       fontWeight: FontWeight.w600,
                       color: cs.onPrimary,
                     ),
                   ),
-              ],
-            ),
-            duration: const Duration(milliseconds: 450),
-          ),
+                ],
+              ),
+              duration: const Duration(milliseconds: 450),
+                          ),
+                      ),
         ),
-  const SizedBox(height: 12), // increased spacing between chart and legends
+        SizedBox(height: MediaQuery.sizeOf(context).width <= 420 ? 14 : 12),
         _AdaptiveLegends(
           entries: entries,
           colorForIndex: (i) => colors[i % colors.length],
-          maxVisible: 7,
+          maxVisible: MediaQuery.sizeOf(context).width <= 420 ? 5 : 7,
           labelBuilder: (e) => e.key,
           onTap: (e) {
             final label = e.key.trim();
@@ -405,13 +410,13 @@ class _OutlinedPieByGroup extends ConsumerWidget {
             onNavigate?.call();
           },
         ),
-        ],
-      ),
-    );
+      ],
+    ),
+  );
   }
 }
-
-class _OutlinedPieByBlock extends StatelessWidget {
+ 
+ class _OutlinedPieByBlock extends StatelessWidget {
   final List<MapEntry<String, int>> blocks;
   final bool small;
   final void Function(String label)? onSelect;
@@ -441,13 +446,13 @@ class _OutlinedPieByBlock extends StatelessWidget {
         const Text('Projects by block', style: TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
   Expanded(
-          child: PieChart(
-            PieChartData(
+          child: ClipRect(
+            clipBehavior: Clip.none,
+            child: PieChart(
+              PieChartData(
               startDegreeOffset: -90,
-              centerSpaceRadius: (MediaQuery.of(context).size.width < 360)
-                  ? 30.0
-                  : (small ? 36.0 : 46.0) - (isAndroid && small ? 4.0 : 0.0),
-              sectionsSpace: (MediaQuery.of(context).size.width < 360) ? 3 : (small ? 2 : 2),
+              centerSpaceRadius: R.pieCenterSpace(context, small: small, isAndroid: isAndroid),
+              sectionsSpace: R.pieSectionSpace(context, sectionCount: blocks.length),
               borderData: FlBorderData(show: false),
               pieTouchData: PieTouchData(
                 enabled: onSelect != null,
@@ -463,9 +468,7 @@ class _OutlinedPieByBlock extends StatelessWidget {
                   PieChartSectionData(
                     value: blocks[i].value.toDouble(),
                     color: colors[i % colors.length],
-                    radius: (MediaQuery.of(context).size.width < 360)
-                        ? 42.0
-                        : (small ? 46.0 : 54.0) - (isAndroid && small ? 4.0 : 0.0),
+                    radius: R.pieSectionRadius(context, small: small, isAndroid: isAndroid),
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.9), width: 1.5),
                     title: () {
                       final veryNarrow = MediaQuery.of(context).size.width < 360;
@@ -473,14 +476,19 @@ class _OutlinedPieByBlock extends StatelessWidget {
                       if (veryNarrow && (pct < 0.14 || blocks.length > 5)) return '';
                       return '${(pct * 100).toStringAsFixed(0)}%';
                     }(),
-                    titleStyle: TextStyle(fontSize: (MediaQuery.of(context).size.width < 360) ? 7.5 : (small ? 9 : 11), fontWeight: FontWeight.w600, color: cs.onPrimary),
+                    titleStyle: TextStyle(
+                       fontSize: R.pieLabelFontSize(context, small: small),
+                       fontWeight: FontWeight.w600,
+                       color: cs.onPrimary,
+                     ),
                   ),
               ],
             ),
             duration: const Duration(milliseconds: 450),
           ),
         ),
-  const SizedBox(height: 12), // increased spacing between chart and legends
+      ),
+      const SizedBox(height: 12), // increased spacing between chart and legends
         _AdaptiveLegends(
           entries: blocks,
           colorForIndex: (i) => colors[i % colors.length],
@@ -921,8 +929,8 @@ class _ChartsLoadingSkeleton extends StatelessWidget {
                     if (legendLines != null) ...[
                       const SizedBox(height: 12),
                       Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
+                        spacing: R.chipSpacing(context),
+                        runSpacing: R.runSpacing(context),
                         children: List.generate(legendLines, (i) => const _SkeletonBlock(height: 20, width: 90)).toList(),
                       ),
                     ],
@@ -941,8 +949,8 @@ class _ChartsLoadingSkeleton extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Wrap(
-                spacing: 12,
-                runSpacing: 12,
+                spacing: R.chipSpacing(context),
+                runSpacing: R.runSpacing(context),
                 children: [
                   chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 4),
                   if (!narrow) chartCard(width: half, height: veryNarrow ? 250 : 320, legendLines: 5),
@@ -961,8 +969,8 @@ class _ChartsLoadingSkeleton extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Wrap(
-                                spacing: 10,
-                                runSpacing: 6,
+                                spacing: R.chipSpacing(context),
+                                runSpacing: R.runSpacing(context),
                                 children: List.generate(3, (i) => const _SkeletonBlock(height: 26, width: 110, radius: BorderRadius.all(Radius.circular(20)))).toList(),
                               ),
                               const SizedBox(height: 16),
@@ -1049,8 +1057,8 @@ class _AdaptiveLegends extends StatelessWidget {
       return ConstrainedBox(
         constraints: BoxConstraints(maxWidth: c.maxWidth),
         child: Wrap(
-          spacing: (c.maxWidth < 360) ? 3 : 6,
-          runSpacing: (c.maxWidth < 360) ? 3 : 6,
+          spacing: R.chipSpacing(context),
+          runSpacing: R.runSpacing(context),
           children: children,
         ),
       );

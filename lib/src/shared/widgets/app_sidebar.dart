@@ -15,6 +15,7 @@ import '../../shared/data/blocks_provider.dart';
 import '../../core/prefs/shared_prefs.dart';
 import '../../services/draft_media_store.dart';
 import '../ui/progress.dart';
+import '../../features/dashboard/state/projects_snapshot_provider.dart';
 
 typedef SidebarOnSelect = void Function(int index);
 
@@ -148,6 +149,7 @@ class AppSidebar extends ConsumerWidget {
                 }
               } catch (_) {}
               try { ref.invalidate(currentUserProfileProvider); } catch (_) {}
+              try { ref.invalidate(dashboardProjectsStreamProvider); } catch (_) {}
             } catch (_) {
               // ignored (UI will still navigate to login)
             } finally {

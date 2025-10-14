@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/ui/responsive_policies.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/app_user.dart';
 import '../../projects/domain/project.dart';
@@ -14,7 +15,7 @@ import '../../../shared/data/blocks_provider.dart';
 import '../../../shared/widgets/project_card.dart';
 import '../state/projects_snapshot_provider.dart';
 import '../../../shared/utils/date_parse.dart';
-import '../../../shared/ui/progress.dart';
+// import '../../../shared/ui/progress.dart';
 
 final nodalStatusFilterProvider = StateProvider<ProjectStatus?>((_) => null);
 // Overdue-days filter (e.g., 30 or 60). Null means no overdue filter.
@@ -235,8 +236,9 @@ class NodalDashboardListPage extends ConsumerWidget {
                     loading: () {
                       final placeholder = ref.watch(_accumulatedProvider);
                       if (placeholder.isNotEmpty) return _buildList(context, ref, placeholder, isGrid, search);
+                      final diskFirst = ref.watch(nodalFirstPageDiskFirstProvider).maybeWhen(data: (v) => v, orElse: () => const <Project>[]);
                       if (diskFirst.isNotEmpty) return _buildList(context, ref, diskFirst, isGrid, search);
-                      return const Center(child: AppLoadingIndicator());
+                      return _ListContainer(child: _ProjectsListSkeleton(isGrid: isGrid));
                     },
                     error: (_, __) {
                       final placeholder = ref.watch(_accumulatedProvider);
@@ -422,17 +424,17 @@ class NodalDashboardListPage extends ConsumerWidget {
                             Text('#${p.id}', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white70)),
                           ]),
                           const SizedBox(height: 6),
-                          Wrap(spacing: 6, runSpacing: 6, children: [
-                            StatusChip(label: p.status.name, inverted: true, color: sColor, icon: sIcon),
-                            if (p.phase > 0) StatusChip(label: 'Phase ${p.phase}', inverted: true, color: Colors.white70, icon: CupertinoIcons.number),
-                            if (deadlineVal != null)
-                              StatusChip(
-                                label: 'Due ${_fmtShortDate(_deadlineOf(deadlineVal) ?? DateTime.now())}',
-                                inverted: true,
-                                color: isLate ? Colors.redAccent : Colors.white70,
-                                icon: CupertinoIcons.calendar,
-                              ),
-                          ]),
+                          Wrap(spacing: R.chipSpacing(context), runSpacing: R.runSpacing(context), children: [
+                             StatusChip(label: p.status.name, inverted: true, color: sColor, icon: sIcon),
+                             if (p.phase > 0) StatusChip(label: 'Phase ${p.phase}', inverted: true, color: Colors.white70, icon: CupertinoIcons.number),
+                             if (deadlineVal != null)
+                               StatusChip(
+                                 label: 'Due ${_fmtShortDate(_deadlineOf(deadlineVal) ?? DateTime.now())}',
+                                 inverted: true,
+                                 color: isLate ? Colors.redAccent : Colors.white70,
+                                 icon: CupertinoIcons.calendar,
+                               ),
+                           ]),
                         ],
                       ),
                     ),
@@ -752,3 +754,170 @@ class _ActiveFiltersBar extends ConsumerWidget {
 // Removed unused _LocBadge and _MiniChip (legacy visual experiments) to reduce lint noise.
 
 String _fmtShortDate(DateTime d) => '${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}';
+
+// --- Lightweight shimmer + list/grid skeleton --------------------------------
+class _Shimmer extends StatefulWidget {
+  const _Shimmer({required this.child});
+  final Widget child;
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctl;
+  @override
+  void initState() {
+    super.initState();
+    _ctl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat();
+  }
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+  @override
+  Widget build(BuildContext context) {
+    final base = Theme.of(context).colorScheme.surfaceContainerHighest;
+    final highlight = Theme.of(context).colorScheme.surfaceContainerHigh;
+    return AnimatedBuilder(
+      animation: _ctl,
+      builder: (_, __) {
+        final dx = Tween<double>(begin: -1, end: 2).transform(CurvedAnimation(parent: _ctl, curve: Curves.easeInOut).value);
+        return ShaderMask(
+          shaderCallback: (rect) {
+            return LinearGradient(
+              begin: Alignment(-1, 0),
+              end: Alignment(2, 0),
+              colors: [base, highlight, base],
+              stops: const [0.1, 0.3, 0.6],
+              transform: GradientRotation(0),
+            ).createShader(Rect.fromLTWH(rect.width * dx, 0, rect.width, rect.height));
+          },
+          blendMode: BlendMode.srcATop,
+          child: widget.child,
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock({this.height = 16, this.width, this.radius = 8});
+  final double height;
+  final double? width;
+  final double radius;
+  @override
+  Widget build(BuildContext context) {
+    final bg = Theme.of(context).colorScheme.surfaceContainerHigh;
+    return Container(
+      height: height,
+      width: width,
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(radius)),
+    );
+  }
+}
+
+class _ProjectsListSkeleton extends StatelessWidget {
+  const _ProjectsListSkeleton({required this.isGrid});
+  final bool isGrid;
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    if (isGrid) {
+      return LayoutBuilder(builder: (context, c) {
+        final maxW = c.maxWidth;
+        final isSmall = maxW < 420;
+        final itemMin = isSmall ? 300.0 : 340.0;
+        final columns = (maxW / itemMin).floor().clamp(1, 4);
+        return GridView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            childAspectRatio: isSmall ? 1.1 : 1.25,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+          ),
+          itemCount: 8,
+          itemBuilder: (_, __) => Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: _Shimmer(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Container(width: 44, height: 44, decoration: BoxDecoration(color: cs.surfaceContainerHigh, shape: BoxShape.circle)),
+                      const SizedBox(width: 12),
+                      Expanded(child: _SkeletonBlock(height: 16, width: 140)),
+                    ]),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: R.chipSpacing(context),
+                      runSpacing: R.runSpacing(context),
+                      children: const [
+                        _SkeletonBlock(height: 20, width: 80, radius: 20),
+                        _SkeletonBlock(height: 20, width: 100, radius: 20),
+                        _SkeletonBlock(height: 20, width: 120, radius: 20),
+                      ],
+                    ),
+                    const Spacer(),
+                    Align(alignment: Alignment.centerRight, child: _SkeletonBlock(height: 14, width: 60)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      });
+    }
+    // List view skeleton
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      itemCount: 12,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, __) => Card(
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: _Shimmer(
+          child: Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(width: 44, height: 44, decoration: BoxDecoration(color: cs.surfaceContainerHigh, shape: BoxShape.circle)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: const [
+                        Expanded(child: _SkeletonBlock(height: 16, width: 160)),
+                        SizedBox(width: 8),
+                        _SkeletonBlock(height: 12, width: 60),
+                      ]),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: R.chipSpacing(context),
+                        runSpacing: R.runSpacing(context),
+                        children: const [
+                          _SkeletonBlock(height: 20, width: 90, radius: 20),
+                          _SkeletonBlock(height: 20, width: 110, radius: 20),
+                          _SkeletonBlock(height: 20, width: 80, radius: 20),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const _SkeletonBlock(height: 14, width: 14, radius: 4),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

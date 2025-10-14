@@ -496,7 +496,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 enabled: _editing,
                                 decoration: const InputDecoration(
                                   labelText: 'Display name',
-                                  prefixIcon: Icon(CupertinoIcons.person),
+                                  prefixIcon: Icon(CupertinoIcons.person, color :Color(0xFF9D9DFB)),
                                 ),
                                 validator: FormBuilderValidators.compose([
                   (val) => _isFieldRequired('displayName') && (val == null || val.trim().isEmpty)
@@ -513,7 +513,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 enabled: false,
                                 decoration: const InputDecoration(
                                   labelText: 'Email',
-                                  prefixIcon: Icon(CupertinoIcons.at),
+                                  prefixIcon: Icon(CupertinoIcons.at, color :Color(0xFF9D9DFB)),
                                 ),
                               ),
                             ),
@@ -525,7 +525,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 decoration: const InputDecoration(
                                   labelText: 'Phone (India)',
                                   prefixText: '+91 ',
-                                  prefixIcon: Icon(CupertinoIcons.phone),
+                                  prefixIcon: Icon(CupertinoIcons.phone, color :Color(0xFF9D9DFB)),
                                 ),
                                 validator: FormBuilderValidators.compose([
                                   (val) => _isFieldRequired('phone') && (val == null || val.trim().isEmpty)
@@ -554,12 +554,8 @@ class _ProfilePageState extends State<ProfilePage> {
                                 decoration: InputDecoration(
                                   labelText: 'WhatsApp (India)',
                                   prefixText: '+91 ',
-                                  prefixIcon: const Icon(CupertinoIcons.chat_bubble_text),
-                                  suffixIcon: const Padding(
-                                    padding: EdgeInsets.only(right: 8.0, left:8.0, top: 8.0, bottom: 8.0),
-                                    child: Icon(CupertinoIcons.chat_bubble_text_fill, size: 20, color: Color(0xFF25D366)),
-                                  ),
-                                  suffixIconConstraints: const BoxConstraints(minHeight: 24, minWidth: 24),
+                                  prefixIcon: const Icon(CupertinoIcons.chat_bubble_text, color :Color(0xFF9D9DFB)),
+                              
                                 ),
                                 validator: FormBuilderValidators.compose([
                                   if (_requireAllFields)
@@ -586,7 +582,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 enabled: _editing,
                                 decoration: const InputDecoration(
                                   labelText: 'Aadhaar Number',
-                                  prefixIcon: Icon(CupertinoIcons.person_crop_square),
+                                  prefixIcon: Icon(CupertinoIcons.person_crop_square, color :Color(0xFF9D9DFB)),
                                 ),
                                 validator: FormBuilderValidators.compose([
                                   if (_requireAllFields)
@@ -608,7 +604,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 inputType: InputType.date,
                                 decoration: const InputDecoration(
                                   labelText: 'Date of birth',
-                                  prefixIcon: Icon(CupertinoIcons.calendar),
+                                  prefixIcon: Icon(CupertinoIcons.calendar, color :Color(0xFF9D9DFB)),
                                 ),
                                 lastDate: DateTime.now(),
                                 initialDate: DateTime(2000, 1, 1),
@@ -630,7 +626,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 enabled: _editing,
                                 decoration: const InputDecoration(
                                   labelText: 'Gender',
-                                  prefixIcon: Icon(CupertinoIcons.person_2),
+                                  prefixIcon: Icon(CupertinoIcons.person_2, color :Color(0xFF9D9DFB)),
                                 ),
                                 isExpanded: true,
                                 items: const [
@@ -651,7 +647,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 enabled: _editing,
                                 decoration: const InputDecoration(
                                   labelText: 'Occupation',
-                                  prefixIcon: Icon(CupertinoIcons.briefcase),
+                                  prefixIcon: Icon(CupertinoIcons.briefcase, color :Color(0xFF9D9DFB)),
                                 ),
                                 validator: (val) => _requireAllFields && (val == null || val.trim().isEmpty)
                                     ? 'This field is required'
@@ -666,7 +662,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 enabled: _editing,
                                 decoration: const InputDecoration(
                                   labelText: 'Address',
-                                  prefixIcon: Icon(CupertinoIcons.house),
+                                  prefixIcon: Icon(CupertinoIcons.house, color :Color(0xFF9D9DFB)),
                                 ),
                                 validator: (val) => (_isFieldRequired('address') || _requireAllFields) && (val == null || val.trim().isEmpty)
                                     ? 'This field is required'

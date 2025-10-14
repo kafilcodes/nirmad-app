@@ -617,60 +617,113 @@ class _ProjectUpdateFormPageState extends ConsumerState<ProjectUpdateFormPage> {
         return;
       }
 
-      // Batch all writes for atomicity and fewer roundtrips
-      final batch = db.batch();
-
-      // 1) Project update doc (audit trail)
-      final updateRef = db.collection('projects').doc(widget.project.id).collection('updates').doc();
-      batch.set(updateRef, {
-        'type': 'details',
-        'payload': payload,
-        'comment': _comment,
-        'photos': _photos,
-        'documents': _docs,
-        'updatedBy': user.uid,
-        'createdAt': FieldValue.serverTimestamp(),
-        if (_lat != null && _lng != null) 'location': {'lat': _lat, 'lng': _lng},
-        if (_locMethod != null) 'locationMethod': _locMethod,
-      });
-
-      // 2) Global notification for nodals
+      // Transactional write with server-side validation for installments
+      final projRef = db.collection('projects').doc(widget.project.id);
+      final updateRef = projRef.collection('updates').doc();
       final notifRef = db.collection('updates').doc();
-      batch.set(notifRef, {
-        'type': 'status',
-        'title': 'Project updated',
-        'body': (_comment?.trim().isNotEmpty == true) ? _comment : 'Project fields updated',
-        'projectId': widget.project.id,
-        'projectName': widget.project.name,
-        'ownerId': widget.project.ownerId,
-        'blockId': widget.project.blockId,
-        'targetRoles': ['super_nodal', 'sub_nodal'],
-        'readBy': <String>[],
-        'createdAt': FieldValue.serverTimestamp(),
-        'updateId': updateRef.id,
-      });
 
-      // 3) Inline project doc update always (request flow removed)
-      if (payload.isNotEmpty) {
-        final projRef = db.collection('projects').doc(widget.project.id);
-        final data = <String, dynamic>{'updatedAt': FieldValue.serverTimestamp()};
-        if (payload['stage'] != null) {
-          data['workDescription'] = {
-            'stage': payload['stage'],
-          };
+      try {
+        await db.runTransaction((tx) async {
+          final docSnap = await tx.get(projRef);
+          final existing = docSnap.data() ?? const {};
+          final ad = (existing['allotmentDetails'] as Map<String, dynamic>?) ?? const {};
+
+          bool dbReceived(String key) {
+            final inst = (ad[key] as Map<String, dynamic>?) ?? const {};
+            final ra = inst['receivedAmount'];
+            return ra is num && ra > 0;
+          }
+
+          Map<String, dynamic>? sanitize(String key) {
+            if (dbReceived(key)) return null; // freeze installments already received
+            final incoming = (payload[key] as Map<String, dynamic>?)?.map((k, v) => MapEntry(k, v));
+            if (incoming == null || incoming.isEmpty) return null;
+            final dbInst = (ad[key] as Map<String, dynamic>?) ?? const {};
+            final num? dbAmt = dbInst['amount'] is num ? dbInst['amount'] as num : null;
+            // Strip amount change if predefined in DB
+            if (dbAmt != null && dbAmt > 0) {
+              incoming.remove('amount');
+            }
+            final num? newAmt = incoming['amount'] is num ? incoming['amount'] as num : null;
+            final num? effectiveAmt = newAmt ?? dbAmt;
+            final num? recAmt = incoming['receivedAmount'] is num ? incoming['receivedAmount'] as num : null;
+            if (recAmt != null) {
+              if (effectiveAmt == null || effectiveAmt <= 0) {
+                throw StateError('Received amount requires a defined installment amount');
+              }
+              if (recAmt > effectiveAmt) {
+                throw StateError('Received amount cannot exceed defined amount');
+              }
+            }
+            return incoming;
+          }
+
+          final s1 = sanitize('installment1');
+          final s2 = sanitize('installment2');
+          final s3 = sanitize('installment3');
+
+          final projUpdate = <String, dynamic>{'updatedAt': FieldValue.serverTimestamp()};
+          if (payload['stage'] != null) {
+            projUpdate['workDescription'] = {'stage': payload['stage']};
+          }
+          Map<String, dynamic> instMerge(String key, Map<String, dynamic>? v) {
+            if (v == null || v.isEmpty) return {};
+            return {'allotmentDetails': {key: v}};
+          }
+          projUpdate.addAll(instMerge('installment1', s1));
+          projUpdate.addAll(instMerge('installment2', s2));
+          projUpdate.addAll(instMerge('installment3', s3));
+
+          // 1) Audit trail update doc
+          tx.set(updateRef, {
+            'type': 'details',
+            'payload': {
+              if (payload['stage'] != null) 'stage': payload['stage'],
+              if (s1 != null && s1.isNotEmpty) 'installment1': s1,
+              if (s2 != null && s2.isNotEmpty) 'installment2': s2,
+              if (s3 != null && s3.isNotEmpty) 'installment3': s3,
+            },
+            'comment': _comment,
+            'photos': _photos,
+            'documents': _docs,
+            'updatedBy': user.uid,
+            'createdAt': FieldValue.serverTimestamp(),
+            if (_lat != null && _lng != null) 'location': {'lat': _lat, 'lng': _lng},
+            if (_locMethod != null) 'locationMethod': _locMethod,
+          });
+
+          // 2) Global notification
+          tx.set(notifRef, {
+            'type': 'status',
+            'title': 'Project updated',
+            'body': (_comment?.trim().isNotEmpty == true) ? _comment : 'Project fields updated',
+            'projectId': widget.project.id,
+            'projectName': widget.project.name,
+            'ownerId': widget.project.ownerId,
+            'blockId': widget.project.blockId,
+            'targetRoles': ['super_nodal', 'sub_nodal'],
+            'readBy': <String>[],
+            'createdAt': FieldValue.serverTimestamp(),
+            'updateId': updateRef.id,
+          });
+
+          // 3) Inline project doc update (merge)
+          tx.set(projRef, projUpdate, SetOptions(merge: true));
+        });
+      } on StateError catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('StateError: ', ''))));
         }
-        Map<String, dynamic> instMerge(String key) {
-          final v = payload[key] as Map<String, dynamic>?;
-          if (v == null || v.isEmpty) return {};
-          return {'allotmentDetails': {key: v}};
+        setState(() => _saving = false);
+        return;
+      } on FirebaseException catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? 'Failed to save. Please retry.')));
         }
-        data.addAll(instMerge('installment1'));
-        data.addAll(instMerge('installment2'));
-        data.addAll(instMerge('installment3'));
-        batch.set(projRef, data, SetOptions(merge: true));
+        setState(() => _saving = false);
+        return;
       }
-
-      await batch.commit();
+      // NOTE: Legacy batch write block removed. Using Firestore transaction above for atomic validation and writes.
 
       // Clear local drafts after successful commit
       await _mediaStore?.removeByCategory('work_photo');
@@ -1308,6 +1361,13 @@ class _DateField extends StatelessWidget {
 
 // Installment editor tile with lock/disable when already received
 extension on _ProjectUpdateFormPageState {
+  bool _hasInstallmentData(Installment? i) {
+    if (i == null) return false;
+    final a = i.amount ?? 0;
+    final ra = i.receivedAmount ?? 0;
+    return (a > 0) || (ra > 0) || i.date != null || i.receivedDate != null;
+  }
+
   Widget _installmentSummary(BuildContext context, int n, Installment inst) {
     final cs = Theme.of(context).colorScheme;
     final title = 'Installment $n';
@@ -1357,6 +1417,7 @@ extension on _ProjectUpdateFormPageState {
       if (received) {
         return _installmentSummary(context, n, inst!);
       }
+      final isPredefined = (inst?.amount ?? 0) > 0;
       final title = 'Installment $n';
 
       InputDecoration moneyDecoration(String label, String? value) {
@@ -1376,7 +1437,7 @@ extension on _ProjectUpdateFormPageState {
         Expanded(
           child: TextFormField(
             textAlignVertical: TextAlignVertical.center,
-            enabled: true,
+            enabled: !isPredefined, // Task 1: hide/disable amount when predefined
             decoration: moneyDecoration('Amount', _iAmt[n]),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [
@@ -1399,7 +1460,7 @@ extension on _ProjectUpdateFormPageState {
           child: _DateField(
             label: 'Date',
             value: _iDate[n],
-            enabled: true,
+            enabled: !isPredefined, // Task 1: hide/disable declaration date when predefined
             suffixIcon: _iDate[n] != null ? const Icon(CupertinoIcons.checkmark_circle_fill, color: Colors.green) : null,
             onChanged: (d) {
               _iDate[n] = d;
@@ -1420,6 +1481,24 @@ extension on _ProjectUpdateFormPageState {
               FilteringTextInputFormatter.allow(RegExp(r"[0-9\.]")),
               LengthLimitingTextInputFormatter(18),
             ],
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            validator: (v) {
+              const maxRupees = 500000000;
+              final s = (v ?? '').trim(); if (s.isEmpty) return null;
+              final val = double.tryParse(s);
+              if (val == null) return 'Enter valid amount';
+              if (val > maxRupees) return 'Max ₹50,00,00,000';
+              double? maxAmt;
+              if (isPredefined) {
+                maxAmt = (inst?.amount)?.toDouble();
+              } else {
+                final rawAmt = (_iAmt[n] ?? '').trim();
+                maxAmt = double.tryParse(rawAmt);
+              }
+              if (maxAmt == null || maxAmt <= 0) return 'Define installment amount first';
+              if (val > maxAmt) return 'Received cannot exceed amount (₹${_fmtMoneyInr(maxAmt)})';
+              return null;
+            },
             onChanged: (v) {
               final parsed = double.tryParse(v.trim());
               if (parsed != null && parsed > 500000000) {
@@ -1436,7 +1515,11 @@ extension on _ProjectUpdateFormPageState {
           child: _DateField(
             label: 'Received Date',
             value: _iRecDate[n],
-            enabled: true,
+            enabled: (() {
+              final s = (_iRecAmt[n] ?? '').trim();
+              final v = double.tryParse(s);
+              return v != null && v > 0;
+            })(),
             suffixIcon: _iRecDate[n] != null ? const Icon(CupertinoIcons.checkmark_circle_fill, color: Colors.green) : null,
             onChanged: (d) {
               _iRecDate[n] = d;
@@ -1446,6 +1529,37 @@ extension on _ProjectUpdateFormPageState {
         ),
       ]);
 
+      // Safe removal controls for active new installments with no-orphan rule
+      Widget header() {
+        return Row(children: [
+          const Icon(CupertinoIcons.creditcard, size: 18),
+          const SizedBox(width: 6),
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const Spacer(),
+          if (inst == null)
+            IconButton(
+              tooltip: 'Remove',
+              icon: const Icon(CupertinoIcons.trash, size: 18),
+              onPressed: () {
+                // Block removal that would orphan a later installment
+                final i2 = project.allotmentDetails.installment2;
+                final i3 = project.allotmentDetails.installment3;
+                // Removed unused has1 variable
+                final has2 = _hasInstallmentData(i2) || _activeNewInstallments.contains(2);
+                final has3 = _hasInstallmentData(i3) || _activeNewInstallments.contains(3);
+                if ((n == 1 && (has2 || has3)) || (n == 2 && has3)) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Remove later installments first')));
+                  return;
+                }
+                sbSetState(() {
+                  _activeNewInstallments.remove(n);
+                  _iAmt[n] = null; _iDate[n] = null; _iRecAmt[n] = null; _iRecDate[n] = null;
+                });
+              },
+            ),
+        ]);
+      }
+
       return Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
@@ -1453,14 +1567,12 @@ extension on _ProjectUpdateFormPageState {
         ),
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(CupertinoIcons.creditcard, size: 18),
-            const SizedBox(width: 6),
-            Text(title, style: Theme.of(context).textTheme.titleSmall),
-          ]),
+          header(),
           const SizedBox(height: 8),
-          row1,
-          const SizedBox(height: 8),
+          if (!isPredefined) ...[
+            row1,
+            const SizedBox(height: 8),
+          ],
           row2,
         ]),
       );

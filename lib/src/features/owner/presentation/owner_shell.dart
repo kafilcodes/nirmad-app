@@ -607,33 +607,73 @@ class _ProjectsPage extends ConsumerWidget {
                     alignment: Alignment.centerLeft,
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 680),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: _ProjectsSearchBar(onChanged: (q) {
-                              ref.read(projectsSearchQueryProvider.notifier).state = q;
-                            }),
-                          ),
-                          const SizedBox(width: 8),
-                          SegmentedButton<bool>(
-                            segments: const [
-                              ButtonSegment(value: true, icon: Icon(CupertinoIcons.square_grid_2x2)),
-                              ButtonSegment(value: false, icon: Icon(CupertinoIcons.list_bullet)),
+                      child: LayoutBuilder(
+                        builder: (context, c) {
+                          final narrow = c.maxWidth < 520;
+                          if (narrow) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _ProjectsSearchBar(onChanged: (q) {
+                                  ref.read(projectsSearchQueryProvider.notifier).state = q;
+                                }),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    SegmentedButton<bool>(
+                                      segments: const [
+                                        ButtonSegment(value: true, icon: Icon(CupertinoIcons.square_grid_2x2)),
+                                        ButtonSegment(value: false, icon: Icon(CupertinoIcons.list_bullet)),
+                                      ],
+                                      selected: {ref.watch(projectsGridViewProvider)},
+                                      onSelectionChanged: (s) {
+                                        final v = s.first;
+                                        ref.read(projectsGridViewProvider.notifier).state = v;
+                                        try { ref.read(sharedPrefsProvider).setBool('projectsGrid', v); } catch (_) {}
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        onPressed: () => _openOwnerSortSheet(context, ref),
+                                        icon: const Icon(CupertinoIcons.sort_down, size: 18),
+                                        label: Text(ownerSortLabel(ref.watch(ownerProjectsSortProvider))),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: _ProjectsSearchBar(onChanged: (q) {
+                                  ref.read(projectsSearchQueryProvider.notifier).state = q;
+                                }),
+                              ),
+                              const SizedBox(width: 8),
+                              SegmentedButton<bool>(
+                                segments: const [
+                                  ButtonSegment(value: true, icon: Icon(CupertinoIcons.square_grid_2x2)),
+                                  ButtonSegment(value: false, icon: Icon(CupertinoIcons.list_bullet)),
+                                ],
+                                selected: {ref.watch(projectsGridViewProvider)},
+                                onSelectionChanged: (s) {
+                                  final v = s.first;
+                                  ref.read(projectsGridViewProvider.notifier).state = v;
+                                  try { ref.read(sharedPrefsProvider).setBool('projectsGrid', v); } catch (_) {}
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: () => _openOwnerSortSheet(context, ref),
+                                icon: const Icon(CupertinoIcons.sort_down, size: 18),
+                                label: Text(ownerSortLabel(ref.watch(ownerProjectsSortProvider))),
+                              ),
                             ],
-                            selected: {ref.watch(projectsGridViewProvider)},
-                            onSelectionChanged: (s) {
-                              final v = s.first;
-                              ref.read(projectsGridViewProvider.notifier).state = v;
-                              try { ref.read(sharedPrefsProvider).setBool('projectsGrid', v); } catch (_) {}
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          OutlinedButton.icon(
-                            onPressed: () => _openOwnerSortSheet(context, ref),
-                            icon: const Icon(CupertinoIcons.sort_down, size: 18),
-                            label: Text(ownerSortLabel(ref.watch(ownerProjectsSortProvider))),
-                          ),
-                        ],
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -1035,8 +1075,20 @@ final MapController _mapController = MapController();
 
   // Static blocks as per spec (bypass Firestore for blocks)
   static const List<String> _staticBlocks = [
-    'Dhamtari','Kurud','Nagri','Magarlod'
+    'Dhamtari (धमतरी)',
+    'Kurud (कुरूद)',
+    'Nagri (नगरी)',
+    'Magarlod (मगरलोड)',
   ];
+  
+  /// Extract English-only block name for Firestore (strips Hindi part)
+  /// Example: 'Dhamtari (धमतरी)' -> 'Dhamtari'
+  String _getBlockIdForFirestore(String? blockNameWithHindi) {
+    if (blockNameWithHindi == null || blockNameWithHindi.isEmpty) return '';
+    final match = RegExp(r'^([^(]+)').firstMatch(blockNameWithHindi);
+    return match?.group(1)?.trim() ?? blockNameWithHindi;
+  }
+  
   bool _showAutosaved = false;
   Timer? _autosaveBadgeTimer;
 
@@ -1145,8 +1197,18 @@ final MapController _mapController = MapController();
     );
     
     return InputDecoration(
-      labelText: required ? '$label *' : label,
-      labelStyle: labelStyle,
+      label: required ? RichText(
+        text: TextSpan(
+          text: label,
+          style: labelStyle,
+          children: const [
+            TextSpan(
+              text: ' *',
+              style: TextStyle(color: Colors.red),
+            ),
+          ],
+        ),
+      ) : Text(label, style: labelStyle),
       hintStyle: hintStyle,
       errorStyle: errorStyle,
       helperStyle: helperStyle,
@@ -1621,6 +1683,7 @@ final MapController _mapController = MapController();
       case 'start': return _startDateCtrl.text.trim().isNotEmpty;
       case 'end': return _endDateCtrl.text.trim().isNotEmpty;
       case 'deadline': return _endDateCtrl.text.trim().isEmpty || _deadlineCtrl.text.trim().isNotEmpty; // optional until end set
+      case 'stage': return _selectedWorkStage != null;
     }
     return true;
   }
@@ -2330,13 +2393,18 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
   final basicValid = (_selectedBlockId?.isNotEmpty ?? false) &&
     (_gramPanchayatCtrl.text.trim().isNotEmpty) &&
     (_selectedVillageName?.isNotEmpty ?? false);
+  
+  // CHANGE 3: Check if Sarpanch & Secretary are empty (enable manual input if empty)
+  final sarpanchEmpty = _sarpanchNameCtrl.text.trim().isEmpty;
+  final secretaryEmpty = _secretaryNameCtrl.text.trim().isEmpty;
+  
   final content = Column(children: [
     const SizedBox(height: 12), // Increased top spacing for better mobile layout
     _pair(
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           controller: _sarpanchNameCtrl,
-      enabled: false,
+          enabled: sarpanchEmpty, // Enable if empty, disable if auto-filled
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
@@ -2360,7 +2428,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           controller: _secretaryNameCtrl,
-      enabled: false,
+          enabled: secretaryEmpty, // Enable if empty, disable if auto-filled
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
@@ -2663,7 +2731,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
       _singleOrEmpty(
         _amountField(
           _approvedAmountCtrl,
-          'Approved Amount / Total Project Cost (स्वीकृत राशि / कुल परियोजना लागत) *',
+          'Approved Amount / Total Project Cost (स्वीकृत राशि / कुल परियोजना लागत)',
           required: true,
           extraValidator: sumErrorFor,
           validationSuffix: _allotSuffix('approved'),
@@ -2673,7 +2741,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
       _pair(
         _amountField(
           _installment1AmountCtrl,
-          'Installment 1 Amount (किस्त 1 राशि) *',
+          'Installment 1 Amount (किस्त 1 राशि)',
           required: true,
           extraValidator: sumErrorFor,
           validationSuffix: _allotSuffix('inst1Amt'),
@@ -2757,6 +2825,18 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             onPressed: () {
+              if (_showInstallment3) {
+                toastification.show(
+                  context: context,
+                  title: const Text('Remove Installment 3 first (पहले किस्त 3 हटाएँ)'),
+                  type: ToastificationType.info,
+                  style: ToastificationStyle.fillColored,
+                  autoCloseDuration: const Duration(seconds: 3),
+                  showProgressBar: false,
+                  icon: const Icon(CupertinoIcons.info),
+                );
+                return;
+              }
               setState(() {
                 _showInstallment2 = false;
                 _installment2AmountCtrl.clear();
@@ -3040,9 +3120,13 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
           ],
         ),
         DropdownButtonFormField<WorkStage>(
-          decoration: const InputDecoration(labelText: 'Current stage', prefixIcon: Icon(CupertinoIcons.chart_bar)),
+          decoration: InputDecoration(
+            label: const RequiredLabel('Current stage'),
+            prefixIcon: const Icon(CupertinoIcons.chart_bar),
+            suffixIcon: _workSuffix('stage'),
+          ),
           isExpanded: true,
-          initialValue: _selectedWorkStage == WorkStage.completed ? WorkStage.finishing : _selectedWorkStage,
+          value: _selectedWorkStage == WorkStage.completed ? WorkStage.finishing : _selectedWorkStage,
           items: WorkStage.values
               .where((e) => e != WorkStage.completed)
               .map((e) => DropdownMenuItem(
@@ -3050,7 +3134,13 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
                     child: Row(children: [Icon(_stageIcon(e), size: 18), const SizedBox(width: 8), Flexible(child: Text(e.name))]),
                   ))
               .toList(),
-          onChanged: (v) { setState(() => _selectedWorkStage = v); _saveDraftLocally(); },
+          onChanged: (v) {
+            setState(() {
+              _selectedWorkStage = v;
+              _workTouched.add('stage');
+            });
+            _saveDraftLocally();
+          },
         ),
       ),
       const SizedBox(height: 8),
@@ -3193,9 +3283,15 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
 
   Widget _buildBasicDetailsSection() {
   final gpAsync = ref.watch(gpdata.gramPanchayatDataProvider);
-  final gpItems = gpAsync.maybeWhen(data: (v) => v, orElse: () => const <gpdata.GPRecord>[]);
+  final allGPItems = gpAsync.maybeWhen(data: (v) => v, orElse: () => const <gpdata.GPRecord>[]);
   final gpLoading = gpAsync.isLoading;
   final gpError = gpAsync.hasError;
+    
+    // CHANGE 1: Filter GP items by selected block
+    final gpItems = _selectedBlockId == null 
+      ? const <gpdata.GPRecord>[]
+      : allGPItems.where((e) => e.block == _selectedBlockId).toList();
+    
     final gpNames = gpItems.map((e) => e.name).toList();
     final selectedGP = gpItems.where((e) => e.name == _selectedGramPanchayatName).cast<gpdata.GPRecord?>().firstWhere((e) => true, orElse: () => null);
     final villageOptions = (selectedGP?.grams ?? const <String>[]);
@@ -3274,7 +3370,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
                           _selectedGramPanchayatName = val;
                           _gramPanchayatCtrl.text = val ?? '';
                           // Auto-fill officials
-                          final rec = gpItems.firstWhere((e) => e.name == val, orElse: () => gpdata.GPRecord(name: '', grams: const [], sarpanch: '', secretary: ''));
+                          final rec = gpItems.firstWhere((e) => e.name == val, orElse: () => gpdata.GPRecord(block: '', name: '', grams: const [], sarpanch: '', secretary: ''));
                           _sarpanchNameCtrl.text = rec.sarpanch;
                           _secretaryNameCtrl.text = rec.secretary;
                           // Reset village
@@ -3541,6 +3637,7 @@ child: KeyedSubtree(
                               // Original Flutter Stepper from temp.md
                               Stepper(
                                 type: StepperType.vertical,
+                                physics: const NeverScrollableScrollPhysics(),
                                 currentStep: _currentStep,
                                 onStepTapped: (i) {
                                   int highest = 0;
@@ -4182,7 +4279,7 @@ child: KeyedSubtree(
                                   name: _nameCtrl.text.trim(),
                                   description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
                                   ownerId: auth.uid,
-                                  blockId: _selectedBlockId ?? (auth.blockId ?? ''),
+                                  blockId: _getBlockIdForFirestore(_selectedBlockId).isNotEmpty ? _getBlockIdForFirestore(_selectedBlockId) : (auth.blockId ?? ''),
                                   villageId: (auth.assignedVillage ?? ''),
                                   status: ProjectStatus.in_progress,
                                   phase: finPhase,

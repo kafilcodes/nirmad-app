@@ -4,11 +4,13 @@ import 'package:flutter/services.dart' show rootBundle, AssetBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class GPRecord {
+  final String block;
   final String name;
   final List<String> grams;
   final String sarpanch;
   final String secretary;
   const GPRecord({
+    required this.block,
     required this.name,
     required this.grams,
     required this.sarpanch,
@@ -16,6 +18,7 @@ class GPRecord {
   });
 
   factory GPRecord.fromJson(Map<String, dynamic> j) => GPRecord(
+        block: (j['block'] as String?)?.trim() ?? '',
         name: (j['gram_panchayat'] as String?)?.trim() ?? '',
         grams: ((j['grams'] as List?) ?? const <dynamic>[])
             .whereType<String>()
