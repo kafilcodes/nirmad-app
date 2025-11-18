@@ -1044,6 +1044,9 @@ final MapController _mapController = MapController();
   String? _selectedBlockId;
   String? _selectedBlockName;
   String? _selectedVillageName;
+  // Track if names were autofilled from GP data (to control enabled state)
+  bool _sarpanchNameAutofilled = false;
+  bool _secretaryNameAutofilled = false;
   // Local draft service
   LocalDraftService? _drafts;
   // Debounced autosave
@@ -1071,6 +1074,8 @@ final MapController _mapController = MapController();
     _SchemeItem('Central Area Development Authority', 'मध्य क्षेत्र विकास प्राधिकरण'),
     _SchemeItem('Anganwadi Bhawan Construction', 'आंगनबाड़ी भवन निर्माण'),
     _SchemeItem('District Mineral Institute Trust Fund (DMF)', 'जिला खनिज संस्थान न्यास निध ि (डीएमएफ)'),
+    _SchemeItem('Zila panchayat vikas nidhi', 'जिला पंचायत विकास निधि'),
+
   ];
 
   // Static blocks as per spec (bypass Firestore for blocks)
@@ -2394,17 +2399,13 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
     (_gramPanchayatCtrl.text.trim().isNotEmpty) &&
     (_selectedVillageName?.isNotEmpty ?? false);
   
-  // CHANGE 3: Check if Sarpanch & Secretary are empty (enable manual input if empty)
-  final sarpanchEmpty = _sarpanchNameCtrl.text.trim().isEmpty;
-  final secretaryEmpty = _secretaryNameCtrl.text.trim().isEmpty;
-  
   final content = Column(children: [
     const SizedBox(height: 12), // Increased top spacing for better mobile layout
     _pair(
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           controller: _sarpanchNameCtrl,
-          enabled: sarpanchEmpty, // Enable if empty, disable if auto-filled
+          enabled: !_sarpanchNameAutofilled, // Disable only if autofilled from GP data
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
@@ -2412,6 +2413,12 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
           ],
           decoration: _req('Sarpanch Name (सरपंच नाम)', prefixIcon: const Icon(CupertinoIcons.person)).copyWith(suffixIcon: _prelimSuffix('sarpanchName')),
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
+          onChanged: (v) {
+            // Clear autofill flag when user manually edits
+            if (_sarpanchNameAutofilled && v != _sarpanchNameCtrl.text) {
+              setState(() => _sarpanchNameAutofilled = false);
+            }
+          },
         ),
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
@@ -2428,7 +2435,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
           controller: _secretaryNameCtrl,
-          enabled: secretaryEmpty, // Enable if empty, disable if auto-filled
+          enabled: !_secretaryNameAutofilled, // Disable only if autofilled from GP data
           textCapitalization: TextCapitalization.words,
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\s\-\.\u0900-\u097F]")),
@@ -2436,6 +2443,12 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
           ],
           decoration: _req('Secretary Name (सचिव नाम)', prefixIcon: const Icon(CupertinoIcons.person)).copyWith(suffixIcon: _prelimSuffix('secretaryName')),
           validator: (v)=> (v==null||v.trim().isEmpty)?'Required':null,
+          onChanged: (v) {
+            // Clear autofill flag when user manually edits
+            if (_secretaryNameAutofilled && v != _secretaryNameCtrl.text) {
+              setState(() => _secretaryNameAutofilled = false);
+            }
+          },
         ),
         TextFormField(
           textAlignVertical: TextAlignVertical.center,
@@ -3126,7 +3139,7 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
             suffixIcon: _workSuffix('stage'),
           ),
           isExpanded: true,
-          value: _selectedWorkStage == WorkStage.completed ? WorkStage.finishing : _selectedWorkStage,
+          initialValue: _selectedWorkStage == WorkStage.completed ? WorkStage.finishing : _selectedWorkStage,
           items: WorkStage.values
               .where((e) => e != WorkStage.completed)
               .map((e) => DropdownMenuItem(
@@ -3353,6 +3366,9 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
                     _villageCtrl.clear();
                     _sarpanchNameCtrl.clear();
                     _secretaryNameCtrl.clear();
+                    // Clear autofill flags
+                    _sarpanchNameAutofilled = false;
+                    _secretaryNameAutofilled = false;
                   });
                   _saveDraftLocally();
                 },
@@ -3373,6 +3389,9 @@ messenger?.showSnackBar(const SnackBar(content: Text('Location permission denied
                           final rec = gpItems.firstWhere((e) => e.name == val, orElse: () => gpdata.GPRecord(block: '', name: '', grams: const [], sarpanch: '', secretary: ''));
                           _sarpanchNameCtrl.text = rec.sarpanch;
                           _secretaryNameCtrl.text = rec.secretary;
+                          // Mark as autofilled if data exists
+                          _sarpanchNameAutofilled = rec.sarpanch.isNotEmpty;
+                          _secretaryNameAutofilled = rec.secretary.isNotEmpty;
                           // Reset village
                           _selectedVillageName = null;
                           _villageCtrl.clear();
