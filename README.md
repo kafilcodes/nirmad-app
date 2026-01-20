@@ -1,29 +1,29 @@
-<![CDATA[<div align="center">
-
 # 🏛️ NIRMAD - निर्माण धमतरी
 
-### **Nirman Information & Resource Management for Administrative Development**
+### Nirman Information & Resource Management for Administrative Development
 
-<img src="assets/AppIcons/Assets.xcassets/AppIcon.appiconset/180.png" alt="NIRMAD Logo" width="120" height="120" style="border-radius: 20px;"/>
+<p align="center">
+  <img src="assets/AppIcons/Assets.xcassets/AppIcon.appiconset/180.png" alt="NIRMAD Logo" width="120" height="120"/>
+</p>
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.9+-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
-[![Dart](https://img.shields.io/badge/Dart-3.9+-0175C2?style=for-the-badge&logo=dart&logoColor=white)](https://dart.dev)
-[![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)](https://firebase.google.com)
-[![License](https://img.shields.io/badge/License-Proprietary-red?style=for-the-badge)](LICENSE)
+<p align="center">
+  <a href="https://flutter.dev"><img src="https://img.shields.io/badge/Flutter-3.9+-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter"/></a>
+  <a href="https://dart.dev"><img src="https://img.shields.io/badge/Dart-3.9+-0175C2?style=for-the-badge&logo=dart&logoColor=white" alt="Dart"/></a>
+  <a href="https://firebase.google.com"><img src="https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black" alt="Firebase"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Proprietary-red?style=for-the-badge" alt="License"/></a>
+</p>
 
----
+<p align="center">
+  🌐 <strong>Live Production</strong> → <a href="https://nirmandhamtari.in/">nirmandhamtari.in</a>
+</p>
 
-🌐 **Live Production** → [nirmandhamtari.in](https://nirmandhamtari.in/)
-
-*A comprehensive government infrastructure project management system for Dhamtari District, Chhattisgarh*
-
-</div>
+<p align="center">
+  <em>A comprehensive government infrastructure project management system for Dhamtari District, Chhattisgarh</em>
+</p>
 
 ---
 
 ## 🤖 AI-Powered Development
-
-<div align="center">
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -34,12 +34,10 @@
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
-</div>
-
 ### 🎯 AI Development Features
 
 | Feature | Description |
-|---------|-------------|
+|:--------|:------------|
 | 🤖 **Autonomous Coding** | AI agents write, debug, and optimize code autonomously |
 | 🔍 **Smart Bug Detection** | AI identifies and fixes issues before they reach production |
 | 📝 **Code Generation** | Complex features generated from natural language descriptions |
@@ -54,7 +52,7 @@
 - [🎯 Overview](#-overview)
 - [✨ Features](#-features)
 - [👥 User Roles](#-user-roles)
-- [🛠️ Tech Stack](#️-tech-stack)
+- [🛠️ Tech Stack](#-tech-stack)
 - [📁 Project Structure](#-project-structure)
 - [🚀 Getting Started](#-getting-started)
 - [🔥 Firebase Configuration](#-firebase-configuration)
@@ -71,7 +69,7 @@
 ### 🏗️ Covered Blocks
 
 | Block | Hindi Name | Gram Panchayats |
-|-------|------------|-----------------|
+|:------|:-----------|:----------------|
 | 🏘️ Dhamtari | धमतरी | 100+ |
 | 🏘️ Kurud | कुरूद | 80+ |
 | 🏘️ Nagri | नगरी | 70+ |
@@ -82,12 +80,14 @@
 ## ✨ Features
 
 ### 📊 Dashboard & Analytics
+
 - 📈 Real-time project statistics with interactive charts
 - 🗺️ Geographic visualization with Flutter Map integration
 - 📉 Financial tracking and expenditure analysis
 - 🎯 Progress monitoring across all project phases
 
 ### 📋 Project Management
+
 - ➕ Create new infrastructure projects with detailed metadata
 - 📝 Multi-step form wizard with validation
 - 📸 Photo documentation with before/during/after capture
@@ -95,18 +95,21 @@
 - 📄 PDF report generation for official documentation
 
 ### 🔔 Notifications & Updates
+
 - 🔔 Push notifications via Firebase Cloud Messaging
 - 📢 Awesome notifications for local alerts
 - 📰 Real-time project status updates
 - ✅ Approval/rejection notifications
 
 ### 📁 Document Management
+
 - 📤 File upload and download capabilities
 - 📑 Document categorization and tagging
 - 🔗 Cloud storage integration with Firebase Storage
 - 📥 Offline file caching with Hive
 
 ### 🌐 Multilingual Support
+
 - 🇮🇳 Hindi (हिंदी) - Primary
 - 🇬🇧 English - Secondary
 - 🔄 Dynamic language switching
@@ -114,8 +117,6 @@
 ---
 
 ## 👥 User Roles
-
-<div align="center">
 
 ```
                     ┌─────────────────┐
@@ -136,11 +137,10 @@
      └─────────────┘  └─────────────┘  └─────────────┘
 ```
 
-</div>
-
 ### 🔴 Admin (Administrator)
+
 | Permission | Description |
-|------------|-------------|
+|:-----------|:------------|
 | 👁️ View All | Access to all projects across all blocks |
 | ✏️ Edit All | Modify any project details |
 | ✅ Approve | Final approval authority |
@@ -148,16 +148,18 @@
 | 📊 Analytics | Full access to reports and analytics |
 
 ### 🟠 Block Officer
+
 | Permission | Description |
-|------------|-------------|
+|:-----------|:------------|
 | 👁️ View Block | Access to projects within assigned block |
 | ✅ Review | Review and forward projects |
 | 📝 Comments | Add review comments and feedback |
 | 📊 Block Reports | Generate block-level reports |
 
 ### 🟢 Owner (Junior Engineer)
+
 | Permission | Description |
-|------------|-------------|
+|:-----------|:------------|
 | ➕ Create | Create new project entries |
 | 📸 Upload | Upload photos and documents |
 | ✏️ Edit Own | Modify own project submissions |
@@ -170,74 +172,73 @@
 ### 📱 Frontend Framework
 
 | Technology | Version | Purpose |
-|------------|---------|---------|
-| ![Flutter](https://img.shields.io/badge/Flutter-02569B?style=flat&logo=flutter&logoColor=white) | 3.9+ | Cross-platform UI framework |
-| ![Dart](https://img.shields.io/badge/Dart-0175C2?style=flat&logo=dart&logoColor=white) | 3.9+ | Programming language |
+|:-----------|:--------|:--------|
+| Flutter | 3.9+ | Cross-platform UI framework |
+| Dart | 3.9+ | Programming language |
 
 ### 🔥 Backend & Cloud Services
 
 | Service | Package | Version | Purpose |
-|---------|---------|---------|---------|
-| ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat&logo=firebase&logoColor=black) Core | `firebase_core` | ^4.0.0 | Firebase initialization |
-| 🔐 Authentication | `firebase_auth` | ^6.0.0 | User authentication |
-| 📚 Firestore | `cloud_firestore` | ^6.0.0 | Real-time database |
-| 📦 Storage | `firebase_storage` | ^13.0.0 | File storage |
-| ⚡ Functions | `cloud_functions` | ^6.0.0 | Serverless backend |
-| 📨 Messaging | `firebase_messaging` | ^16.0.0 | Push notifications |
+|:--------|:--------|:--------|:--------|
+| Firebase Core | `firebase_core` | ^4.0.0 | Firebase initialization |
+| Authentication | `firebase_auth` | ^6.0.0 | User authentication |
+| Firestore | `cloud_firestore` | ^6.0.0 | Real-time database |
+| Storage | `firebase_storage` | ^13.0.0 | File storage |
+| Functions | `cloud_functions` | ^6.0.0 | Serverless backend |
+| Messaging | `firebase_messaging` | ^16.0.0 | Push notifications |
 
 ### 🏗️ State Management & Architecture
 
 | Package | Version | Purpose |
-|---------|---------|---------|
-| 🔄 `flutter_riverpod` | ^2.6.1 | Reactive state management |
-| 🧭 `go_router` | ^16.2.0 | Declarative routing |
-| 📝 `flutter_form_builder` | ^10.2.0 | Form handling |
-| ✅ `form_builder_validators` | ^11.2.0 | Form validation |
+|:--------|:--------|:--------|
+| `flutter_riverpod` | ^2.6.1 | Reactive state management |
+| `go_router` | ^16.2.0 | Declarative routing |
+| `flutter_form_builder` | ^10.2.0 | Form handling |
+| `form_builder_validators` | ^11.2.0 | Form validation |
 
 ### 🗺️ Maps & Location
 
 | Package | Version | Purpose |
-|---------|---------|---------|
-| 🗺️ `flutter_map` | ^8.2.1 | Interactive maps |
-| 📍 `geolocator` | ^14.0.2 | GPS location services |
-| 🧭 `latlong2` | ^0.9.1 | Coordinate handling |
+|:--------|:--------|:--------|
+| `flutter_map` | ^8.2.1 | Interactive maps |
+| `geolocator` | ^14.0.2 | GPS location services |
+| `latlong2` | ^0.9.1 | Coordinate handling |
 
 ### 📊 Data Visualization
 
 | Package | Version | Purpose |
-|---------|---------|---------|
-| 📈 `fl_chart` | ^1.0.0 | Beautiful charts |
-| 📊 Interactive charts | - | Dashboard analytics |
+|:--------|:--------|:--------|
+| `fl_chart` | ^1.0.0 | Beautiful charts |
 
 ### 💾 Local Storage
 
 | Package | Version | Purpose |
-|---------|---------|---------|
-| 📦 `hive` | ^2.2.3 | NoSQL local database |
-| 🔧 `hive_flutter` | ^1.1.0 | Hive Flutter bindings |
-| ⚙️ `shared_preferences` | ^2.3.2 | Key-value storage |
-| 🗄️ `sqflite` | ^2.4.2 | SQLite database |
+|:--------|:--------|:--------|
+| `hive` | ^2.2.3 | NoSQL local database |
+| `hive_flutter` | ^1.1.0 | Hive Flutter bindings |
+| `shared_preferences` | ^2.3.2 | Key-value storage |
+| `sqflite` | ^2.4.2 | SQLite database |
 
 ### 📁 File Handling
 
 | Package | Version | Purpose |
-|---------|---------|---------|
-| 📂 `file_picker` | ^10.1.10 | File selection |
-| 🖼️ `image_picker` | ^1.1.2 | Image capture |
-| 📥 `file_saver` | ^0.2.14 | File saving |
-| 🖨️ `printing` | ^5.14.2 | PDF generation |
-| 📄 `pdf` | ^3.11.2 | PDF creation |
+|:--------|:--------|:--------|
+| `file_picker` | ^10.1.10 | File selection |
+| `image_picker` | ^1.1.2 | Image capture |
+| `file_saver` | ^0.2.14 | File saving |
+| `printing` | ^5.14.2 | PDF generation |
+| `pdf` | ^3.11.2 | PDF creation |
 
 ### 🎨 UI Components
 
 | Package | Version | Purpose |
-|---------|---------|---------|
-| 🎨 `google_fonts` | ^6.2.1 | Typography |
-| ✨ `flutter_animate` | ^4.5.0 | Animations |
-| 🔔 `awesome_notifications` | ^0.10.0 | Local notifications |
-| 🍞 `toastification` | ^2.4.0 | Toast messages |
-| 💀 `skeletonizer` | ^1.4.4 | Loading skeletons |
-| 📏 `flutter_staggered_grid_view` | ^0.7.0 | Grid layouts |
+|:--------|:--------|:--------|
+| `google_fonts` | ^6.2.1 | Typography |
+| `flutter_animate` | ^4.5.0 | Animations |
+| `awesome_notifications` | ^0.10.0 | Local notifications |
+| `toastification` | ^2.4.0 | Toast messages |
+| `skeletonizer` | ^1.4.4 | Loading skeletons |
+| `flutter_staggered_grid_view` | ^0.7.0 | Grid layouts |
 
 ---
 
@@ -285,14 +286,11 @@ nirmadapp/
 
 ### 📋 Prerequisites
 
-```bash
-# Required tools
-✅ Flutter SDK 3.9+
-✅ Dart SDK 3.9+
-✅ Firebase CLI
-✅ Android Studio / Xcode
-✅ Git
-```
+- ✅ Flutter SDK 3.9+
+- ✅ Dart SDK 3.9+
+- ✅ Firebase CLI
+- ✅ Android Studio / Xcode
+- ✅ Git
 
 ### 💻 Installation
 
@@ -362,7 +360,7 @@ firebase deploy --only functions
 ## 📱 Supported Platforms
 
 | Platform | Status | Notes |
-|----------|--------|-------|
+|:---------|:-------|:------|
 | 🌐 **Web** | ✅ Production | Primary platform at nirmandhamtari.in |
 | 🤖 **Android** | ✅ Production | APK distribution |
 | 🍎 **iOS** | 🔜 Coming Soon | In development |
@@ -373,18 +371,21 @@ firebase deploy --only functions
 ## 🔒 Security
 
 ### 🛡️ Authentication
+
 - ✅ Firebase Authentication with email/password
 - ✅ Role-based access control (RBAC)
 - ✅ Secure session management
 - ✅ Password encryption
 
 ### 🔐 Data Protection
+
 - ✅ Firestore security rules
 - ✅ Storage access controls
 - ✅ API key protection
 - ✅ HTTPS encryption
 
 ### 👁️ Audit Trail
+
 - ✅ User action logging
 - ✅ Project modification history
 - ✅ Login/logout tracking
@@ -416,29 +417,28 @@ The `local_data.json` file contains:
 
 ## 📞 Contact & Support
 
-<div align="center">
-
 | Channel | Details |
-|---------|---------|
+|:--------|:--------|
 | 🌐 **Website** | [nirmandhamtari.in](https://nirmandhamtari.in/) |
 | 📧 **Email** | support@nirmandhamtari.in |
 | 🏢 **Organization** | Dhamtari District Administration |
 
-</div>
+---
+
+<p align="center">
+  <strong>🙏 Made with ❤️ for Dhamtari District</strong>
+</p>
+
+<p align="center">
+  <strong>© 2024-2026 NIRMAD - All Rights Reserved</strong>
+</p>
+
+<p align="center">
+  <em>Empowering Infrastructure Development Through Technology</em>
+</p>
 
 ---
 
-<div align="center">
-
-### 🙏 Made with ❤️ for Dhamtari District
-
-**© 2024 NIRMAD - All Rights Reserved**
-
-*Empowering Infrastructure Development Through Technology*
-
----
-
-<sub>🤖 This README was generated with assistance from GitHub Copilot AI</sub>
-
-</div>
-]]>
+<p align="center">
+  <sub>🤖 This README was generated with assistance from GitHub Copilot AI</sub>
+</p>
