@@ -301,6 +301,25 @@ export const adminDeleteUser = functions.https.onCall(async (
   const uid = (data.uid || '').trim();
   if (!uid) throw new functions.https.HttpsError('invalid-argument', 'uid required');
 
+  // CRITICAL: Prevent deletion of whitelisted dev admin - this account is required to manage the system
+  if (WHITELISTED_UIDS.has(uid)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Cannot delete protected dev admin account. This account is required for system management.');
+  }
+  // Also check by email if we can fetch the user
+  try {
+    const targetUser = await auth.getUser(uid);
+    const targetEmail = targetUser.email?.toLowerCase();
+    if (targetEmail && WHITELISTED_EMAILS.has(targetEmail)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Cannot delete protected dev admin account. This account is required for system management.');
+    }
+  } catch (e: any) {
+    // If user not found, allow deletion to clean up orphan data
+    if (e?.code !== 'auth/user-not-found') {
+      // Re-throw if it's our protection error
+      if (e?.code === 'failed-precondition') throw e;
+    }
+  }
+
   // Delete from Firebase Auth (ignore if already gone)
   await auth.deleteUser(uid).catch((e: any) => {
     if (e?.code !== 'auth/user-not-found') throw new functions.https.HttpsError('internal', e?.message || String(e));
@@ -330,9 +349,29 @@ export const adminBulkDeleteUsers = functions.https.onCall(async (
   const uids = Array.isArray(data.uids) ? data.uids.map((u) => String(u).trim()).filter(Boolean) : [];
   if (uids.length === 0) throw new functions.https.HttpsError('invalid-argument', 'uids required');
 
+  // CRITICAL: Filter out whitelisted dev admin UIDs - these cannot be deleted
+  const protectedUids = uids.filter(uid => WHITELISTED_UIDS.has(uid));
+  if (protectedUids.length > 0) {
+    throw new functions.https.HttpsError('failed-precondition', `Cannot delete protected dev admin account(s): ${protectedUids.join(', ')}. These accounts are required for system management.`);
+  }
+
   const results: Array<{ uid: string; ok: boolean; error?: string }> = [];
   for (const uid of uids) {
     try {
+      // Double-check protection by email before deletion
+      try {
+        const targetUser = await auth.getUser(uid);
+        const targetEmail = targetUser.email?.toLowerCase();
+        if (targetEmail && WHITELISTED_EMAILS.has(targetEmail)) {
+          results.push({ uid, ok: false, error: 'Protected dev admin account cannot be deleted' });
+          continue;
+        }
+      } catch (e: any) {
+        if (e?.code !== 'auth/user-not-found') {
+          results.push({ uid, ok: false, error: e?.message || String(e) });
+          continue;
+        }
+      }
       await auth.deleteUser(uid).catch((e: any) => {
         if (e?.code !== 'auth/user-not-found') throw e;
       });

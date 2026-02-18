@@ -3,7 +3,7 @@
 ### Nirman Information & Resource Management for Administrative Development
 
 <p align="center">
-  <img src="assets/AppIcons/Assets.xcassets/AppIcon.appiconset/180.png" alt="NIRMAD Logo" width="120" height="120"/>
+  <img src="assets/AppIcons/playstore.png" alt="NIRMAD Logo" width="500" height="500"/>
 </p>
 
 <p align="center">

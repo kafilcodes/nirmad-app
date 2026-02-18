@@ -1489,6 +1489,13 @@ class _UserDialogState extends State<_UserDialog> {
 
   Future<void> _deleteUserAndProjects() async {
     final id = widget.doc.id;
+    
+    // CRITICAL: Double-check protection before deletion (defense in depth)
+    if (_isProtectedAdmin()) {
+      _showSnack(context, 'Cannot delete protected dev admin account.', icon: CupertinoIcons.exclamationmark_shield, error: true);
+      return;
+    }
+    
     try {
       // Use Cloud Function to delete from Firebase Auth and Firestore (and related data server-side)
       showDialog(
@@ -1517,7 +1524,24 @@ class _UserDialogState extends State<_UserDialog> {
     }
   }
 
+  // Protected dev admin UIDs that cannot be deleted - hardcoded safeguard
+  static const _protectedDevAdminUids = {'IckVUW6Mg4Ue1XNcVWsxTidSiBY2'};
+  static const _protectedDevAdminEmails = {'kafilcodes@gmail.com'};
+
+  bool _isProtectedAdmin() {
+    final uid = widget.doc.id;
+    final data = widget.doc.data();
+    final email = (data['email'] as String?)?.toLowerCase() ?? '';
+    return _protectedDevAdminUids.contains(uid) || _protectedDevAdminEmails.contains(email);
+  }
+
   Future<void> _confirmDelete() async {
+    // CRITICAL: Prevent deletion of protected dev admin
+    if (_isProtectedAdmin()) {
+      _showSnack(context, 'Cannot delete protected dev admin account. This account is required for system management.', icon: CupertinoIcons.exclamationmark_shield, error: true);
+      return;
+    }
+
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(

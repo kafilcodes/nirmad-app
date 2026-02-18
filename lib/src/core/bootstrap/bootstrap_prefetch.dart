@@ -18,15 +18,23 @@ Future<void> _bootstrapPrefetch(Ref ref) async {
   final dao = ref.read(firestoreDaoProvider);
   final disk = ref.read(diskCacheProvider);
 
-  // 1) Warm user doc
+  // 1) Warm user doc - try server first, fall back gracefully
   final userRef = db.collection('users').doc(auth.uid);
   try {
-    final snap = await userRef.get(const GetOptions(source: Source.server));
+    final snap = await userRef.get(const GetOptions(source: Source.server)).timeout(const Duration(seconds: 8));
     if (snap.exists) {
       await disk.setJson('user:${auth.uid}', snap.data()!, ttl: const Duration(minutes: 10));
     }
   } catch (_) {
-    // ignore
+    // Server fetch failed, try cache or default
+    try {
+      final snap = await userRef.get();
+      if (snap.exists) {
+        await disk.setJson('user:${auth.uid}', snap.data()!, ttl: const Duration(minutes: 10));
+      }
+    } catch (_) {
+      // ignore - not critical
+    }
   }
 
   // 2) Warm list by role

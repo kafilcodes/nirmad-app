@@ -106,8 +106,31 @@ class AuthRepository {
   }
 
   Future<void> signIn(String email, String password) async {
+    // Whitelisted admin UIDs/emails for auto-promotion
+    const whitelistedUids = {'IckVUW6Mg4Ue1XNcVWsxTidSiBY2'};
+    const whitelistedEmails = {'kafilcodes@gmail.com'};
+    
     try {
       await _auth.signInWithEmailAndPassword(email: email, password: password);
+      
+      // Auto-promote whitelisted admin if needed (call Cloud Function)
+      final user = _auth.currentUser;
+      if (user != null) {
+        final isWhitelisted = whitelistedUids.contains(user.uid) || 
+            (user.email != null && whitelistedEmails.contains(user.email!.toLowerCase()));
+        if (isWhitelisted) {
+          try {
+            final region = dotenv.maybeGet('FIREBASE_FUNCTIONS_REGION') ?? 'us-central1';
+            final fns = FirebaseFunctions.instanceFor(region: region);
+            await fns.httpsCallable('ensureDevAdminForWhitelisted').call();
+            // Force token refresh to pick up new claims
+            await user.getIdToken(true);
+          } catch (_) {
+            // Ignore - function might already have set claims
+          }
+        }
+      }
+      
       // Enforce single-device strictly: check before registering and bail out if mismatch
       try {
         final id = await _ensureDeviceSessionId();
@@ -196,19 +219,30 @@ class AuthRepository {
     String? assignedVillage;
     String? displayName = user.displayName;
 
-    // Read users doc: try server quickly, then fallback to cache to avoid long stalls
+    // Read users doc: try server first with reasonable timeout, then fallback to cache
+    // On web, ERR_BLOCKED_BY_CLIENT can occur due to browser extensions or network issues
     final userDocRef = _db.collection('users').doc(user.uid);
     Map<String, dynamic>? data;
     try {
+      // Try server fetch first with longer timeout for slower connections
       final server = await userDocRef
           .get(const GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 2));
+          .timeout(const Duration(seconds: 8));
       data = server.data();
-    } catch (_) {
+    } catch (e) {
+      // Server fetch failed - try cache
       try {
         final cache = await userDocRef.get(const GetOptions(source: Source.cache));
         data = cache.data();
-      } catch (_) {}
+      } catch (_) {
+        // Cache also failed - try default (lets Firebase decide)
+        try {
+          final defaultFetch = await userDocRef.get().timeout(const Duration(seconds: 10));
+          data = defaultFetch.data();
+        } catch (_) {
+          // All fetches failed - will use fallback logic below
+        }
+      }
     }
     if (data != null) {
       role = UserRole.fromKey(data['role'] as String?);
